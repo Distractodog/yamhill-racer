@@ -4,6 +4,7 @@ import { loadWorld, SURFACES } from './world.js';
 import { Car, TUNING_DEFAULTS } from './car.js';
 import { Effects } from './effects.js';
 import { CarAudio } from './audio.js';
+import { createMinimap } from './minimap.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -45,6 +46,7 @@ if (world.surfaceAt(spawn[0], spawn[1]) !== 3) spawn = world.placeOn(sx, sz, 4, 
 car.reset(...spawn);
 const effects = new Effects(scene);
 const audio = new CarAudio();
+const minimap = await createMinimap();
 document.getElementById('loading').remove();
 
 const gui = new GUI({ title: 'Car tuning (T)' });
@@ -171,6 +173,7 @@ function frame(now) {
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
   renderer.render(scene, camera);
+  minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
   const kmh = Math.round(car.vel.length() * 3.6);
@@ -184,4 +187,4 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 // for debugging / automated test drives
-window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer };
+window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap };
