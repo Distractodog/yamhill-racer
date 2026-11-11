@@ -1,0 +1,1 @@
+{"name":"yamhill-racer","private":true,"type":"module","scripts":{"build-world":".venv/bin/python tools/build_world.py","drive":"node tools/drive.mjs"},"devDependencies":{"puppeteer-core":"^23.11.1","three":"0.170.0"}}

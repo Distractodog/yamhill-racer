@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yamhill Racer</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #9cc3df; font-family: system-ui, sans-serif; }
+  canvas { display: block; }
+  #hud { position: fixed; left: 16px; bottom: 14px; color: #fff; text-shadow: 0 1px 3px #000a; pointer-events: none; }
+  #speed { font-size: 46px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+  #speed small { font-size: 16px; font-weight: 600; margin-left: 4px; }
+  #info { font-size: 13px; opacity: .9; margin-top: 4px; }
+  #help { position: fixed; right: 16px; bottom: 14px; color: #fff; font-size: 12px; text-align: right;
+          text-shadow: 0 1px 3px #000a; pointer-events: none; line-height: 1.5; }
+  #credits { position: fixed; left: 50%; transform: translateX(-50%); bottom: 4px; color: #fff; font-size: 10px; opacity: .7;
+             text-shadow: 0 1px 2px #000a; white-space: nowrap; }
+  #credits a { color: inherit; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font-size: 20px;
+             background: #2d4a2f; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+  "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+} }
+</script>
+</head>
+<body>
+<div id="loading">Loading map…</div>
+<div id="hud"><div id="speed">0<small>km/h</small></div><div id="info"></div></div>
+<div id="help">W/S or ↑/↓ drive · A/D steer · Space handbrake<br>R reset · H back to campus · T tuning · C camera</div>
+<div id="credits">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · elevation USGS 3DEP · tree heights Meta/WRI (CC BY 4.0)</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

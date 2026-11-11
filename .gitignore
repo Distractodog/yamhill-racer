@@ -1,0 +1,9 @@
+node_modules/
+.venv/
+__pycache__/
+data/raw/
+data/legacy-assets/
+# private working notes (names, local paths) - kept on this computer only
+CLAUDE.md
+PLAN.md
+.DS_Store
