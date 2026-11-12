@@ -114,6 +114,24 @@ export async function createMinimap(base = './assets/') {
     ctx.strokeText(text, x, y); ctx.fillStyle = '#fff'; ctx.fillText(text, x, y);
   }
 
+  // challenge route + checkpoints drawn over the map: { route: [[x, z]…], gates: [{x, z}…], next } or null
+  let overlay = null;
+  function drawOverlay(ctx, map, d) {      // map(x, z) → canvas px
+    if (!overlay) return;
+    const { route, gates, next } = overlay;
+    ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.beginPath(); route.forEach(([x, z], i) => { const [a, b] = map(x, z); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); });
+    ctx.strokeStyle = '#0008'; ctx.lineWidth = 6 * d; ctx.stroke();
+    ctx.strokeStyle = '#35e0ff'; ctx.lineWidth = 3 * d; ctx.stroke();
+    for (let i = gates.length - 1; i >= next; i--) {
+      const [a, b] = map(gates[i].x, gates[i].z), fin = i === gates.length - 1, cur = i === next;
+      ctx.beginPath(); ctx.arc(a, b, (cur || fin ? 6 : 3.5) * d, 0, Math.PI * 2);
+      ctx.fillStyle = fin ? '#ffd23f' : cur ? '#35e0ff' : '#ff9a2e'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = (cur || fin ? 2 : 1.2) * d; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // x, z: car position (m); heading: radians on the map, 0 = north (up), clockwise; speed in m/s
   function update(x, z, heading, speed, dt) {
     const [px, py] = toPx(x, z);
@@ -124,6 +142,7 @@ export async function createMinimap(base = './assets/') {
       cctx.fillStyle = '#222824'; cctx.fillRect(0, 0, W, H);   // off the map (same as the baked picture)
       cctx.imageSmoothingQuality = 'high';
       cctx.drawImage(img, W / 2 - px * s, H / 2 - py * s, img.width * s, img.height * s);
+      drawOverlay(cctx, (gx, gz) => { const [a, b] = toPx(gx, gz); return [W / 2 + (a - px) * s, H / 2 + (b - py) * s]; }, d);
       arrow(cctx, W / 2, H / 2, heading, 9 * d);
     } else {
       const d = fit(fc), W = fc.width, H = fc.height;
@@ -135,6 +154,7 @@ export async function createMinimap(base = './assets/') {
       fctx.imageSmoothingQuality = 'high';
       fctx.drawImage(img, ox, oy, img.width * s, img.height * s);
       for (const l of LABELS) { const [lx, ly] = toPx(l.x, l.z); label(fctx, l.name, ox + lx * s, oy + ly * s, 15 * d); }
+      drawOverlay(fctx, (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; }, d);
       // pulsing ring so you can spot yourself on the big map
       const t = performance.now() / 1000, r = (10 + 8 * ((t * 1.2) % 1)) * d;
       fctx.beginPath(); fctx.arc(ox + px * s, oy + py * s, r, 0, Math.PI * 2);
@@ -151,5 +171,5 @@ export async function createMinimap(base = './assets/') {
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') zoomCmd('out');
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
-  return { update, toggle, get open() { return open; } };
+  return { update, toggle, setOverlay: o => { overlay = o; }, get open() { return open; } };
 }

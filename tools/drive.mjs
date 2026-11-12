@@ -111,3 +111,45 @@ if (which === 'all' || which === 'water') {
       '· max depth', maxDepth.toFixed(2), 'm · end', (car.vel.length() * 3.6).toFixed(0), 'km/h, travelled', Math.hypot(car.pos.x - sx0, car.pos.z - sz0).toFixed(0), 'm');
   }
 }
+
+if (which === 'all' || which === 'ramps') {
+  // challenge jump ramps: drive along the route (steering to follow it) into a ramp at fixed speeds; judge the
+  // jump + 3 s after landing. Also hit one the wrong way at 100 km/h.
+  const CH = JSON.parse(fs.readFileSync(A + 'challenges.json'));
+  const picks = [['sheridan', 0], ['sheridan', 2], ['willamina', 3], ['long-walk', 0], ['long-walk', 2]];
+  for (const [id, k] of picks) {
+    const c = CH.find(c => c.id === id), r = c.ramps[k]; if (!r) continue;
+    W.setRamps(c.ramps);
+    const R = c.route;
+    let ri = 0, bd = 1e9; R.forEach(([x, z], i) => { const d = Math.hypot(x - r.x, z - r.z); if (d < bd) { bd = d; ri = i; } });
+    const cases = id === 'long-walk' ? [[80, 1], [150, 1], [80, -1]] : [[100, 1], [250, 1], [500, 1], [1000, 1], [100, -1]];
+    for (const [kmh, dir] of cases) {
+      // start 40 m before the ramp (forwards) or past its back end (wrong way), lined up with it; the placer
+      // keeps 30 m before a ramp straight
+      const fx = Math.sin(r.yaw), fz = Math.cos(r.yaw), back = dir > 0 ? -40 : 31 + 40;
+      const sx = r.x + fx * back, sz = r.z + fz * back, yaw = dir > 0 ? r.yaw : r.yaw + Math.PI;
+      const si = ri;
+      let top = 0, onRamp = false, passed = false, airStart = null, flown = 0, after = null, fl = 0, wasUp = true;
+      let tgt = si, steerOn = false;
+      const { car } = run(`ramp ${id}#${k} at ${kmh} km/h${dir < 0 ? ' (wrong way)' : ''}`, sx, sz, yaw, 40 / (kmh / 3.6) + 6, (t, i, c) => {
+        if (t === 0) c.vel.set(Math.sin(yaw) * kmh / 3.6, 0, Math.cos(yaw) * kmh / 3.6);
+        i.throttle = c.vel.length() * 3.6 < kmh ? 1 : 0;
+        if (W.rampAt(c.pos.x, c.pos.z) > 0) onRamp = true; else if (onRamp) passed = true;
+        if (onRamp) top = Math.max(top, c.pos.y - W.groundAt(c.pos.x, c.pos.z));
+        if (passed && !c.grounded && airStart === null) airStart = [c.pos.x, c.pos.z];
+        if (airStart && c.grounded && !flown) flown = Math.hypot(c.pos.x - airStart[0], c.pos.z - airStart[1]);
+        if (onRamp) { up.set(0, 1, 0).applyQuaternion(c.quat); if (wasUp && up.y < 0) fl++; wasUp = up.y > 0; }
+        // pure pursuit: aim at the route point ~25 m + 0.4 s ahead
+        const look = 25 + c.vel.length() * 0.4;
+        if (!steerOn) { if (onRamp) steerOn = true; else return; }      // hold straight until on the ramp
+        while (R[tgt + dir] && Math.hypot(R[tgt][0] - c.pos.x, R[tgt][1] - c.pos.z) < look) tgt += dir;
+        fw.set(0, 0, 1).applyQuaternion(c.quat);
+        let d = Math.atan2(R[tgt][0] - c.pos.x, R[tgt][1] - c.pos.z) - Math.atan2(fw.x, fw.z); d = Math.atan2(Math.sin(d), Math.cos(d));
+        i.steer = Math.max(-1, Math.min(1, -d * 3));      // +steer = right = smaller yaw
+      }, 0.5);
+      up.set(0, 1, 0).applyQuaternion(car.quat);
+      console.log(`   ${onRamp ? '' : 'MISSED THE RAMP · '}peak ${top.toFixed(1)} m above the road · flew ${flown.toFixed(0)} m · flips from the jump ${fl} · end ${(car.vel.length() * 3.6).toFixed(0)} km/h, upright ${up.y.toFixed(2)}, ${car.grounded ? 'on wheels' : 'in the air'}`);
+    }
+  }
+  W.setRamps([]);
+}

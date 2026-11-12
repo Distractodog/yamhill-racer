@@ -5,6 +5,7 @@ import { Car, TUNING_DEFAULTS } from './car.js';
 import { Effects } from './effects.js';
 import { CarAudio } from './audio.js';
 import { createMinimap } from './minimap.js';
+import { createChallenges } from './challenges.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -50,6 +51,7 @@ car.reset(...spawn);
 const effects = new Effects(scene);
 const audio = new CarAudio();
 const minimap = await createMinimap();
+const challenges = await createChallenges({ scene, world, car, minimap });
 document.getElementById('loading').remove();
 
 const gui = new GUI({ title: 'Car tuning (T)' });
@@ -78,12 +80,20 @@ async function goHome() {
   car.reset(...s); car.safe = []; car._lastLoaded = null;
 }
 
+// F: put the car back on its wheels right where it is, facing the way it was pointing (keeps the clock running)
+function flipUpright() {
+  const f = new THREE.Vector3(0, 0, 1).applyQuaternion(car.quat);
+  if (Math.hypot(f.x, f.z) < 0.2) f.set(0, 1, 0).applyQuaternion(car.quat).negate();   // nose straight up/down: use the roof
+  car.reset(car.pos.x, car.pos.z, Math.atan2(f.x, f.z));
+}
+
 // ---------------------------------------------------------------- input
 const keys = new Set();
 addEventListener('keydown', e => {
   keys.add(e.code);
   audio.start();
   if (e.code === 'KeyR') car.resetToSafe();
+  if (e.code === 'KeyF') flipUpright();
   if (e.code === 'KeyH') goHome();
   if (e.code === 'KeyT') gui._closed ? gui.open() : gui.close();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
@@ -162,8 +172,10 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   readInput();
+  challenges.holdInput(input);
   acc += dt;
   while (acc >= STEP) { car.savePrev(); car.step(STEP, input); acc -= STEP; }
+  challenges.update(dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
   car.syncMesh(dt);
@@ -190,4 +202,4 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 // for debugging / automated test drives
-window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap };
+window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges };

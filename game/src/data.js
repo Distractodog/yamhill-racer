@@ -12,6 +12,17 @@ export const PATH_KINDS = {
   trail: { cls: 2 },
 };
 export const STEP = 1.5;
+// jump ramps (challenges): a wedge laid on the road. u = metres along from the foot, v = across.
+// Up 11 m to 2.2 m high (~11°), 2 m flat top, then an 18 m gentle back so the wrong way is a bump, not a wall.
+export const RAMP = { up: 11, top: 2, down: 18, h: 2.2 };
+export const RAMP_LEN = RAMP.up + RAMP.top + RAMP.down;
+export function rampShape(u) {          // [height, d height / du]
+  const { up, top, down, h } = RAMP;
+  if (u <= 0 || u >= RAMP_LEN) return [0, 0];
+  if (u < up) return [h * u / up, h / up];
+  if (u < up + top) return [h, 0];
+  return [h * (1 - (u - up - top) / down), -h / down];
+}
 export function trunkRadius(h, broad) { return broad ? 0.25 + h * 0.015 : 0.3 + h * 0.012; }
 
 // polyline -> strip samples every <= STEP m with left-pointing unit normals, heights and cross slopes
@@ -162,13 +173,30 @@ export function makeWorld(W) {
   }
   const at = (x, z) => tileAt(x, z) || nearest(x, z);
   function terrainAt(x, z) { const t = at(x, z); return t ? t.terrainAt(x, z) : 0; }
-  function heightAt(x, z) { const t = at(x, z); return t ? t.heightAt(x, z) : 0; }
+  // ramps: only while a challenge with ramps is running (setRamps); each sits on whatever road is under it
+  let ramps = [];
+  let rampSlope = 0, rampFx = 0, rampFz = 0;           // set by rampAt: slope along the ramp at the last point
+  function rampAt(x, z) {
+    rampSlope = 0;
+    for (const r of ramps) {
+      const dx = x - r.x, dz = z - r.z;
+      const u = dx * r.fx + dz * r.fz; if (u <= 0 || u >= RAMP_LEN) continue;
+      if (Math.abs(dx * r.fz - dz * r.fx) > r.w / 2) continue;
+      const [h, s] = rampShape(u); rampSlope = s; rampFx = r.fx; rampFz = r.fz; return h;
+    }
+    return 0;
+  }
+  function setRamps(list) { ramps = (list || []).map(r => ({ ...r, fx: Math.sin(r.yaw), fz: Math.cos(r.yaw) })); }
+  function groundAt(x, z) { const t = at(x, z); return t ? t.heightAt(x, z) : 0; }     // without ramps
+  function heightAt(x, z) { const g = groundAt(x, z); return ramps.length ? g + rampAt(x, z) : g; }
   function surfaceAt(x, z) { const t = tileAt(x, z); return t ? t.surfaceAt(x, z) : 0; }
   function waterLevelAt(x, z) { const t = tileAt(x, z); return t ? t.waterLevelAt(x, z) : -Infinity; }
   function normalAt(x, z, out = new THREE.Vector3()) {
     const e = W.hstep * 0.5;
     const hl = terrainAt(x - e, z), hr = terrainAt(x + e, z), hd = terrainAt(x, z - e), hu = terrainAt(x, z + e);
-    return out.set(hl - hr, 2 * e, hd - hu).normalize();
+    out.set(hl - hr, 2 * e, hd - hu);
+    if (ramps.length && rampAt(x, z) > 0) { out.x -= 2 * e * rampSlope * rampFx; out.z -= 2 * e * rampSlope * rampFz; }
+    return out.normalize();
   }
   function treesNear(x, z, r, cb) {
     const [a0, b0] = tileIndex(x - r, z - r), [a1, b1] = tileIndex(x + r, z + r);
@@ -202,6 +230,6 @@ export function makeWorld(W) {
     remove(tx, tz) { tiles.delete(key(tx, tz)); last = null; },
     has: (tx, tz) => tiles.has(key(tx, tz)),
     loadedAt: (x, z) => !!tileAt(x, z),
-    terrainAt, heightAt, surfaceAt, waterLevelAt, normalAt, treesNear, buildingsNear, placeOn,
+    terrainAt, heightAt, groundAt, rampAt, setRamps, get ramps() { return ramps; }, surfaceAt, waterLevelAt, normalAt, treesNear, buildingsNear, placeOn,
   };
 }
