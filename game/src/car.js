@@ -10,9 +10,9 @@ import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 
 export const TUNING_DEFAULTS = {
-  accel: 17,              // m/s² from standstill
-  topSpeed: 600,          // km/h, real flat-out top on asphalt (was ~232 before 2026-11-11, raised for fun)
-  brakeDecel: 32,         // m/s²
+  accel: 30,              // m/s² from standstill (was 17 before 2026-11-11)
+  topSpeed: 1000,         // km/h, real flat-out top on asphalt (was ~232, then 600, on 2026-11-11 – for fun)
+  brakeDecel: 60,         // m/s² (was 32 before 2026-11-11)
   steerLock: 0.6,         // rad, low-speed wheel angle
   steerRate: 7,           // how fast steering winds on (1/s)
   cornerGrip: 30,         // m/s² of sideways grip (≈3 g) – sets how tight you turn at speed
@@ -34,6 +34,7 @@ export const TUNING_DEFAULTS = {
   skimSpeed: 85,          // km/h – faster than this you skip across water, slower you sink in
 };
 const GRIP = [0.86, 0.8, 0.93, 1.0, 0.9, 0.45, 0.97, 0.98];      // per surface class
+const TOP_DRAG = 5.6;        // m/s² of drag at top speed (measured flat out on asphalt; see CLAUDE.md gotchas)
 const DRAG = [0.25, 0.35, 0.1, 0.0, 0.12, 5.0, 0.0, 0.0];        // extra rolling drag, m/s²
 const MASS = 900, WHEELBASE = 2.78;
 const HALF = new THREE.Vector3(0.9, 0.38, 2.15);              // inertia only
@@ -227,8 +228,9 @@ export class Car {
         _vp.addScaledVector(_c, -Math.max(-lim, Math.min(lim, lat)) * k);
       }
       // engine and brakes along the heading
-      // engine limit set a bit above topSpeed so that, against air drag, flat out on asphalt tops out right at it
-      const vmax = t.topSpeed / 3.6 * 1.36;
+      // engine limit set above topSpeed so that, against the drag at top speed (TOP_DRAG m/s², the same at any
+      // setting because air drag scales with topSpeed), flat out on asphalt tops out right at topSpeed
+      const vmax = t.topSpeed / 3.6 / Math.sqrt(Math.max(0.05, 1 - TOP_DRAG / t.accel));
       let a = 0;
       if (input.throttle > 0) {
         a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * Math.max(0, 1 - (vf / vmax) ** 2);

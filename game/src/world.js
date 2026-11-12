@@ -9,6 +9,7 @@ export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'grav
 
 // Tiles within LOAD_R of the camera are loaded (in the background, a few ms per frame); beyond DROP_R they're dropped.
 const LOAD_R = 1300, DROP_R = 2600, FRAME_BUDGET_MS = 5;
+const AHEAD_S = 5, AHEAD_MAX = 1200;     // look-ahead loading at speed (AHEAD_MAX + LOAD_R stays inside DROP_R)
 
 export async function loadWorld(renderer, onProgress = () => {}) {
   const base = 'assets/';
@@ -249,15 +250,22 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   let done = 0;
   await Promise.all(first.map(([tx, tz]) => startLoad(tx, tz, true).then(() => onProgress(++done, first.length))));
 
-  function update(cam) {
-    for (const [tx, tz] of wanted(cam.x, cam.z, LOAD_R)) if (loading.size < 2) startLoad(tx, tz);
+  // vel (m/s, optional): at speed, also load around a point up to AHEAD_S seconds ahead, nearest-to-that-point
+  // first, and allow more build time per frame, so the map keeps up even at 1000 km/h
+  function update(cam, vel) {
+    const sp = vel ? Math.hypot(vel.x, vel.z) : 0, la = Math.min(AHEAD_MAX, sp * AHEAD_S) / (sp || 1);
+    const ax = cam.x + (vel ? vel.x * la : 0), az = cam.z + (vel ? vel.z * la : 0);
+    const want = new Map();
+    for (const [tx, tz] of [...wanted(cam.x, cam.z, LOAD_R), ...(la ? wanted(ax, az, LOAD_R) : [])]) want.set(world.key(tx, tz), [tx, tz]);
+    const nx = (cam.x + ax) / 2, nz = (cam.z + az) / 2, d2 = ([tx, tz]) => (tx * T - nx) ** 2 + (tz * T - nz) ** 2;
+    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (loading.size < 3) startLoad(tx, tz);
     for (const [k, v] of vis) {
       const t = world.tiles.get(k); if (!t) continue;
       const dx = Math.max(t.x0 - cam.x, 0, cam.x - (t.x0 + T)), dz = Math.max(t.z0 - cam.z, 0, cam.z - (t.z0 + T));
       if (Math.hypot(dx, dz) > DROP_R) { dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
     }
-    const t0 = performance.now();
-    while (jobs.length && performance.now() - t0 < FRAME_BUDGET_MS) {
+    const t0 = performance.now(), budget = FRAME_BUDGET_MS + Math.min(4, sp / 60);
+    while (jobs.length && performance.now() - t0 < budget) {
       const j = jobs[0], r = j.gen.next();
       if (r.done) { jobs.shift(); j.finish(r.value); }
     }
@@ -288,8 +296,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     casters.forEach((m, i) => { m.count = n[i]; m.instanceMatrix.needsUpdate = true; });
   }
 
-  function updateLOD(cam) {
-    update(cam);
+  function updateLOD(cam, vel) {
+    update(cam, vel);
     for (const v of vis.values()) {
       for (const c of v.chunks) {
         const d = Math.hypot(c.cx - cam.x, c.cz - cam.z);

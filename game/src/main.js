@@ -32,7 +32,9 @@ const SUN_DIR = new THREE.Vector3(-0.45, 0.8, 0.35).normalize();
 // ---------------------------------------------------------------- tuning (remembered per browser)
 const tuning = { ...TUNING_DEFAULTS };
 try { Object.assign(tuning, JSON.parse(localStorage.getItem('yr-tuning-2') || '{}')); } catch {}
-if (tuning.topSpeed === 270) tuning.topSpeed = TUNING_DEFAULTS.topSpeed;   // old saved default → new one
+// a browser that saved an old default gets the new one (keeps anything Ethan changed himself)
+const OLD_DEFAULTS = { topSpeed: [270, 600], accel: [17], brakeDecel: [32] };
+for (const k in OLD_DEFAULTS) if (OLD_DEFAULTS[k].includes(tuning[k])) tuning[k] = TUNING_DEFAULTS[k];
 const save = () => { try { localStorage.setItem('yr-tuning-2', JSON.stringify(tuning)); } catch {} };
 
 const loadingEl = document.getElementById('loading');
@@ -52,7 +54,7 @@ document.getElementById('loading').remove();
 
 const gui = new GUI({ title: 'Car tuning (T)' });
 const RANGES = {
-  accel: [5, 40, 0.5], topSpeed: [100, 800, 5], brakeDecel: [10, 60, 1],
+  accel: [5, 60, 0.5], topSpeed: [100, 1500, 10], brakeDecel: [10, 100, 1],
   steerLock: [0.2, 0.9, 0.01], steerRate: [2, 20, 0.5], cornerGrip: [10, 60, 0.5], turnResponse: [3, 30, 0.5],
   gripAlign: [2, 30, 0.5], driftAlign: [0.3, 5, 0.05], driftTurn: [0.3, 2.5, 0.05], driftMaxAngle: [15, 80, 1],
   driftSpeedLoss: [0, 1, 0.01], driftBoost: [0, 15, 0.5],
@@ -169,7 +171,7 @@ function frame(now) {
   effects.update(dt, car);
   audio.update(car, input, dt);
   updateCamera(dt);
-  world.updateLOD(camera.position);
+  world.updateLOD(camera.position, car.vel);
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
