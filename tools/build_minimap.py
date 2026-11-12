@@ -54,6 +54,15 @@ for tile in tiles:
 for kind in ('trail', 'gravel', 'asphalt'):
     fill, edge, w = ROAD[kind]
     lines = [[px(*p) for p in path['pts']] for tile in tiles for path in tile['paths'] if path['kind'] == kind]
+    # junction pieces (roads are trimmed back where they meet): a spoke from the centre to each road end
+    for tile in tiles:
+        for jn in tile.get('junctions', []):
+            if jn['kind'] != kind: continue
+            r = jn['ring']
+            for k in range(len(r)):
+                if r[k][3] == 0:                         # this ring edge is a road end: its midpoint joins the road
+                    q = r[(k + 1) % len(r)]
+                    lines.append([px(jn['c'][0], jn['c'][1]), px((r[k][0] + q[0]) / 2, (r[k][1] + q[1]) / 2)])
     for pass_col, pass_w in ((edge, w + 4), (fill, w)):
         lw = max(1, round(pass_w / DRAW_MPP))
         for pts in lines:

@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileData } from './data.js';
-import { buildRoads, roadBatches } from './roads.js';
+import { buildRoads, roadBatches, buildJunctions } from './roads.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
@@ -65,6 +65,41 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       yield 'texture';
     }
     const { H, NN } = td, HM = W.hm, HN = W.hn;
+    // near roads, the coarser terrain levels take the lowest height around each vertex, so a big coarse triangle can
+    // never bulge up through a road the fine terrain was carved under
+    const near = new Uint8Array(NN * NN);
+    const markBox = (x0, x1, z0, z1) => {
+      const j0 = Math.max(0, Math.floor((x0 - td.gx0) / HS)), j1 = Math.min(NN - 1, Math.ceil((x1 - td.gx0) / HS));
+      const i0 = Math.max(0, Math.floor((z0 - td.gz0) / HS)), i1 = Math.min(NN - 1, Math.ceil((z1 - td.gz0) / HS));
+      for (let i = i0; i <= i1; i++) near.fill(1, i * NN + j0, i * NN + j1 + 1);
+    };
+    for (const r of td.roads) for (let k = 0; k < r.n; k += 2) { const m = r.hw + 6; markBox(r.x[k] - m, r.x[k] + m, r.z[k] - m, r.z[k] + m); }
+    for (const j of td.renderJunctions) {
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (const q of j.ring) { a0 = Math.min(a0, q[0]); a1 = Math.max(a1, q[0]); b0 = Math.min(b0, q[1]); b1 = Math.max(b1, q[1]); }
+      markBox(a0 - 6, a1 + 6, b0 - 6, b1 + 6);
+    }
+    const dilated = st => {                    // any road-near vertex within st cells (box), separable
+      const a = new Uint8Array(NN * NN), b = new Uint8Array(NN * NN);
+      for (let i = 0; i < NN; i++) for (let j = 0; j < NN; j++) {
+        if (!near[i * NN + j]) continue;
+        a.fill(1, i * NN + Math.max(0, j - st), i * NN + Math.min(NN - 1, j + st) + 1);
+      }
+      for (let i = 0; i < NN; i++) for (let j = 0; j < NN; j++) {
+        if (!a[i * NN + j]) continue;
+        for (let q = Math.max(0, i - st); q <= Math.min(NN - 1, i + st); q++) b[q * NN + j] = 1;
+      }
+      return b;
+    };
+    const lowMask = {};
+    for (const st of [2, 4, 8]) { lowMask[st] = dilated(st); yield 'roadmask'; }
+    const heightFor = (gi, gj, st) => {         // gi, gj: height-grid indices (with margin)
+      if (st === 1 || !lowMask[st][gi * NN + gj]) return H[gi * NN + gj];
+      let h = Infinity;
+      for (let q = Math.max(0, gi - st); q <= Math.min(NN - 1, gi + st); q++)
+        for (let p = Math.max(0, gj - st); p <= Math.min(NN - 1, gj + st); p++) h = Math.min(h, H[q * NN + p]);
+      return h;
+    };
     // terrain: 100-cell (400 m) chunks with 4 detail levels + skirts
     const CHUNK = 125, QN = (HN - 1) / 2, STEPS = [1, 2, 4, 8];      // 500 m chunks; 4 chunks per texture quarter
     function chunkGeometry(i0, j0, i1, j1, st, qi0, qj0) {
@@ -73,7 +108,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       for (let j = j0; j < j1; j += st) js.push(j); js.push(j1);
       const ni = is.length, nj = js.length, P = [], U = [], I = [];
       const vert = (i, j, drop) => {
-        P.push(td.x0 + j * HS, H[(i + HM) * NN + (j + HM)] - drop, td.z0 + i * HS);
+        P.push(td.x0 + j * HS, heightFor(i + HM, j + HM, st) - drop, td.z0 + i * HS);
         U.push((j - qj0) / QN, (i - qi0) / QN); return P.length / 3 - 1;
       };
       for (const i of is) for (const j of js) vert(i, j, 0);
@@ -108,6 +143,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     // road / trail strips
     for (const batch of roadBatches(td.renderRoads)) { g.add(buildRoads(td, stripMat, batch)); yield 'roads'; }
+    for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
     // ponds: a flat quad per height cell inside a pond
     const wpos = [];
     for (let i = 0; i < HN - 1; i++) {

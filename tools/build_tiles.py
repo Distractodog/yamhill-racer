@@ -16,6 +16,7 @@ Per tile, game/assets/tiles/<tx>_<tz>/:
 game/assets/world.json: tile size, list of tiles, spawn, height grid info.
 """
 import json, math, os, sys, time
+from collections import Counter
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 from scipy import ndimage
@@ -23,7 +24,7 @@ from skimage.morphology import skeletonize
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
-import mapdata, align
+import mapdata, align, roadnet
 from fetch_tiles import TILE, MARGIN, TX, TZ, HSTEP, CX, CY, K, R
 
 RAW = os.path.join(ROOT, 'data', 'raw')
@@ -222,6 +223,7 @@ def fix_path(path):
     for a, b in zip(src[:-1], src[1:]):
         n = max(1, int(np.hypot(*(b - a)) / 1.0)); dense += [a + (b - a) * t for t in np.linspace(0, 1, n + 1)[1:]]
     pts = np.array(dense); new = pts.copy(); cut = np.zeros(len(pts), bool)
+    ends = pts[0].copy(), pts[-1].copy()
     u = (pts - [GX0, GZ0]) / WM
     iu = np.clip(u[:, 0].astype(int), 0, GWW - 1); iv = np.clip(u[:, 1].astype(int), 0, GWH - 1)
     for k in np.nonzero(gwater[iv, iu] | (_d_out[iv, iu] < keep))[0]:
@@ -232,15 +234,41 @@ def fix_path(path):
             if path['kind'] == 'trail': cut[k] = True
             continue
         new[k] = (q + d / (np.hypot(*d) or 1.0) * keep) * WM + [GX0, GZ0]
-    out, run = [], []
+    if not cut[0]: new[0] = ends[0]                 # junction ends stay put (other roads meet there)
+    if not cut[-1]: new[-1] = ends[1]
+    out, run, flags = [], [], []
     for k in range(len(new)):
         if cut[k]:
-            if run: out.append(np.array(run)); run = []
-        else: run.append(new[k])
-    if run: out.append(np.array(run))
-    return [{**path, 'pts': chaikin(rdp(pc, 0.4), 2)} for pc in out
+            if run: out.append(np.array(run)); flags.append((run0 == 0, False)); run = []
+        else:
+            if not run: run0 = k
+            run.append(new[k])
+    if run: out.append(np.array(run)); flags.append((run0 == 0, True))
+    return [({**path, 'pts': chaikin(rdp(pc, 0.4), 2)}, fl) for pc, fl in zip(out, flags)
             if len(pc) >= 2 and np.hypot(*np.diff(pc, axis=0).T).sum() >= 8]
-paths = [q for p in road_paths + trail_paths for q in fix_path(p)]
+
+# road network: ways that share a point meet at a junction; dead ends near a road join it; tiny bits collapse
+nodes, edges = roadnet.build_graph(road_paths + trail_paths)
+log('graph: nodes', len(nodes), 'edges', len(edges))
+log('dead ends joined', roadnet.snap_dead_ends(nodes, edges))
+for _ in range(3):
+    roadnet.merge_deg2(nodes, edges); roadnet.contract_short(nodes, edges)
+roadnet.merge_deg2(nodes, edges)
+nodes, edges = roadnet.compact(nodes, edges)
+# water: nudge / cut each edge (junction ends are kept unless the edge is cut there)
+fixed = []
+for e in edges:
+    for piece, (keep_a, keep_b) in fix_path(e):
+        a = e['a'] if keep_a else len(nodes)
+        if not keep_a: nodes.append(piece['pts'][0].copy())
+        b = e['b'] if keep_b else len(nodes)
+        if not keep_b: nodes.append(piece['pts'][-1].copy())
+        fixed.append({'a': a, 'b': b, 'pts': piece['pts'], 'kind': e['kind'], 'w': e['w']})
+nodes, edges = roadnet.compact(nodes, fixed)
+paths = edges
+deg = Counter([e['a'] for e in edges] + [e['b'] for e in edges])
+log('network: edges', len(edges), 'junctions', sum(1 for v in deg.values() if v >= 3),
+    'dead ends', sum(1 for v in deg.values() if v == 1))
 del _d_out, _i_out, _d_in, _i_in
 log('paths', len(paths))
 
@@ -291,6 +319,20 @@ for i, sl in enumerate(ndimage.find_objects(lab0), 1):
     ponds_g.append({'level': round(level, 3), 'wet': (sl, wet)})
 log('ponds', len(ponds_g))
 
+# road heights: junction planes + smooth profiles; then carve the ground under every road
+_hfun = lambda g: (lambda x, z: ndimage.map_coordinates(g, [(np.atleast_1d(z) - GZ0) / HSTEP, (np.atleast_1d(x) - GX0) / HSTEP], order=1, mode='nearest'))
+_ghs = ndimage.gaussian_filter(gh, 2.0)
+_gz, _gx = np.gradient(_ghs, HSTEP)
+J = roadnet.junction_layout(nodes, edges)
+planes, plane_y = roadnet.profiles(nodes, edges, J, _hfun(gh), lambda x, z: float(_hfun(_ghs)(x, z)[0]),
+                                   lambda x, z: (float(_hfun(_gx)(x, z)[0]), float(_hfun(_gz)(x, z)[0])))
+log('roads matched to an overlapping bigger road:', roadnet.harmonize(edges, J))
+juncs = roadnet.junction_rings(J, edges, planes, plane_y)
+_protect = ndimage.binary_dilation(pond_gid > 0, iterations=1)
+nv, mx = roadnet.carve(gh, GX0, GZ0, HSTEP, edges, juncs, _protect)
+log(f'roads carved: {nv} height vertices moved (max {mx:.1f} m), junction pieces {len(juncs)}')
+del _ghs, _gx, _gz
+
 # ---------------------------------------------------------------- 6. per tile
 REF = np.array([(92, 112, 62), (112, 116, 76), (168, 150, 104), (112, 94, 74)], np.float32)
 OPEN = np.array([(118, 172, 70), (146, 166, 82), (212, 186, 112), (156, 116, 80)], np.float32)
@@ -315,7 +357,7 @@ def clip_polyline(pts, rect):
             continue
         pa, pb = a + d * t0, a + d * t1
         if not cur: cur = [pa]
-        elif np.hypot(*(cur[-1] - pa)) > 1e-6: pieces.append(cur); cur = [pa]
+        elif np.hypot(*(cur[-1] - pa)[:2]) > 1e-6: pieces.append(cur); cur = [pa]
         cur.append(pb)
         if t1 < 1.0: pieces.append(cur); cur = []
     if cur: pieces.append(cur)
@@ -343,7 +385,9 @@ for tx, tz in TILES:
     to_px = lambda x, z: ((x - (rx0 - M)), (z - (rz0 - M)))
     path_m = raster(lambda d: [d.line([to_px(x, z) for x, z in p['pts']], fill=255, width=int(p['w']), joint='curve') for p in paths
                                if p['pts'][:, 0].max() > rx0 - M - 20 and p['pts'][:, 0].min() < rx1 + M + 20
-                               and p['pts'][:, 1].max() > rz0 - M - 20 and p['pts'][:, 1].min() < rz1 + M + 20])
+                               and p['pts'][:, 1].max() > rz0 - M - 20 and p['pts'][:, 1].min() < rz1 + M + 20]
+                    + [d.polygon([to_px(q[0], q[1]) for q in jn['ring']], fill=255) for jn in juncs
+                       if rx0 - M - 60 < jn['c'][0] < rx1 + M + 60 and rz0 - M - 60 < jn['c'][1] < rz1 + M + 60])
     tb = [b for b in buildings if rx0 - M < b['pts'][:, 0].mean() < rx1 + M and rz0 - M < b['pts'][:, 1].mean() < rz1 + M]
     bld_m = raster(lambda d: [d.polygon([to_px(x, z) for x, z in b['pts']], fill=255) for b in tb if len(b['pts']) >= 3])
     gx0i, gz0i = int((rx0 - M - GX0) / WM), int((rz0 - M - GZ0) / WM)
@@ -407,18 +451,24 @@ for tx, tz in TILES:
 
     # ---- strips: exact pieces for drawing, padded pieces for physics (a strip's width can reach over the edge)
     render, phys = [], []
+    piece = lambda p, pc: {'kind': p['kind'], 'w': p['w'], 'pts': np.round(pc[:, :2], 2).tolist(),
+                           'yc': [[round(float(y), 3), round(float(c), 4)] for y, c in pc[:, 2:4]]}
     for p in paths:
-        for pc in clip_polyline(p['pts'], tile_rect(tx, tz)):
-            render.append({'kind': p['kind'], 'w': p['w'], 'pts': np.round(pc, 2).tolist()})
-        for pc in clip_polyline(p['pts'], tile_rect(tx, tz, pad=p['w'])):
-            phys.append({'kind': p['kind'], 'w': p['w'], 'pts': np.round(pc, 2).tolist()})
+        o = p['out']
+        if roadnet.arclen(o)[-1] < 0.5: continue                     # fully swallowed by its junctions
+        if o[:, 0].max() < rx0 - 60 or o[:, 0].min() > rx1 + 60 or o[:, 1].max() < rz0 - 60 or o[:, 1].min() > rz1 + 60: continue
+        for pc in clip_polyline(o, tile_rect(tx, tz)): render.append(piece(p, pc))
+        for pc in clip_polyline(o, tile_rect(tx, tz, pad=p['w'])): phys.append(piece(p, pc))
+    pr = tile_rect(tx, tz, pad=40)
+    tj = [jn for jn in juncs if rx0 <= jn['c'][0] < rx1 and rz0 <= jn['c'][1] < rz1]
+    pj = [jn for jn in juncs if any(pr[0] <= q[0] <= pr[2] and pr[1] <= q[1] <= pr[3] for q in jn['ring'])]
     # ---- ponds touching this tile
     tponds = {}
     for k in np.unique(pid_pad[pid_pad > 0]):
         tponds[int(k)] = ponds_g[k - 1]['level']
     json.dump({'tx': tx, 'tz': tz, 'buildings': [{'pts': np.round(b['pts'], 2).tolist(), 'h': b['h']} for b in tb
                                                    if rx0 <= b['pts'][:, 0].mean() < rx1 and rz0 <= b['pts'][:, 1].mean() < rz1],
-               'paths': render, 'physPaths': phys, 'ponds': tponds},
+               'paths': render, 'physPaths': phys, 'junctions': tj, 'physJunctions': pj, 'ponds': tponds},
               open(os.path.join(out, 'tile.json'), 'w'))
     pid_pad.astype(np.uint16).tofile(os.path.join(out, 'ponds.bin'))
     world_tiles.append([tx, tz])

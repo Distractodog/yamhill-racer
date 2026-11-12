@@ -4,24 +4,28 @@
 // to the tile that contains the point.
 import * as THREE from 'three';
 
-// 3D road / trail strips: how far each kind sits above the terrain, its surface class
+// road / trail strips and junction pieces: surface class per kind. Heights come baked from the build
+// (tools/roadnet.py): each strip point has a centre-line height y and a cross slope c (height per metre to the left).
 export const PATH_KINDS = {
-  asphalt: { raise: 0.16, cls: 3 },
-  gravel: { raise: 0.14, cls: 4 },
-  trail: { raise: 0.12, cls: 2 },
+  asphalt: { cls: 3 },
+  gravel: { cls: 4 },
+  trail: { cls: 2 },
 };
 export const STEP = 1.5;
 export function trunkRadius(h, broad) { return broad ? 0.25 + h * 0.015 : 0.3 + h * 0.012; }
 
-// polyline -> strip samples every STEP m with left-pointing unit normals
+// polyline -> strip samples every <= STEP m with left-pointing unit normals, heights and cross slopes
 export function prepRoad(p, id) {
   const K = PATH_KINDS[p.kind]; if (!K) return null;
-  const pts = p.pts, xs = [], zs = [];
+  const pts = p.pts, yc = p.yc || pts.map(() => [0, 0]), xs = [], zs = [], ys = [], cs = [];
   for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, az] = pts[i], [bx, bz] = pts[i + 1], L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(L / STEP));
-    for (let k = 0; k < n; k++) { xs.push(ax + (bx - ax) * k / n); zs.push(az + (bz - az) * k / n); }
+    const [ax, az] = pts[i], [bx, bz] = pts[i + 1], [ay, ac] = yc[i], [by, bc] = yc[i + 1];
+    const L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(L / STEP));
+    for (let k = 0; k < n; k++) {
+      const t = k / n; xs.push(ax + (bx - ax) * t); zs.push(az + (bz - az) * t); ys.push(ay + (by - ay) * t); cs.push(ac + (bc - ac) * t);
+    }
   }
-  xs.push(pts[pts.length - 1][0]); zs.push(pts[pts.length - 1][1]);
+  const e = pts.length - 1; xs.push(pts[e][0]); zs.push(pts[e][1]); ys.push(yc[e][0]); cs.push(yc[e][1]);
   const n = xs.length; if (n < 2) return null;
   const lx = new Float32Array(n), lz = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -29,7 +33,7 @@ export function prepRoad(p, id) {
     let tx = xs[b] - xs[a], tz = zs[b] - zs[a]; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
     lx[i] = tz; lz[i] = -tx;
   }
-  return { id, kind: p.kind, hw: p.w / 2, raise: K.raise, cls: K.cls, x: xs, z: zs, lx, lz, n };
+  return { id, kind: p.kind, hw: p.w / 2, cls: K.cls, x: xs, z: zs, y: ys, c: cs, lx, lz, n };
 }
 
 // ---------------------------------------------------------------- one tile
@@ -60,34 +64,58 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
     const lv = pondLevel[k]; return lv !== undefined && terrainAt(x, z) < lv ? lv : -Infinity;
   }
 
-  // strips: physics uses the padded pieces (a strip's width can reach over the tile edge), drawing the exact ones
-  const roads = [], renderRoads = [];
-  const SG = 10, SGN = Math.ceil((T + 80) / SG), segGrid = new Map(), sx0 = x0 - 40, sz0 = z0 - 40;
+  // strips + junction pieces: physics uses the padded sets (they can reach over the tile edge), drawing the exact ones
+  const roads = [], renderRoads = [], juncs = [];
+  const SG = 10, SGN = Math.ceil((T + 120) / SG), segGrid = new Map(), sx0 = x0 - 60, sz0 = z0 - 60;
+  const addBox = (a0, a1, b0, b1, id, i) => {
+    for (let gz = Math.max(0, Math.floor((b0 - sz0) / SG)); gz <= Math.min(SGN - 1, Math.floor((b1 - sz0) / SG)); gz++)
+      for (let gx = Math.max(0, Math.floor((a0 - sx0) / SG)); gx <= Math.min(SGN - 1, Math.floor((a1 - sx0) / SG)); gx++) {
+        const k = gz * SGN + gx; let l = segGrid.get(k); if (!l) segGrid.set(k, l = []); l.push(id, i);
+      }
+  };
   for (const p of tile.physPaths || []) {
     const r = prepRoad(p, roads.length); if (!r) continue; roads.push(r);
     for (let i = 0; i < r.n - 1; i++) {
       const m = r.hw + 1;
-      const a0 = Math.min(r.x[i], r.x[i + 1]) - m, a1 = Math.max(r.x[i], r.x[i + 1]) + m;
-      const b0 = Math.min(r.z[i], r.z[i + 1]) - m, b1 = Math.max(r.z[i], r.z[i + 1]) + m;
-      for (let gz = Math.max(0, Math.floor((b0 - sz0) / SG)); gz <= Math.min(SGN - 1, Math.floor((b1 - sz0) / SG)); gz++)
-        for (let gx = Math.max(0, Math.floor((a0 - sx0) / SG)); gx <= Math.min(SGN - 1, Math.floor((a1 - sx0) / SG)); gx++) {
-          const k = gz * SGN + gx; let l = segGrid.get(k); if (!l) segGrid.set(k, l = []); l.push(r.id, i);
-        }
+      addBox(Math.min(r.x[i], r.x[i + 1]) - m, Math.max(r.x[i], r.x[i + 1]) + m,
+        Math.min(r.z[i], r.z[i + 1]) - m, Math.max(r.z[i], r.z[i + 1]) + m, r.id, i);
+    }
+  }
+  for (const j of tile.physJunctions || []) {
+    const id = juncs.length, R = j.ring, c = j.c; juncs.push({ cls: PATH_KINDS[j.kind].cls, c, ring: R });
+    for (let k = 0; k < R.length; k++) {
+      const p = R[k], q = R[(k + 1) % R.length];
+      addBox(Math.min(c[0], p[0], q[0]), Math.max(c[0], p[0], q[0]), Math.min(c[1], p[1], q[1]), Math.max(c[1], p[1], q[1]), -1 - id, k);
     }
   }
   for (const p of tile.paths || []) { const r = prepRoad(p, renderRoads.length); if (r) renderRoads.push(r); }
+  const renderJunctions = (tile.junctions || []).map(j => ({ ...j, cls: PATH_KINDS[j.kind].cls }));
   let lastCls = -1;
-  function overlayAt(x, z) {                 // extra height above terrain from road / trail strips; sets lastCls
-    let best = 0; lastCls = -1;
-    const l = segGrid.get(Math.floor((z - sz0) / SG) * SGN + Math.floor((x - sx0) / SG)); if (!l) return 0;
+  function overlayAt(x, z) {                 // road surface height here (-Infinity if no road); sets lastCls
+    let best = -Infinity; lastCls = -1;
+    const l = segGrid.get(Math.floor((z - sz0) / SG) * SGN + Math.floor((x - sx0) / SG)); if (!l) return best;
     for (let q = 0; q < l.length; q += 2) {
-      const r = roads[l[q]], i = l[q + 1];
-      const ax = r.x[i], az = r.z[i], ex = r.x[i + 1] - ax, ez = r.z[i + 1] - az, L2 = ex * ex + ez * ez || 1e-6;
+      const id = l[q], i = l[q + 1];
+      if (id < 0) {                            // junction triangle (centre, ring[i], ring[i+1])
+        const J = juncs[-1 - id], c = J.c, A = J.ring[i], B = J.ring[(i + 1) % J.ring.length];
+        const ux = A[0] - c[0], uz = A[1] - c[1], vx = B[0] - c[0], vz = B[1] - c[1], px = x - c[0], pz = z - c[1];
+        const det = ux * vz - uz * vx; if (Math.abs(det) < 1e-9) continue;
+        const a = (px * vz - pz * vx) / det, b = (ux * pz - uz * px) / det;
+        if (a < -1e-4 || b < -1e-4 || a + b > 1 + 1e-4) continue;
+        const y = c[2] + (A[2] - c[2]) * a + (B[2] - c[2]) * b;
+        if (y > best) { best = y; lastCls = J.cls; }
+        continue;
+      }
+      const r = roads[id];
+      const ax = r.x[i], az = r.z[i], ex = r.x[i + 1] - ax, ez = r.z[i + 1] - az, L2 = ex * ex + ez * ez;
+      if (L2 < 1e-4) continue;
       const u = ((x - ax) * ex + (z - az) * ez) / L2;
       if (u < -0.02 || u > 1.02) continue;
       const off = ((x - ax) * ez - (z - az) * ex) / Math.sqrt(L2);
       if (Math.abs(off) > r.hw) continue;
-      if (r.raise > best || lastCls < 0) { best = Math.max(best, r.raise); lastCls = r.cls; }
+      const uc = Math.min(1, Math.max(0, u));
+      const y = r.y[i] + (r.y[i + 1] - r.y[i]) * uc + (r.c[i] + (r.c[i + 1] - r.c[i]) * uc) * off;
+      if (y > best) { best = y; lastCls = r.cls; }
     }
     return best;
   }
@@ -108,9 +136,9 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
       for (const t of l) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]));
     }
   }
-  return { tx, tz, x0, z0, gx0, gz0, NN, H, trees, treeCount: nT, roads, renderRoads, buildings: tile.buildings || [],
+  return { tx, tz, x0, z0, gx0, gz0, NN, H, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
     pondId, pondLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
-    heightAt: (x, z) => terrainAt(x, z) + overlayAt(x, z) };
+    heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
 }
 
 // ---------------------------------------------------------------- the whole world: routes queries to tiles
