@@ -125,6 +125,10 @@ function makeRamp(world, r) {
 // ---------------------------------------------------------------- manager
 export async function createChallenges({ scene, world, car, minimap, base = './assets/' }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
+  // the map's fixed ramps (always there, not part of any challenge)
+  const fixedList = await fetch(base + 'ramps.json').then(r => r.ok ? r.json() : []).catch(() => []);
+  const fixedRamps = fixedList.map(r => ({ r, grp: null }));
+  world.setFixedRamps?.(fixedList);
   MAT.finish = new THREE.MeshBasicMaterial({ map: checkerTexture() });
   RAMP_MAT = new THREE.MeshLambertMaterial({ map: chevronTexture() });
   MAT.finish.map.repeat.set(4, 1); MAT.finish.map.wrapS = THREE.RepeatWrapping;
@@ -305,6 +309,10 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
     },
     update(dt) {
       curPos.set(car.pos.x, car.pos.z);
+      for (const q of fixedRamps) if (!q.grp) {           // fixed ramps: mesh once the road under them has loaded
+        const { x, z, yaw } = q.r, ex = x + Math.sin(yaw) * RAMP_LEN, ez = z + Math.cos(yaw) * RAMP_LEN;
+        if (world.loadedAt(x, z) && world.loadedAt(ex, ez)) { q.grp = makeRamp(world, q.r); group.add(q.grp); }
+      }
       if (ch) {
         // drop arches onto the ground once their tile has streamed in
         for (const q of ramps) if (!q.grp) {

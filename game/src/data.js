@@ -173,8 +173,10 @@ export function makeWorld(W) {
   }
   const at = (x, z) => tileAt(x, z) || nearest(x, z);
   function terrainAt(x, z) { const t = at(x, z); return t ? t.terrainAt(x, z) : 0; }
-  // ramps: only while a challenge with ramps is running (setRamps); each sits on whatever road is under it
-  let ramps = [];
+  // ramps: the map's fixed ones (assets/ramps.json, setFixedRamps) + a running challenge's (setRamps); each sits on
+  // whatever road is under it
+  let ramps = [], fixedRamps = [], challengeRamps = [];
+  const prepRamps = list => (list || []).map(r => ({ ...r, fx: Math.sin(r.yaw), fz: Math.cos(r.yaw) }));
   let rampSlope = 0, rampFx = 0, rampFz = 0;           // set by rampAt: slope along the ramp at the last point
   function rampAt(x, z) {
     rampSlope = 0;
@@ -186,7 +188,8 @@ export function makeWorld(W) {
     }
     return 0;
   }
-  function setRamps(list) { ramps = (list || []).map(r => ({ ...r, fx: Math.sin(r.yaw), fz: Math.cos(r.yaw) })); }
+  function setRamps(list) { challengeRamps = prepRamps(list); ramps = fixedRamps.concat(challengeRamps); }
+  function setFixedRamps(list) { fixedRamps = prepRamps(list); ramps = fixedRamps.concat(challengeRamps); }
   function groundAt(x, z) { const t = at(x, z); return t ? t.heightAt(x, z) : 0; }     // without ramps
   function heightAt(x, z) { const g = groundAt(x, z); return ramps.length ? g + rampAt(x, z) : g; }
   function surfaceAt(x, z) { const t = tileAt(x, z); return t ? t.surfaceAt(x, z) : 0; }
@@ -230,6 +233,6 @@ export function makeWorld(W) {
     remove(tx, tz) { tiles.delete(key(tx, tz)); last = null; },
     has: (tx, tz) => tiles.has(key(tx, tz)),
     loadedAt: (x, z) => !!tileAt(x, z),
-    terrainAt, heightAt, groundAt, rampAt, setRamps, get ramps() { return ramps; }, surfaceAt, waterLevelAt, normalAt, treesNear, buildingsNear, placeOn,
+    terrainAt, heightAt, groundAt, rampAt, setRamps, setFixedRamps, get ramps() { return ramps; }, surfaceAt, waterLevelAt, normalAt, treesNear, buildingsNear, placeOn,
   };
 }
