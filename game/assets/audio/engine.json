@@ -1,0 +1,18 @@
+{
+ "idle": {
+  "freesound": 401552,
+  "hz": 28.0
+ },
+ "low": {
+  "freesound": 401556,
+  "hz": 49.0
+ },
+ "med": {
+  "freesound": 401555,
+  "hz": 68.0
+ },
+ "high": {
+  "freesound": 401551,
+  "hz": 85.0
+ }
+}

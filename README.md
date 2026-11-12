@@ -33,4 +33,5 @@ serve `game/` with any static web server.
 - Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL).
 - Elevation: USGS 3D Elevation Program; imagery used to colour the ground: USDA NAIP (both public domain).
 - Tree heights: Meta & World Resources Institute, *High Resolution Canopy Height Maps* (CC BY 4.0).
+- Engine sound: real BMW 120d recordings by GiocoSound on [Freesound](https://freesound.org/people/GiocoSound/packs/22622/) (CC0).
 - Rendering: [three.js](https://threejs.org) (MIT).
