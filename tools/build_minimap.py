@@ -5,15 +5,15 @@ tile.json (roads, trails, buildings). Drawn at 2 m/px, then shrunk to OUT_MPP so
 
   .venv/bin/python tools/build_minimap.py      (~20 s)
 """
-import json
+import json, os
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
-ASSETS = ROOT / 'game' / 'assets'
-DRAW_MPP, OUT_MPP = 2.0, 4.0
+ASSETS = Path(os.environ.get('YR_ASSETS', ROOT / 'game' / 'assets'))
+DRAW_MPP, OUT_MPP = 2.0, 5.0
 ROAD = {  # (fill colour, outline colour, width in metres on the map; a bit wider than real so they read)
     'asphalt': ((70, 73, 82), (235, 235, 230), 14),
     'gravel': ((222, 205, 165), (120, 104, 76), 10),
@@ -26,7 +26,7 @@ world = json.loads((ASSETS / 'world.json').read_text())
 T = world['tile']
 ex0, ez0, ex1, ez1 = world['extent']
 W, H = int((ex1 - ex0) / DRAW_MPP), int((ez1 - ez0) / DRAW_MPP)
-img = Image.new('RGB', (W, H), (60, 90, 50))
+img = Image.new('RGB', (W, H), (34, 40, 36))          # off the map (the map is a set of tiles, not a rectangle)
 tile_px = int(T / DRAW_MPP)
 
 

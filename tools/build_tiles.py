@@ -25,17 +25,18 @@ from skimage.morphology import skeletonize
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import mapdata, align, roadnet
-from fetch_tiles import TILE, MARGIN, TX, TZ, HSTEP, CX, CY, K, R
+from fetch_tiles import TILE, MARGIN, TX, TZ, TILE_SET, HSTEP, CX, CY, K, R
 
 RAW = os.path.join(ROOT, 'data', 'raw')
-OUT = os.path.join(ROOT, 'game', 'assets', 'tiles')
+ASSETS = os.environ.get('YR_ASSETS', os.path.join(ROOT, 'game', 'assets'))   # YR_ASSETS=dir builds somewhere else, to swap in after
+OUT = os.path.join(ASSETS, 'tiles')
 os.makedirs(OUT, exist_ok=True)
 rng = np.random.default_rng(7)
 T0 = time.time()
 def log(*a): print(f'[{time.time() - T0:5.0f}s]', *a, flush=True)
 
-TILES = [(tx, tz) for tz in TZ for tx in TX
-         if os.path.exists(os.path.join(RAW, 'tiles', f'{tx}_{tz}', 'chm.npy'))]
+TILES = [(tx, tz) for tx, tz in TILE_SET if os.path.exists(os.path.join(RAW, 'tiles', f'{tx}_{tz}', 'chm.npy'))]
+TILE_KEYS = set(TILES)
 GX0, GX1 = TX.start * TILE - TILE / 2, (TX.stop - 1) * TILE + TILE / 2     # global extent
 GZ0, GZ1 = TZ.start * TILE - TILE / 2, (TZ.stop - 1) * TILE + TILE / 2
 HN = int(TILE / HSTEP) + 1                       # 501 vertices per tile side
@@ -77,6 +78,34 @@ def tile_of(x, z):
     return int(math.floor((x + TILE / 2) / TILE)), int(math.floor((z + TILE / 2) / TILE))
 
 
+def in_map(x, z, pad=0.0):
+    """True where a point is on a built tile (or within pad metres of one). x, z arrays."""
+    x, z = np.atleast_1d(x), np.atleast_1d(z); ok = np.zeros(len(x), bool)
+    for dx in ((0,) if pad == 0 else (-pad, 0, pad)):
+        for dz in ((0,) if pad == 0 else (-pad, 0, pad)):
+            tx = np.floor((x + dx + TILE / 2) / TILE).astype(int); tz = np.floor((z + dz + TILE / 2) / TILE).astype(int)
+            ok |= np.array([(a, b) in TILE_KEYS for a, b in zip(tx, tz)])
+    return ok
+
+
+def keep_in_map(pts, pad=120.0):
+    """The runs of a polyline that lie on the map (densified to 20 m so long segments can't skip a gap)."""
+    d, orig = [pts[0]], [True]
+    for a, b in zip(pts[:-1], pts[1:]):
+        n = max(1, int(np.hypot(*(b - a)) / 20.0))
+        d += [a + (b - a) * t for t in np.linspace(0, 1, n + 1)[1:]]; orig += [False] * (n - 1) + [True]
+    d = np.array(d); ok = in_map(d[:, 0], d[:, 1], pad)
+    if ok.all(): return [pts]
+    runs, cur = [], []
+    for k in range(len(d)):
+        if ok[k]: cur.append(k)
+        if cur and (not ok[k] or k == len(d) - 1):
+            idx = [i for i in cur if orig[i] or i == cur[0] or i == cur[-1]]
+            if len(idx) >= 2: runs.append(d[idx])
+            cur = []
+    return runs
+
+
 # ---------------------------------------------------------------- 1. OpenStreetMap: roads, buildings, water
 osm = json.load(open(os.path.join(RAW, 'osm_region.json')))['elements']
 ROAD_W = {'motorway': 18, 'trunk': 17, 'primary': 16, 'secondary': 15, 'tertiary': 14, 'unclassified': 13,
@@ -93,14 +122,16 @@ for e in osm:
         h = h.replace('_link', '')
         if h not in ROAD_W: continue
         paved = h in PAVED or t.get('surface') in ('asphalt', 'paved', 'concrete')
-        road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': ROAD_W[h], 'pts': pts, 'bridge': t.get('bridge') == 'yes'})
+        for run in keep_in_map(pts):
+            road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': ROAD_W[h], 'pts': run, 'bridge': t.get('bridge') == 'yes'})
     elif 'building' in t:
+        if not in_map(pts[:, 0].mean(), pts[:, 1].mean(), 80)[0]: continue
         lv = t.get('building:levels')
         try: hgt = float(t.get('height', 0) or 0) or (float(lv) * 3.2 if lv else (7.5 if len(geo) > 8 else 5.5))
         except ValueError: hgt = 6.0
         buildings.append({'pts': pts[:-1], 'h': round(hgt, 1)})
     elif t.get('natural') == 'water' and e['type'] == 'way':
-        water_polys.append(pts)
+        if in_map(pts[:, 0], pts[:, 1], 100).any(): water_polys.append(pts)
 log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys))
 
 # ---------------------------------------------------------------- 2. campus: trails + ponds from Ethan's map
@@ -213,8 +244,13 @@ gwater = ndimage.binary_closing(gwater, iterations=1)
 log('water pixels', int(gwater.sum()), f'({gwater.sum() * WM * WM / 1e4:.1f} ha)')
 
 # ---------------------------------------------------------------- 4. keep roads/trails out of the water
-_d_out, _i_out = ndimage.distance_transform_edt(~gwater, return_indices=True)
-_d_in, _i_in = ndimage.distance_transform_edt(gwater, return_indices=True)
+# distances only over the box around the water (the full 2 m grid is too big for 4 distance/index arrays)
+_wr, _wc = np.nonzero(gwater.any(1))[0], np.nonzero(gwater.any(0))[0]
+WR0, WR1 = (max(0, _wr[0] - 32), min(GWH, _wr[-1] + 33)) if len(_wr) else (0, 1)
+WC0, WC1 = (max(0, _wc[0] - 32), min(GWW, _wc[-1] + 33)) if len(_wc) else (0, 1)
+_gwc = gwater[WR0:WR1, WC0:WC1]
+_d_out, _i_out = ndimage.distance_transform_edt(~_gwc, return_indices=True)
+_d_in, _i_in = ndimage.distance_transform_edt(_gwc, return_indices=True)
 MAX_NUDGE = 6.0
 def fix_path(path):
     """Trails grazing water are nudged onto the shore; trails that would cross it end at the water's edge.
@@ -226,16 +262,17 @@ def fix_path(path):
         n = max(1, int(np.hypot(*(b - a)) / 1.0)); dense += [a + (b - a) * t for t in np.linspace(0, 1, n + 1)[1:]]
     pts = np.array(dense); new = pts.copy(); cut = np.zeros(len(pts), bool)
     ends = pts[0].copy(), pts[-1].copy()
-    u = (pts - [GX0, GZ0]) / WM
-    iu = np.clip(u[:, 0].astype(int), 0, GWW - 1); iv = np.clip(u[:, 1].astype(int), 0, GWH - 1)
-    for k in np.nonzero(gwater[iv, iu] | (_d_out[iv, iu] < keep))[0]:
+    u = (pts - [GX0 + WC0 * WM, GZ0 + WR0 * WM]) / WM            # cell coords in the water box
+    inside = (u[:, 0] >= 0) & (u[:, 0] < WC1 - WC0) & (u[:, 1] >= 0) & (u[:, 1] < WR1 - WR0)
+    iu = np.clip(u[:, 0].astype(int), 0, WC1 - WC0 - 1); iv = np.clip(u[:, 1].astype(int), 0, WR1 - WR0 - 1)
+    for k in np.nonzero(inside & (_gwc[iv, iu] | (_d_out[iv, iu] < keep)))[0]:
         a, b = iv[k], iu[k]
-        if gwater[a, b]: q = np.array([_i_in[1][a, b], _i_in[0][a, b]], float); d = q - u[k]; need = (_d_in[a, b] + keep) * WM
+        if _gwc[a, b]: q = np.array([_i_in[1][a, b], _i_in[0][a, b]], float); d = q - u[k]; need = (_d_in[a, b] + keep) * WM
         else: q = np.array([_i_out[1][a, b], _i_out[0][a, b]], float); d = u[k] - q; need = (keep - _d_out[a, b]) * WM
         if need > MAX_NUDGE:
             if path['kind'] == 'trail': cut[k] = True
             continue
-        new[k] = (q + d / (np.hypot(*d) or 1.0) * keep) * WM + [GX0, GZ0]
+        new[k] = (q + d / (np.hypot(*d) or 1.0) * keep) * WM + [GX0 + WC0 * WM, GZ0 + WR0 * WM]
     if not cut[0]: new[0] = ends[0]                 # junction ends stay put (other roads meet there)
     if not cut[-1]: new[-1] = ends[1]
     out, run, flags = [], [], []
@@ -330,7 +367,10 @@ planes, plane_y = roadnet.profiles(nodes, edges, J, _hfun(gh), lambda x, z: floa
                                    lambda x, z: (float(_hfun(_gx)(x, z)[0]), float(_hfun(_gz)(x, z)[0])))
 log('roads matched to an overlapping bigger road:', roadnet.harmonize(edges, J))
 juncs = roadnet.junction_rings(J, edges, planes, plane_y)
-_protect = ndimage.binary_dilation(pond_gid > 0, iterations=1)
+# pond beds are never carved; the 1-cell rim around them can be, as long as it stays above that pond's water
+_lv = np.array([-np.inf] + [p['level'] for p in ponds_g], np.float32)
+_protect = ndimage.maximum_filter(_lv[pond_gid], size=3) + 0.15
+_protect[pond_gid > 0] = np.inf
 nv, mx = roadnet.carve(gh, GX0, GZ0, HSTEP, edges, juncs, _protect)
 log(f'roads carved: {nv} height vertices moved (max {mx:.1f} m), junction pieces {len(juncs)}')
 del _ghs, _gx, _gz
@@ -480,5 +520,5 @@ for tx, tz in TILES:
 json.dump({'tile': TILE, 'hstep': HSTEP, 'hn': HN, 'hm': HM, 'surfN': TILE, 'tiles': world_tiles,
            'extent': [GX0, GZ0, GX1, GZ1], 'spawn': SPAWN_OLD.round(2).tolist(),
            'ponds': [p['level'] for p in ponds_g]},
-          open(os.path.join(ROOT, 'game', 'assets', 'world.json'), 'w'), indent=1)
+          open(os.path.join(ASSETS, 'world.json'), 'w'), indent=1)
 log('done')

@@ -4,6 +4,8 @@ const LABELS = [
   { name: 'Delphian', x: -560, z: 60 },
   { name: 'Willamina', x: -3640, z: 3330 },
   { name: 'Sheridan', x: 3800, z: 1400 },
+  { name: 'Bellevue', x: 11860, z: -2110 },
+  { name: 'McMinnville', x: 19100, z: -11000 },
 ];
 
 export async function createMinimap(base = './assets/') {
@@ -60,7 +62,7 @@ export async function createMinimap(base = './assets/') {
       const d = fit(cc), W = cc.width, H = cc.height;
       viewM += (450 + Math.min(speed, 80) * 7 - viewM) * Math.min(1, dt * 1.5);   // zooms out a little at speed
       const s = W / (viewM / mpp);               // canvas px per image px
-      cctx.fillStyle = '#3c5a32'; cctx.fillRect(0, 0, W, H);
+      cctx.fillStyle = '#222824'; cctx.fillRect(0, 0, W, H);   // off the map (same as the baked picture)
       cctx.imageSmoothingQuality = 'high';
       cctx.drawImage(img, W / 2 - px * s, H / 2 - py * s, img.width * s, img.height * s);
       arrow(cctx, W / 2, H / 2, heading, 9 * d);

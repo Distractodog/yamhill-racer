@@ -9,7 +9,8 @@ Per tile:  naip.jpg   satellite, 1 m/px (tile + margin)
            chm.npy    tree height (m), 1 m/px, same footprint as naip.jpg
 Whole region: data/raw/osm_region.json (roads, buildings, water, waterways)
 
-Usage: .venv/bin/python tools/fetch_tiles.py [--only tx,tz]
+Usage: .venv/bin/python tools/fetch_tiles.py [--only tx,tz] [--osm-only]
+(delete data/raw/osm_region.json to re-download OSM after changing TILE_SET)
 """
 import io, json, math, os, sys, time, urllib.parse, urllib.request
 import numpy as np
@@ -18,8 +19,16 @@ from PIL import Image
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, 'data', 'raw')
 TILE, MARGIN = 2000, 64
-TX = range(-2, 3)          # x: -5000 .. 5000 m  (Willamina -> Sheridan)
-TZ = range(-1, 3)          # z: -3000 .. 5000 m
+# The map is a set of tiles, not a rectangle: the original 5 x 4 block (Willamina -> Sheridan, x -5000..5000,
+# z -3000..5000) plus a band ~6 km wide following Hwy 18 north-east through Bellevue into McMinnville.
+BASE = {(tx, tz) for tx in range(-2, 3) for tz in range(-1, 3)}
+HWY18 = {(3, 1), (4, 1), (5, 1), (3, 0), (4, 0), (5, 0), (6, 0), (5, -1), (6, -1), (7, -1), (5, -2), (6, -2), (7, -2),
+         (6, -3), (7, -3), (8, -3), (7, -4), (8, -4), (9, -4), (10, -4), (8, -5), (9, -5), (10, -5), (11, -5),
+         (10, -6)}
+MCMINNVILLE = {(8, -6), (9, -6), (11, -6), (9, -7), (10, -7), (11, -7)}   # rest of town (OSM building counts)
+TILE_SET = sorted(BASE | HWY18 | MCMINNVILLE, key=lambda t: (t[1], t[0]))
+TX = range(min(t[0] for t in TILE_SET), max(t[0] for t in TILE_SET) + 1)   # bounding ranges (global grid extent)
+TZ = range(min(t[1] for t in TILE_SET), max(t[1] for t in TILE_SET) + 1)
 HSTEP = 4.0                # height grid spacing (m)
 SAT_PX = 1.0               # satellite / tree-height pixel size (m)
 R = 6378137.0
@@ -114,7 +123,7 @@ if __name__ == '__main__':
     only = None
     if '--only' in sys.argv: only = tuple(map(int, sys.argv[sys.argv.index('--only') + 1].split(',')))
     fetch_osm(); print('osm ok', flush=True)
-    for tz in TZ:
-        for tx in TX:
-            if only and (tx, tz) != only: continue
-            t = time.time(); fetch_tile(tx, tz); print(f'tile {tx},{tz} ok ({time.time() - t:.0f}s)', flush=True)
+    if '--osm-only' in sys.argv: sys.exit()
+    for tx, tz in TILE_SET:
+        if only and (tx, tz) != only: continue
+        t = time.time(); fetch_tile(tx, tz); print(f'tile {tx},{tz} ok ({time.time() - t:.0f}s)', flush=True)

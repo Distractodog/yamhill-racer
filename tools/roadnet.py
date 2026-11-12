@@ -365,7 +365,8 @@ def junction_rings(J, edges, planes, plane_y):
 
 # ---------------------------------------------------------------- carve the terrain
 def carve(gh, gx0, gz0, hstep, edges, juncs, protect, drop=0.1, inner=6.0, outer=10.0):
-    """Grid heights under / next to roads set to just below the road surface, blended back to the ground."""
+    """Grid heights under / next to roads set to just below the road surface, blended back to the ground.
+    protect: per grid vertex, the lowest height carving may set (-inf = free, inf = never touched; pond rims)."""
     X, Z, Y, C, NX, NZ, HW, GX, GZ = [], [], [], [], [], [], [], [], []
     for e in edges:
         o = e['out']; cum = arclen(o); L = cum[-1]
@@ -425,7 +426,9 @@ def carve(gh, gx0, gz0, hstep, edges, juncs, protect, drop=0.1, inner=6.0, outer
         o = old[sl]
         blend = np.where(np.isfinite(soft), soft, o) * (1 - w) + o * w
         new[sl] = np.where(np.isfinite(hard), hard, np.where(np.isfinite(soft), blend, o))
-        use[sl] = np.isfinite(eb) & (eb < inner + outer) & ~protect[vi[sl], vj[sl]]
+        fl = protect[vi[sl], vj[sl]]
+        new[sl] = np.maximum(new[sl], np.where(np.isfinite(fl), fl, -np.inf))       # rims: no lower than the floor
+        use[sl] = np.isfinite(eb) & (eb < inner + outer) & (fl < np.inf)
     vi, vj, new, old = vi[use], vj[use], new[use], old[use]
     gh[vi, vj] = new
     return len(vi), float(np.abs(new - old).max()) if len(vi) else 0.0
