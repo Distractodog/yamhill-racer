@@ -11,7 +11,7 @@ import { buildCarModel, WHEEL_POS } from './carmodel.js';
 
 export const TUNING_DEFAULTS = {
   accel: 17,              // m/s² from standstill
-  topSpeed: 270,          // km/h
+  topSpeed: 600,          // km/h, real flat-out top on asphalt (was ~232 before 2026-11-11, raised for fun)
   brakeDecel: 32,         // m/s²
   steerLock: 0.6,         // rad, low-speed wheel angle
   steerRate: 7,           // how fast steering winds on (1/s)
@@ -227,7 +227,8 @@ export class Car {
         _vp.addScaledVector(_c, -Math.max(-lim, Math.min(lim, lat)) * k);
       }
       // engine and brakes along the heading
-      const vmax = t.topSpeed / 3.6;
+      // engine limit set a bit above topSpeed so that, against air drag, flat out on asphalt tops out right at it
+      const vmax = t.topSpeed / 3.6 * 1.36;
       let a = 0;
       if (input.throttle > 0) {
         a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * Math.max(0, 1 - (vf / vmax) ** 2);
@@ -262,7 +263,8 @@ export class Car {
     this.wasGrounded = firm;
     this.airTime = this.grounded ? 0 : this.airTime + dt;
 
-    this.vel.addScaledVector(this.vel, -0.0009 * speed * dt);          // air drag
+    // air drag, scaled with topSpeed so a higher setting is reachable (same drag at the same fraction of top speed)
+    this.vel.addScaledVector(this.vel, -0.0009 * (270 / t.topSpeed) ** 2 * speed * dt);
     this.ang.multiplyScalar(this.grounded ? 1 - 2.5 * dt : 1 - 0.2 * dt);
 
     this.pos.addScaledVector(this.vel, dt);
