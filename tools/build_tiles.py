@@ -52,8 +52,10 @@ def lonlat_to_world(lon, lat):
 
 def rdp(pts, eps):
     if len(pts) < 3: return pts
-    a, b = pts[0], pts[-1]; ab = b - a; L = np.hypot(*ab) or 1e-9
-    r = pts - a; d = np.abs(ab[0] * r[:, 1] - ab[1] * r[:, 0]) / L
+    a, b = pts[0], pts[-1]; ab = b - a; L = np.hypot(*ab)
+    r = pts - a
+    # closed loop (roundabout, cul-de-sac circle): measure from the start point, or the whole loop collapses
+    d = np.abs(ab[0] * r[:, 1] - ab[1] * r[:, 0]) / L if L > 1e-6 else np.hypot(*r.T)
     i = int(d.argmax())
     if d[i] > eps: return np.vstack([rdp(pts[:i + 1], eps)[:-1], rdp(pts[i:], eps)])
     return np.vstack([a, b])
