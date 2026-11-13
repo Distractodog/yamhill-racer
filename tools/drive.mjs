@@ -24,8 +24,8 @@ W.ponds = (() => {
 })();
 const tuning = { ...TUNING_DEFAULTS, ...(process.env.TUNE ? JSON.parse(process.env.TUNE) : {}) };
 const DT = 1 / 120, up = new THREE.Vector3(), fw = new THREE.Vector3();
-function run(name, x, z, yaw, secs, ctl, every = 0.5) {
-  const car = new Car(W, tuning); car.reset(x, z, yaw);
+function run(name, x, z, yaw, secs, ctl, every = 0.5, make = () => new Car(W, tuning)) {
+  const car = make(); car.reset(x, z, yaw);
   const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false };
   const rows = []; let t = 0, flips = 0, wasUp = true, maxAir = 0, t100 = null, bad = false;
   for (let i = 0; i < secs / DT; i++) {
@@ -184,15 +184,17 @@ if (which === 'all' || which === 'walls') {
     console.log(`   furthest past the edge ${worst.toFixed(2)} m · wall contacts ${hits} steps, hardest ${(maxHit * 3.6).toFixed(0)} km/h · end ${(car.vel.length() * 3.6).toFixed(0)} km/h`);
   }
   // bot drives each whole route with walls + ramps on: pure pursuit, speed capped on bends
-  for (const c of CH) {
+  const { Bike } = await import('../game/src/bike.js');
+  for (const c of CH.filter(c => c.track && (!process.env.ONLY || c.id.includes(process.env.ONLY)))) {           // car + dirt-bike races (jet races have no walls)
     const track = makeTrack(c.track); W.setRamps(c.ramps);
-    const R = c.track, cap = c.id === 'long-walk' ? 110 : 260;
+    const isBike = c.vehicle === 'bike', R = c.track, cap = c.id === 'long-walk' ? 110 : isBike ? 90 : 260;
     let tgt = 0, worst = -9, hits = 0, done = false, tEnd = null, slowT = 0, backT = 0, backs = 0;
     const [sx, sz] = R[0], yaw = Math.atan2(R[3][0] - sx, R[3][1] - sz);
     const { car } = run(`walls: bot drives ${c.name}`, sx, sz, yaw, c.length / (cap / 3.6) * 2 + 60, (t, i, k) => {
       if (done) { i.throttle = 0; i.brake = 1; return; }
       const sp = k.vel.length(), look = 10 + sp * 0.5;
       while (R[tgt + 1] && Math.hypot(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) < look) tgt++;
+      if (isBike) tgt = Math.min(R.length - 1, track.index + Math.ceil(Math.min(look, 8 + sp * 0.35) / 8));     // bike bot: follow the route itself, don't cut hairpins
       fw.set(0, 0, 1).applyQuaternion(k.quat);
       let d = Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) - Math.atan2(fw.x, fw.z); d = Math.atan2(Math.sin(d), Math.cos(d));
       i.steer = Math.max(-1, Math.min(1, -d * 2.5));
@@ -203,12 +205,13 @@ if (which === 'all' || which === 'walls') {
       i.throttle = sp * 3.6 < want ? 1 : 0; i.brake = sp * 3.6 > want + 25 ? 1 : 0;
       // stuck (wedged on a tight bend): back up for 1.5 s with the wheel the other way, like a person would
       slowT = sp < 1 ? slowT + DT : 0;
-      if (slowT > 1 && backT <= 0) { backT = 1.5; backs++; }
+      if (slowT > 1 && backT <= 0) { backT = 1.5; backs++; if (process.env.WV) console.log('   stuck at', k.pos.x.toFixed(0), k.pos.z.toFixed(0), 'tgt', tgt, 'surf', k.surface, 'contacts', k.contacts, 'pitch', ((k.pitch || 0) * 57.3).toFixed(0), 'gp', ((k.groundPitch || 0) * 57.3).toFixed(0), 'ramp', W.rampAt(k.pos.x, k.pos.z).toFixed(2), 'h', W.heightAt(k.pos.x, k.pos.z).toFixed(1), 'h+3', W.heightAt(k.pos.x + Math.sin(k.heading()) * 3, k.pos.z + Math.cos(k.heading()) * 3).toFixed(1), 'kmh', (k.vel.length() * 3.6).toFixed(0), 'thr', i.throttle, 'steer', i.steer.toFixed(2)); }
       if (backT > 0) { backT -= DT; i.throttle = 0; i.brake = 1; i.steer = -i.steer; }
-      if (track.constrain(k) > 0) hits++;
+      const wallHit = track.constrain(k); if (wallHit > 0) hits++;
+      if (process.env.TR && Math.hypot(k.pos.x - +process.env.TR.split(',')[0], k.pos.z - +process.env.TR.split(',')[1]) < 15 && (Math.round(t * 120) % 15 === 0 || (t > 180.85 && t < 181.05))) console.log('   tr', 'hit', k.hit.toFixed(1), 'bail', k.msgT > 0 ? k.msg : '', 'water', k.waterDepth.toFixed(2), 'y-h', (k.pos.y - W.heightAt(k.pos.x, k.pos.z)).toFixed(2), 'pitch', (k.pitch*57.3).toFixed(0), 'gp', (k.groundPitch*57.3).toFixed(0), t.toFixed(2), k.pos.x.toFixed(1), k.pos.z.toFixed(1), 'hd', (k.heading() * 57.3).toFixed(0), 'tgtdir', (Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) * 57.3).toFixed(0), 'kmh', (k.vel.length() * 3.6).toFixed(1), 'thr', i.throttle, 'brk', i.brake, 'st', i.steer.toFixed(2), 'wall', wallHit.toFixed(2), 'vf', k.vel.dot(new THREE.Vector3(0,0,1).applyQuaternion(k.quat)).toFixed(2), 'yawRate', (k.yawRate||0).toFixed(2), 'contacts', k.contacts);
       worst = Math.max(worst, outside(k, R));
       if (track.index >= R.length - 3) { done = true; tEnd = t; }
-    }, 30);
+    }, 30, isBike ? () => new Bike(W) : undefined);
     console.log(`   ${done ? `reached the finish in ${tEnd.toFixed(0)} s` : `DID NOT FINISH (got to ${(track.index / (R.length - 1) * 100).toFixed(0)}%)`} · furthest past the edge ${worst.toFixed(2)} m · wall contact ${hits} steps · backed up ${backs}×`);
   }
   W.setRamps([]);
@@ -312,4 +315,178 @@ if (which === 'all' || which === 'glider') {
     console.log(`   closed as '${G.result}', then max water depth ${maxDepth.toFixed(2)} m`);
   }
   W.setFixedRamps([]);
+}
+
+if (which === 'all' || which === 'bike') {
+  // dirt bike (game/src/bike.js): never flips or NaNs; lands jumps; grip per surface; wheelie
+  const { Bike, BIKE } = await import('../game/src/bike.js');
+  const bt = { ...BIKE, ...(process.env.BTUNE ? JSON.parse(process.env.BTUNE) : {}) };
+  const mk = () => new Bike(W, bt);
+  const bike = (name, x, z, yaw, secs, ctl, extra = () => {}) => {
+    let maxKmh = 0, bails = 0, maxRel = 0, wheelieT = 0, airMax = 0, minUp = 1;
+    const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
+      i.lean = false; if (!c.grounded && t > 0) { i.throttle = i._t ?? 0; i.brake = i._b ?? 0; } ctl(t, i, c); i._t = i.throttle; i._b = i.brake;
+      maxKmh = Math.max(maxKmh, c.vel.length() * 3.6);
+      if (c.msgT > 0 && c.msg.startsWith('Bail') && c._lastBail !== c.msgT) { if (!c._bailOn) bails++; c._bailOn = true; } else c._bailOn = false;
+      if (c.contacts === 2) maxRel = Math.max(maxRel, Math.abs(c.pitch - c.groundPitch));
+      if (c.wheelie) wheelieT += DT;
+      airMax = Math.max(airMax, c.airTime);
+      minUp = Math.min(minUp, new THREE.Vector3(0, 1, 0).applyQuaternion(c.quat).y);
+      extra(t, i, c);
+      if (process.env.BV && Math.round(t / DT) % 6 === 0 && (c.airTime > 0 || c.wheels[0].comp > 0.2)) console.log(t.toFixed(2), 'air', c.airTime.toFixed(2), 'pitch', (c.pitch * 57.3).toFixed(0), 'gp', (c.groundPitch * 57.3).toFixed(0), 'rate', c.pitchRate.toFixed(2), 'vy', c.vel.y.toFixed(1), 'thr', i.throttle, 'held', c.heldGas, 'g', c.grounded, 'comp', c.wheels.map(w => w.comp.toFixed(2)).join('/'));
+      c.msgT -= DT;
+    }, 0.5, mk);
+    console.log(`   top ${maxKmh.toFixed(0)} km/h · bails ${bails} · wheelie ${wheelieT.toFixed(1)} s · longest air ${airMax.toFixed(2)} s · lowest up ${minUp.toFixed(2)} · end ${(car.vel.length() * 3.6).toFixed(0)} km/h, pitch ${(car.pitch * 57.3).toFixed(0)}°, ${car.grounded ? 'on the ground' : 'in the air'}${isFinite(car.pos.x) ? '' : ' NaN!'}`);
+    return car;
+  };
+  const [sx, sz] = W.spawn;
+  const road = W.placeOn(sx, sz, 3, 80);
+  bike('bike: full throttle 20 s on the field', ...FIELD, Math.PI / 2, 20, (t, i) => { i.throttle = 1; });
+  const R0 = JSON.parse(fs.readFileSync(A + 'ramps.json'))[0];
+  // top speed on Hwy 18 (long straight before the fixed ramp, ramp switched off)
+  W.setFixedRamps([]);
+  bike('bike: full throttle 25 s on Hwy 18', R0.x - Math.sin(R0.yaw) * 1500, R0.z - Math.cos(R0.yaw) * 1500, R0.yaw, 25, (t, i, c) => {
+    i.throttle = 1; const want = R0.yaw; let d = want - c.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); i.steer = Math.max(-1, Math.min(1, -d * 3)); });
+  bike('bike: slalom on the field', ...FIELD, Math.PI / 2, 12, (t, i) => { i.throttle = 1; i.steer = t > 3 ? Math.sign(Math.sin(t * 2.5)) : 0; });
+  bike('bike: slalom on asphalt (campus road)', ...road, 10, (t, i) => { i.throttle = t < 3 ? 1 : 0.6; i.steer = t > 3 ? Math.sign(Math.sin(t * 3)) : 0; });
+  bike('bike: rear-brake slide at 70', ...FIELD, Math.PI / 2, 7, (t, i, c) => { i.throttle = c.vel.length() * 3.6 < 70 || t > 4 ? 1 : 0; i.steer = t > 4 ? 1 : 0; i.handbrake = t > 4 && t < 5; });
+  bike('bike: wheelie (Shift + throttle 4 s)', ...FIELD, Math.PI / 2, 8, (t, i) => { i.throttle = 1; i.lean = t > 1.5 && t < 5.5; });
+  bike('bike: drop 10 m at 80 km/h, hands off', ...FIELD, Math.PI / 2, 4, (t, i, c) => { if (t === 0) { c.pos.y += 10; c.vel.set(22, 0, 0); } i.throttle = 0; });
+  bike('bike: drop 10 m nose-down (holding W)', ...FIELD, Math.PI / 2, 4, (t, i, c) => { if (t === 0) { c.pos.y += 10; c.vel.set(22, 0, 0); } i.throttle = c.grounded ? 0 : 1; });
+  W.setFixedRamps([R0]);
+  for (const kmh of [80, 140, 200]) {
+    const back = 220;
+    bike(`bike: Hwy 18 ramp at ${kmh} km/h`, R0.x - Math.sin(R0.yaw) * back, R0.z - Math.cos(R0.yaw) * back, R0.yaw, 12, (t, i, c) => {
+      const want = R0.yaw; let d = want - c.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); i.steer = Math.max(-1, Math.min(1, -d * 3));
+      const sp = c.vel.length() * 3.6; if (c.grounded) { i.throttle = sp < kmh ? 1 : 0; i.brake = sp > kmh + 15 ? 1 : 0; } });  // in the air: keep holding what you held
+  }
+  bike('bike: 60 s wander over campus hills', sx, sz + 3, 0, 60, (t, i) => { i.throttle = 1; i.steer = Math.sin(t * 0.7) * 0.6; });
+}
+
+if (which === 'all' || which === 'jet') {
+  // jet (game/src/jet.js): take-off run, top speed, hard turn, stall + recovery, landing, crashes
+  const { Jet, JET } = await import('../game/src/jet.js');
+  const jt = { ...JET, ...(process.env.JTUNE ? JSON.parse(process.env.JTUNE) : {}) };
+  const R0 = JSON.parse(fs.readFileSync(A + 'ramps.json'))[0];
+  W.setFixedRamps([]);
+  const flight = (name, x, z, yaw, secs, setup, ctl) => {
+    const st = { liftoff: null, maxKmh: 0, maxAlt: -1e9, minAgl: 1e9, stallT: 0, crashes: [], landed: null, inverted: 0, maxG: 0, nan: false, modes: '' };
+    let lastMode = null;
+    const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
+      if (t === 0) { i.jet = { thr: 0, pitch: 0, roll: 0, yaw: 0 }; setup?.(c); }
+      i.handbrake = false; ctl(t, i.jet, c, i);
+      if (c.mode !== lastMode) { st.modes += (st.modes ? '→' : '') + c.mode + '@' + t.toFixed(1); if (lastMode === 'ground' && c.mode === 'air' && !st.liftoff) st.liftoff = [t, c.vel.length() * 3.6, Math.hypot(c.pos.x - x, c.pos.z - z)]; if (c.mode === 'crashed') st.crashes.push(c.msg + (process.env.JC ? ` @${c.pos.x.toFixed(0)},${c.pos.z.toFixed(0)} t${t.toFixed(1)} prevAgl ${c._lastAgl?.toFixed(0)}` : ''));
+      if (c.mode === 'air') c._lastAgl = c.agl; if (lastMode === 'air' && c.mode === 'ground') st.landed = [t, -c._prevVel.y, c.vel.length() * 3.6, c.pos.clone()]; lastMode = c.mode; }
+      st.maxKmh = Math.max(st.maxKmh, c.vel.length() * 3.6);
+      if (c.mode === 'air') { st.maxAlt = Math.max(st.maxAlt, c.agl); st.minAgl = Math.min(st.minAgl, c.agl); st.maxG = Math.max(st.maxG, c.gLoad); if (c.stall) st.stallT += DT; }
+      if (new THREE.Vector3(0, 1, 0).applyQuaternion(c.quat).y < 0) st.inverted += DT;
+      if (!isFinite(c.pos.x) || !isFinite(c.vel.x)) st.nan = true;
+    }, 0.5, () => new Jet(W, jt));
+    console.log(`   ${st.modes} · top ${st.maxKmh.toFixed(0)} km/h · highest ${st.maxAlt.toFixed(0)} m${st.liftoff ? ` · lift-off ${st.liftoff[1].toFixed(0)} km/h after ${st.liftoff[2].toFixed(0)} m` : ''} · max ${st.maxG.toFixed(1)} g · stalled ${st.stallT.toFixed(1)} s · upside down ${st.inverted.toFixed(1)} s${st.landed ? ` · landed sink ${st.landed[1].toFixed(1)} m/s at ${st.landed[2].toFixed(0)} km/h` : ''}${st.crashes.length ? ' · crashes: ' + st.crashes.join(', ') : ''} · end ${car.mode}, ${(car.vel.length() * 3.6).toFixed(0)} km/h${st.nan ? ' NaN!' : ''}`);
+    return { car, st };
+  };
+  const hx = Math.sin(R0.yaw), hz = Math.cos(R0.yaw);
+  // climb at up to 20 m/s to a height above the ground, then hold it
+  const climb = (c, h) => Math.max(-1, Math.min(1, (Math.max(-15, Math.min(20, (h - c.agl) * 0.15, c.airTime * 6)) - c.vel.y) * 0.05));
+  const keep = (c, want, J) => { let d = want - c.heading(); d = Math.atan2(Math.sin(d), Math.cos(d)); return Math.max(-1, Math.min(1, -d * 4)); };
+  // 1. take-off along Hwy 18: full throttle, nose up past 240 km/h, climb gently
+  flight('jet: take-off run on Hwy 18', R0.x - hx * 1600, R0.z - hz * 1600, R0.yaw, 30, null, (t, J, c) => {
+    J.thr = 1; J.yaw = c.mode === 'ground' ? keep(c, R0.yaw) : 0;
+    J.pitch = c.mode === 'ground' ? (c.v * 3.6 > 240 ? 1 : 0) : climb(c, 300);
+  });
+  // 2. a field run-up (grass): longer roll
+  flight('jet: take-off from the field', ...FIELD, Math.PI / 2, 25, null, (t, J, c) => { J.thr = 1; J.pitch = c.mode === 'ground' ? (c.v * 3.6 > 240 ? 1 : 0) : climb(c, 200); });
+  // 3. flat out at 1000 m, heading east
+  flight('jet: flat out at 1000 m for 45 s', -4500, -1000, Math.PI / 2, 45, c => c.placeInAir(-4500, 1200, -1000, Math.PI / 2, 900), (t, J, c) => {
+    J.thr = 1; J.pitch = Math.max(-1, Math.min(1, (1000 + c.world.heightAt(c.pos.x, c.pos.z) - c.pos.y) * 0.004 - c.vel.y * 0.02)); });
+  // 4. hands off for 30 s at 600 km/h: should stay upright, roughly level
+  flight('jet: hands off 30 s', -2000, 0, Math.PI / 2, 30, c => c.placeInAir(-2000, 600, 0, Math.PI / 2, 600), (t, J) => { J.thr = 0.5; });
+  // 5. hard turn: bank to ~75° and pull for 12 s at 700 km/h
+  flight('jet: bank + full pull 12 s', 0, 0, 0, 14, c => c.placeInAir(0, 900, 0, 0, 700), (t, J, c) => {
+    J.thr = 1; J.roll = t < 0.6 ? 1 : 0; J.pitch = t > 0.6 && t < 12.6 ? 1 : 0; });
+  // 6. full roll (aileron roll) for 3 s and let go
+  flight('jet: aileron rolls for 3 s, then let go', 0, 0, 0, 10, c => c.placeInAir(0, 900, 0, 0, 600), (t, J) => { J.thr = 0.6; J.roll = t < 3 ? 1 : 0; });
+  // 7. stall: throttle off, hold the stick back; then let go + full throttle
+  flight('jet: stall and recover', 0, 0, 0, 30, c => c.placeInAir(0, 1500, 0, 0, 400), (t, J) => { J.thr = t < 14 ? -1 : 1; J.pitch = t < 14 ? 1 : 0; });
+  // 8. landing on Hwy 18: from 80 m up, 3 km out, 330 km/h; hold a ~3 m/s descent, flare, brake
+  {
+    const lx = R0.x - hx * 3400, lz = R0.z - hz * 3400;
+    flight('jet: approach + landing on Hwy 18', lx, lz, R0.yaw, 70, c => c.placeInAir(lx, c.world.heightAt(lx, lz) + 1.6 + 80, lz, R0.yaw, 330), (t, J, c, i) => {
+      J.yaw = 0; J.roll = 0;
+      if (c.mode === 'air') {
+        // steer onto the road line (roll toward it), hold the glide slope, keep ~300 km/h
+        const along = (c.pos.x - lx) * hx + (c.pos.z - lz) * hz, off = (c.pos.x - lx) * hz - (c.pos.z - lz) * hx;
+        const head = Math.atan2(c.vel.x, c.vel.z); let d = R0.yaw - head; d = Math.atan2(Math.sin(d), Math.cos(d));
+        const wantBank = Math.max(-0.4, Math.min(0.4, -d * 3 + off * 0.004));
+        J.roll = Math.max(-1, Math.min(1, (wantBank - c.bank) * 3));
+        const wantVy = c.agl > 6 ? -Math.min(4, Math.max(1.5, c.agl / 15)) : -1.2;
+        J.pitch = Math.max(-1, Math.min(1, (wantVy - c.vel.y) * 0.25));
+        J.thr = c.vel.length() * 3.6 > 300 ? -1 : 1;
+      } else { J.thr = -1; J.pitch = 0; i.handbrake = c.mode === 'ground'; J.yaw = keep(c, R0.yaw); }
+    });
+  }
+  // 9. dive into a field = crash, back on the ground (last safe spot / spawn) after 3 s
+  flight('jet: dive into the ground', ...FIELD, 0, 8, c => { c.reset(...FIELD, 0); c.safe = [[...FIELD, 0]]; c.placeInAir(FIELD[0], c.world.heightAt(...FIELD) + 150, FIELD[1], Math.PI / 2, 500); c.safe = [[...FIELD, Math.PI / 2]]; }, (t, J) => { J.thr = 1; J.pitch = -1; });
+  // 10. low over the campus forest at 15 m = into the trees
+  {
+    const [sx, sz] = W.spawn;
+    flight('jet: 15 m over the campus woods', sx, sz, 0, 20, c => c.placeInAir(sx, W.heightAt(sx, sz) + 18, sz, 0, 400), (t, J, c) => {
+      J.thr = 0.6; J.pitch = Math.max(-1, Math.min(1, (15 - c.agl) * 0.05 - c.vel.y * 0.05)); });
+  }
+  // 11. taxi on the field: slow, full rudder circle
+  flight('jet: taxi circle at ~40 km/h', ...FIELD, 0, 20, null, (t, J, c) => { J.thr = c.v * 3.6 < 40 ? 0.3 : -1; J.yaw = 1; });
+  // 12. each jet race: a bot takes off and flies through every ring in order (crossing = through the hole)
+  const CHJ = JSON.parse(fs.readFileSync(A + 'challenges.json')).filter(c => c.vehicle === 'jet');
+  for (const c of CHJ) {
+    let next = 1, done = null, prev = null, rings = 0;
+    const G = c.gates;
+    const { st } = flight(`jet race: bot flies ${c.name}`, c.start.x, c.start.z, c.start.yaw, 240,
+      k => { k.respawn = () => next >= 2 ? [G[next - 1].x, G[next - 1].y, G[next - 1].z, G[next - 1].yaw, 450] : null; }, (t, J, k) => {
+      if (done) { J.thr = -1; return; }
+      const g = G[next], kmh = k.vel.length() * 3.6;
+      if (k.mode === 'ground') { J.thr = 1; J.yaw = keep(k, c.start.yaw); J.pitch = kmh > 240 ? 1 : 0; }
+      else if (k.mode === 'air') {
+        // proportional navigation toward a point on the ring's axis (250 m before it until close)
+        const dist0 = Math.hypot(g.x - k.pos.x, g.z - k.pos.z), lead = Math.min(250, dist0 * 0.5);
+        const ax = g.x - Math.sin(g.yaw) * lead, az = g.z - Math.cos(g.yaw) * lead;
+        const head = Math.atan2(k.vel.x, k.vel.z), brg = Math.atan2(ax - k.pos.x, az - k.pos.z);
+        let d = brg - head; d = Math.atan2(Math.sin(d), Math.cos(d));
+        const hd = Math.hypot(ax - k.pos.x, az - k.pos.z), elev = Math.atan2(g.y - k.pos.y, hd);
+        const v = k.vel.length(), gr = k.t.gravity;
+        let dB = k._brg === undefined ? 0 : brg - k._brg; dB = Math.atan2(Math.sin(dB), Math.cos(dB)); k._brg = brg;
+        k._dB = (k._dB ?? 0) * 0.9 + 0.1 * dB / DT;                       // line-of-sight turn rate, smoothed
+        const aLat = 3 * v * k._dB + 1.2 * v * d * 0.5;                    // + = needs to turn left
+        const R = v * v / (gr * Math.tan(1.3));
+        if (dist0 < 2.2 * R && Math.abs(d) > 1.2) k._extend = true;
+        if (k._extend && (dist0 > 3 * R || Math.abs(d) < 0.25)) k._extend = false;
+        let wantBank = k._extend ? 0 : Math.max(-1.3, Math.min(1.3, -Math.atan2(aLat, gr)));
+        if (dist0 < 600 && !k._extend) { let dc = Math.atan2(g.x - k.pos.x, g.z - k.pos.z) - head; dc = Math.atan2(Math.sin(dc), Math.cos(dc)); wantBank = Math.max(-0.6, Math.min(0.6, -dc * 2.5)); }   // final approach: straight at the hole
+        J.roll = Math.max(-1, Math.min(1, (wantBank - k.bank) * 3)); J.yaw = 0;
+        // height: climb / sink rate toward the ring's height (the jet itself holds height in a bank)
+        let wantVy = Math.max(-35, Math.min(35, (g.y - k.pos.y) * Math.max(0.12, Math.min(0.6, 120 / Math.max(hd, 1)))));
+        const floor = Math.max(k.world.heightAt(k.pos.x + k.vel.x * 2, k.pos.z + k.vel.z * 2), k.world.heightAt(k.pos.x, k.pos.z)) + 70;
+        if (k.pos.y < floor && dist0 > 300) wantVy = Math.max(wantVy, (floor - k.pos.y) * 0.5);
+        J.pitch = Math.max(-1, Math.min(1, (wantVy - k.vel.y) * 0.03 + (k._extend ? 0 : Math.min(0.6, Math.abs(d) * 1.5) * Math.abs(Math.sin(k.bank)))));   // pull in the turn
+        const path = 0, upA = 0, nWant = 0, base = 0, aUp = 0;
+        if (process.env.JB && Math.round(t * 120) % 60 === 0) console.log('   bot', t.toFixed(1), 'ring', next, 'dist', dist0.toFixed(0), 'd°', (d * 57.3).toFixed(0), 'wantBank', (wantBank * 57.3).toFixed(0), 'ext', !!k._extend, 'dy', (k.pos.y - g.y).toFixed(0), 'pitch', J.pitch.toFixed(2), 'bank', (k.bank * 57.3).toFixed(0), 'g', k.gLoad.toFixed(2), 'kmh', (v * 3.6).toFixed(0));
+        J.thr = kmh < (Math.abs(d) > 0.3 ? 450 : 600) ? 1 : -1;
+      }
+      // crossing the ring's plane inside the hole
+      const p = [k.pos.x, k.pos.y, k.pos.z];
+      if (prev && k.mode !== 'crashed') {
+        const fx = Math.sin(g.yaw), fz = Math.cos(g.yaw);
+        const d0 = (prev[0] - g.x) * fx + (prev[2] - g.z) * fz, d1 = (p[0] - g.x) * fx + (p[2] - g.z) * fz;
+        if (d0 <= 0 && d1 > 0) {
+          const u = -d0 / (d1 - d0), ix = prev[0] + (p[0] - prev[0]) * u, iy = prev[1] + (p[1] - prev[1]) * u, iz = prev[2] + (p[2] - prev[2]) * u;
+          const lat = (ix - g.x) * Math.cos(g.yaw) - (iz - g.z) * Math.sin(g.yaw);
+          const ok = g.y === undefined ? Math.abs(lat) < g.w / 2 + 1.5 : Math.hypot(lat, iy - g.y) <= g.r + 1;
+          if (process.env.JV) console.log('   cross ring', next, 'lat', lat.toFixed(1), 'dy', g.y === undefined ? '-' : (iy - g.y).toFixed(1), ok ? 'OK' : 'MISS', 't', t.toFixed(1));
+          if (ok) { rings++; next++; k._extend = false; k._dB = 0; k._brg = undefined; if (next >= G.length) done = t; }
+        }
+      }
+      prev = p;
+    });
+    console.log(`   ${done ? `finished in ${done.toFixed(1)} s` : `DID NOT FINISH (${rings}/${G.length - 1} rings)`}`);
+  }
+  W.setFixedRamps([R0]);
 }

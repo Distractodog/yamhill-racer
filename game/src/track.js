@@ -43,7 +43,8 @@ export function makeTrack(points) {
       const fx = 2 * (q.x * q.z + q.w * q.y), fz = 1 - 2 * (q.x * q.x + q.y * q.y);
       const rx = 1 - 2 * (q.y * q.y + q.z * q.z), rz = 2 * (q.x * q.z - q.w * q.y);
       let k = 0;
-      for (const sx of [-0.8, 0.8]) for (const sz of [1.75, -1.95]) {
+      const h = car.half, hx = h ? h.x : 0.8, hf = h ? h.front : 1.75, hb = h ? h.back : -1.95;   // bike: narrower
+      for (const sx of [-hx, hx]) for (const sz of [hf, hb]) {
         cx[k] = p.x + rx * sx + fx * sz; cz[k] = p.z + rz * sx + fz * sz; k++;
       }
       let worst = 0, nx = 0, nz = 0;

@@ -27,6 +27,7 @@ WILLAMINA = (-3640, 3330)
 # cost per metre on each surface
 ROAD = {'asphalt': 1.0, 'gravel': 1.6, 'trail': 8.0}
 TRAIL = {'trail': 1.0, 'gravel': 1.3, 'asphalt': 2.0}
+DIRT = {'trail': 1.0, 'gravel': 1.1, 'asphalt': 4.0}      # dirt bike: trails + gravel, keep off the tarmac
 # jump ramps: one per `ramp_every` m of route, on straights at least `run` m long (room to fly and land)
 class RAMP: up = 11; top = 2; down = 18          # same shape as RAMP in game/src/data.js
 RAMP_LEN = RAMP.up + RAMP.top + RAMP.down
@@ -37,6 +38,16 @@ CHALLENGES = [
          via=[MAIN_BUILDING, SHERIDAN], cost=ROAD, gap=450, ramp_every=1400, run=300, bend=0.3, gate_clear=70),
     dict(id='willamina', name='Willamina run', desc='Campus to downtown Willamina on the roads.',
          via=[MAIN_BUILDING, WILLAMINA], cost=ROAD, gap=450, ramp_every=1400, run=300, bend=0.3, gate_clear=70),
+    # dirt bike: campus trails + gravel roads, jumps every few hundred metres
+    dict(id='bike-south-loop', vehicle='bike', name='South woods loop', desc='Round the trail loop south of campus, with jumps.',
+         via=[(-860, 440), (-760, 820), (-150, 640), (-110, 520), (-180, 400), (-310, 330)], cost=DIRT, gap=200,
+         ramp_every=350, run=45, bend=0.5, gate_clear=30),
+    dict(id='bike-north-scramble', vehicle='bike', name='North woods scramble', desc='Campus up through the north trails to the far ridge, jumps all the way.',
+         via=[(-600, 40), (-1140, -380), (-1000, -820), (-560, -1000), (-260, -760)], cost=DIRT, gap=220,
+         ramp_every=330, run=45, bend=0.5, gate_clear=30),
+    dict(id='bike-gravel-run', vehicle='bike', name='Gravel run', desc='Campus out along the gravel roads to the northeast fields.',
+         via=[(-200, -60), (250, -280), (720, -1240), (1300, -1240)], cost={'gravel': 1.0, 'trail': 1.1, 'asphalt': 3.0}, gap=300,
+         ramp_every=450, run=70, bend=0.4, gate_clear=40),
 ]
 
 # ---------------------------------------------------------------- graph
@@ -199,7 +210,7 @@ for c in CHALLENGES:
     track = [[round(float(F[j][0]), 2), round(float(F[j][1]), 2), round(half_width(j), 2)]
              for j in list(range(0, len(F), 2)) + [len(F) - 1]]
     simple = resample(line, 8.0)
-    result.append(dict(id=c['id'], name=c['name'], desc=c['desc'], length=round(length),
+    result.append(dict(id=c['id'], vehicle=c.get('vehicle', 'car'), name=c['name'], desc=c['desc'], length=round(length),
                        start=dict(x=start['x'], z=start['z'], yaw=start['yaw']), gates=gates, ramps=ramps, track=track,
                        route=[[round(x, 1), round(z, 1)] for x, z in simple]))
     surf = {}
@@ -208,6 +219,73 @@ for c in CHALLENGES:
           [(r['s'], f"dip {r['dip']} m over {r['span']} m") if 'dip' in r else r['s'] for r in ramps], 'surfaces',
           {k: round(v) for k, v in surf.items()})
 
-if os.environ.get("DRY"): sys.exit()
+# ---------------------------------------------------------------- jet races: rings in the air
+# Each course starts on a long straight road (take-off run), then flies through rings at set heights above the ground.
+# Ring height = the highest ground within 150 m + the course's clearance (trees are up to ~40 m), so you can always
+# fly through without hitting a hill. Rings face along the course (from the previous ring to the next one).
+WJ = json.load(open(os.path.join(ROOT, 'game', 'assets', 'world.json')))
+HN = WJ['hn'] + 2 * WJ['hm']; HS = WJ['hstep']; TT = WJ['tile']
+_h = {}
+def tile_h(tx, tz):
+    k = (tx, tz)
+    if k not in _h:
+        f = os.path.join(ROOT, 'game', 'assets', 'tiles', f'{tx}_{tz}', 'height.bin')
+        _h[k] = np.fromfile(f, dtype=np.float32).reshape(HN, HN) if os.path.exists(f) else None
+    return _h[k]
+def ground(x, z):
+    tx, tz = math.floor((x + TT / 2) / TT), math.floor((z + TT / 2) / TT)
+    H = tile_h(tx, tz)
+    if H is None: return 0.0
+    gx0, gz0 = tx * TT - TT / 2 - WJ['hm'] * HS, tz * TT - TT / 2 - WJ['hm'] * HS
+    j = int(np.clip(round((x - gx0) / HS), 0, HN - 1)); i = int(np.clip(round((z - gz0) / HS), 0, HN - 1))
+    return float(H[i, j])
+def ground_max(x, z, r=150):
+    return max(ground(x + dx, z + dz) for dx in range(-r, r + 1, 30) for dz in range(-r, r + 1, 30))
+
+HWY_RAMP = json.load(open(os.path.join(ROOT, 'game', 'assets', 'ramps.json')))[0]
+AIR = [
+    dict(id='jet-hwy18-sortie', name='Hwy 18 sortie', desc='Take off on Hwy 18 and race the rings southwest over Sheridan to campus.',
+         start=(HWY_RAMP['x'] - math.sin(HWY_RAMP['yaw']) * 2600, HWY_RAMP['z'] - math.cos(HWY_RAMP['yaw']) * 2600, HWY_RAMP['yaw']),
+         rings=[(HWY_RAMP['x'] - math.sin(HWY_RAMP['yaw']) * 600, HWY_RAMP['z'] - math.cos(HWY_RAMP['yaw']) * 600, 50),
+                (11500, -2400, 110), (9800, -400, 80), (7000, 800, 140), (3900, 1300, 70), (2000, 1000, 120),
+                (300, 600, 90), (-560, 380, 60)], r=45),
+    # a smooth oval round the valley (rings every 30°, so every turn is gentle), clockwise on the map from the road
+    # east of campus, out past Willamina and back
+    dict(id='jet-valley-loop', name='Valley loop', desc='Off the long road east of campus, a big loop round the valley past Willamina.',
+         start=(1056, 1700, 3.1336),
+         rings=[(-1300 + 2600 * math.cos(math.radians(t)), 800 - 2400 * math.sin(math.radians(t)), c)
+                for t, c in zip(range(30, 390, 30), [120, 160, 110, 140, 90, 150, 100, 130, 80, 120, 90, 60])], r=45),
+]
+for a in AIR:
+    sx, sz, syaw = a['start']
+    pts = [(sx, sz)] + [(x, z) for x, z, _ in a['rings']]
+    # Keep every approach inside the real map, with room for a ring and the jet's wings.
+    available = set(map(tuple, WJ['tiles']))
+    for p, q in zip(pts, pts[1:]):
+        n = max(1, math.ceil(math.dist(p, q) / 20))
+        for i in range(n + 1):
+            x = p[0] + (q[0] - p[0]) * i / n; z = p[1] + (q[1] - p[1]) * i / n
+            for dx in (-100, 100):
+                for dz in (-100, 100):
+                    assert (math.floor((x + dx + TT / 2) / TT), math.floor((z + dz + TT / 2) / TT)) in available, f"{a['id']}: flight corridor outside map near {x:.0f}, {z:.0f}"
+    gates = [dict(x=round(sx + math.sin(syaw) * 14, 2), z=round(sz + math.cos(syaw) * 14, 2), yaw=round(syaw, 4), w=34)]
+    for k, (x, z, clr) in enumerate(a['rings']):
+        px, pz = pts[k]; nx, nz = pts[k + 2] if k + 2 < len(pts) else (x + (x - px), z + (z - pz))
+        yaw = math.atan2(x - px, z - pz)          # faces the way you come in from the previous ring
+        y = ground_max(x, z) + clr
+        gates.append(dict(x=round(x, 1), z=round(z, 1), y=round(y, 1), yaw=round(yaw, 4), r=a['r'], w=a['r'] * 2))
+    length = sum(math.dist(p, q) for p, q in zip(pts, pts[1:]))
+    route = []
+    for p, q in zip(pts, pts[1:]):
+        n = max(1, int(math.dist(p, q) // 200))
+        route += [[round(p[0] + (q[0] - p[0]) * i / n, 1), round(p[1] + (q[1] - p[1]) * i / n, 1)] for i in range(n)]
+    route.append([round(pts[-1][0], 1), round(pts[-1][1], 1)])
+    result.append(dict(id=a['id'], vehicle='jet', name=a['name'], desc=a['desc'], length=round(length),
+                       start=dict(x=round(sx, 2), z=round(sz, 2), yaw=round(syaw, 4)), gates=gates, ramps=[], route=route))
+    print(f"{a['name']}: {length:.0f} m, {len(gates) - 1} rings, heights", [g['y'] for g in gates[1:]])
+
+if os.environ.get("DRY"):
+    if os.environ.get("DRY_OUT"): json.dump(result, open(os.environ["DRY_OUT"], "w"))
+    sys.exit()
 with open(os.path.join(ROOT, 'game', 'assets', 'challenges.json'), 'w') as f:
     json.dump(result, f, separators=(',', ':'))

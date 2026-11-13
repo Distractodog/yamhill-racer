@@ -8,6 +8,7 @@
 // A ground "snap" stops the car floating off small crests; big ramps still launch it.
 import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
+import { Vehicle } from './vehicle.js';
 
 export const TUNING_DEFAULTS = {
   accel: 30,              // m/s² from standstill (was 17 before 2026-11-11)
@@ -47,9 +48,10 @@ const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _n = new THREE.Vector3
   _fw = new THREE.Vector3(), _lt = new THREE.Vector3(), _q = new THREE.Quaternion(), _nAvg = new THREE.Vector3(),
   _vp = new THREE.Vector3(), _hp = new THREE.Vector3();
 
-export class Car {
+export class Car extends Vehicle {
   constructor(world, tuning) {
-    this.world = world; this.t = tuning;
+    super(world, 'car');
+    this.name = 'Car'; this.t = tuning;
     this.pos = new THREE.Vector3(); this.quat = new THREE.Quaternion();
     this.vel = new THREE.Vector3(); this.ang = new THREE.Vector3();
     this.steer = 0; this.drifting = false; this.driftDir = 0; this.slip = 0; this.slipSigned = 0;

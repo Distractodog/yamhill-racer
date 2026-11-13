@@ -5,6 +5,12 @@ import * as THREE from 'three';
 const TOP = { asphalt: 0x50535c, gravel: 0xb9a888, trail: 0xc98d55 };
 const SIDE = { asphalt: 0x44474f, gravel: 0xa39472, trail: 0xb27a47 };
 const LINE = 0xf2f2ea, DASH = 0xf3c63c;
+// Developed school drives use town asphalt, without yellow centre markings. Woodland trails stay dirt.
+export function campusRoad(x, z, kind) {
+  const developed = x >= -900 && x <= -350 && z >= 130 && z <= 650;
+  const courtyard = x >= -660 && x <= -470 && z >= 200 && z <= 460;
+  return developed && (kind !== 'trail' || courtyard);
+}
 const RGB = {};
 for (const hex of [...Object.values(TOP), ...Object.values(SIDE), LINE, DASH]) { const c = new THREE.Color(hex); RGB[hex] = [c.r, c.g, c.b]; }
 
@@ -46,12 +52,14 @@ export function buildRoads(D, groundMat, batch) {
     fill(a, prev);
     for (let i = a; i < b; i++) {
       fill(i + 1, row);
-      const dashOn = Math.floor(i / 2) % 2 === 0;
+      const school = campusRoad((x[i] + x[i + 1]) / 2, (z[i] + z[i + 1]) / 2, kind);
+      const style = school ? 'asphalt' : kind;
+      const dashOn = !school && Math.floor(i / 2) % 2 === 0;
       for (let k = 0; k < K - 1; k++) {
-        let hex = TOP[kind];
-        if (k <= 1 || k >= K - 3) hex = SIDE[kind];
+        let hex = TOP[style];
+        if (k <= 1 || k >= K - 3) hex = SIDE[style];
         else if (kind === 'asphalt' && (k === 3 || k === K - 5)) hex = LINE;
-        else if (kind === 'asphalt' && k === 5) hex = dashOn ? DASH : TOP[kind];
+        else if (kind === 'asphalt' && k === 5) hex = dashOn ? DASH : TOP[style];
         const rgb = RGB[hex], A = k * 3, B = (k + 1) * 3;
         // quad prev[k], prev[k+1], row[k+1], row[k] as two triangles (faces point up)
         put(prev, A, rgb); put(prev, B, rgb); put(row, B, rgb);
@@ -81,7 +89,8 @@ export function buildJunctions(list, groundMat) {
     for (const q of pts) { P.push(q[0], q[1], q[2]); Cc.push(col[0], col[1], col[2]); }
   };
   for (const j of list) {
-    const top = RGB[TOP[j.kind]], side = RGB[SIDE[j.kind]], R = j.ring, n = R.length;
+    const style = campusRoad(j.c[0], j.c[1], j.kind) ? 'asphalt' : j.kind;
+    const top = RGB[TOP[style]], side = RGB[SIDE[style]], R = j.ring, n = R.length;
     const c = [j.c[0], j.c[2], j.c[1]];
     const v = q => [q[0], q[2], q[1]];
     for (let k = 0; k < n; k++) tri(c, v(R[k]), v(R[(k + 1) % n]), top);

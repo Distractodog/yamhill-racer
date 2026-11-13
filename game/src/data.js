@@ -3,6 +3,7 @@
 // data is loaded separately (makeTileData) and registered with the world (makeWorld), which routes every query
 // to the tile that contains the point.
 import * as THREE from 'three';
+import { applyCampus } from './campus.js';
 
 // road / trail strips and junction pieces: surface class per kind. Heights come baked from the build
 // (tools/roadnet.py): each strip point has a centre-line height y and a cross slope c (height per metre to the left).
@@ -147,9 +148,11 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
       for (const t of l) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]), trees[t * 4 + 2], trees[t * 4 + 3]);   // x, z, trunk r, height, broadleaf?
     }
   }
-  return { tx, tz, x0, z0, gx0, gz0, NN, H, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
+  const td = { tx, tz, x0, z0, gx0, gz0, NN, H, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
     pondId, pondLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
     heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
+  td.buildings = applyCampus(td);           // Delphian campus: hand-made models replace the OSM blocks (campus.js)
+  return td;
 }
 
 // ---------------------------------------------------------------- the whole world: routes queries to tiles
@@ -157,6 +160,16 @@ export function makeWorld(W) {
   const T = W.tile, tiles = new Map(), [EX0, EZ0, EX1, EZ1] = W.extent;
   const key = (tx, tz) => tx * 1000 + tz;
   const tileIndex = (x, z) => [Math.floor((x + T / 2) / T), Math.floor((z + T / 2) / T)];
+  // Map membership comes from the manifest, independently of streamed/loaded tiles.
+  const available = new Set(W.tiles.map(([tx, tz]) => key(tx, tz)));
+  function mapContains(x, z, margin = 0) {
+    // A vehicle-sized square spans at most four cells (margin is much less than half a tile).
+    for (const dx of [-margin, margin]) for (const dz of [-margin, margin]) {
+      const [tx, tz] = tileIndex(x + dx, z + dz);
+      if (!available.has(key(tx, tz))) return false;
+    }
+    return true;
+  }
   let last = null;
   function tileAt(x, z) {
     if (last && x >= last.x0 && x < last.x0 + T && z >= last.z0 && z < last.z0 + T) return last;
@@ -228,7 +241,7 @@ export function makeWorld(W) {
     return [best[0], best[1], yaw];
   }
   return {
-    W, tiles, extent: W.extent, spawn: W.spawn, tileIndex, tileAt, key,
+    W, tiles, extent: W.extent, spawn: W.spawn, tileIndex, tileAt, key, mapContains,
     add(t) { tiles.set(key(t.tx, t.tz), t); last = null; },
     remove(tx, tz) { tiles.delete(key(tx, tz)); last = null; },
     has: (tx, tz) => tiles.has(key(tx, tz)),

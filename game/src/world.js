@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileData } from './data.js';
 import { buildRoads, roadBatches, buildJunctions } from './roads.js';
+import { buildCampusGeometry } from './campusmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
@@ -24,6 +25,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const conifer = coniferGeometry(), broadleaf = broadleafGeometry(), coniferFar = farConifer(), broadFar = farBroadleaf();
   const treeMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const buildingMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const campusMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const waterUniforms = { time: { value: 0 } };
   const waterMat = new THREE.MeshLambertMaterial({ color: 0x3d8fc4, transparent: true, opacity: 0.8, flatShading: true });
   waterMat.onBeforeCompile = sh => {
@@ -194,8 +196,12 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     out.treeMats = treeMats;
     // buildings
-    const bGeos = [];
+    const bGeos = [], cGeos = [];
     for (const b of td.buildings) {
+      if (b.campusPart) {      // hand-made campus building (campus.js), drawn once from its first footprint
+        if (b.campus) { cGeos.push(buildCampusGeometry(b.campus, td.terrainAt)); yield 'buildings'; }
+        continue;
+      }
       if (b.pts.length < 3) continue;
       let lo = Infinity, hi = -Infinity;
       for (const [x, z] of b.pts) { const h = td.terrainAt(x, z); lo = Math.min(lo, h); hi = Math.max(hi, h); }
@@ -210,6 +216,10 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     if (bGeos.length) {
       const bm = new THREE.Mesh(mergeGeometries(bGeos), buildingMat); bm.castShadow = bm.receiveShadow = true; g.add(bm);
       bGeos.forEach(x => x.dispose());
+    }
+    if (cGeos.length) {
+      const cm = new THREE.Mesh(mergeGeometries(cGeos), campusMat); cm.name = 'campus'; cm.castShadow = cm.receiveShadow = true; g.add(cm);
+      cGeos.forEach(x => x.dispose());
     }
     return out;
   }

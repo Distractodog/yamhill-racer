@@ -13,6 +13,7 @@ const hzAt = rpm => {
 };
 const GLIDING = { throttle: 0, brake: 0 };
 const GEARS = [0, 55, 100, 145, 190, 235, 300];   // km/h at the top of each gear
+const BIKE_GEARS = [0, 35, 65, 95, 130, 170, 260];   // dirt bike: shorter gears, revs higher
 
 export class CarAudio {
   constructor() { this.ctx = null; this.gear = 1; }
@@ -48,20 +49,30 @@ export class CarAudio {
     this.crunch = band('lowpass', 420, 1, master);
     this.wind = band('lowpass', 700, 0.5, master);
     this.thud = band('lowpass', 160, 1, master);
+    // jet: low roar of the exhaust + a turbine whine that follows the throttle
+    this.jetRoar = band('lowpass', 260, 0.7, master);
+    this.jetHiss = band('bandpass', 2400, 1.2, master);
+    const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 400;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 8; bp.frequency.value = 1200;
+    this.whine = ctx.createGain(); this.whine.gain.value = 0; this.whineOsc = o;
+    o.connect(bp).connect(this.whine).connect(master); o.start();
   }
 
   update(car, input, dt) {
     if (!this.ctx) return;
     if (car.glide?.active) input = GLIDING;            // flying: W/S pitch the wing, the engine just idles
     const t = this.ctx.currentTime, kmh = car.vel.length() * 3.6;
-    while (this.gear < GEARS.length - 1 && kmh > GEARS[this.gear]) this.gear++;
-    while (this.gear > 1 && kmh < GEARS[this.gear - 1] - 8) this.gear--;
-    const lo = GEARS[this.gear - 1], hi = GEARS[this.gear];
+    if (car.kind === 'jet') { this.updateJet(car, t, kmh); return; }
+    this.jetRoar.gain.setTargetAtTime(0, t, 0.1); this.jetHiss.gain.setTargetAtTime(0, t, 0.1); this.whine.gain.setTargetAtTime(0, t, 0.1);
+    const bike = car.kind === 'bike', G = bike ? BIKE_GEARS : GEARS;
+    while (this.gear < G.length - 1 && kmh > G[this.gear]) this.gear++;
+    while (this.gear > 1 && kmh < G[this.gear - 1] - 8) this.gear--;
+    const lo = G[this.gear - 1], hi = G[this.gear];
     let frac = Math.min(1.05, Math.max(0, (kmh - lo) / (hi - lo)));
     if (!car.grounded || car.slip > 0.3) frac = Math.min(1.1, frac + 0.25 * input.throttle);
     if (kmh < 8 && car.grounded) frac = Math.max(frac, 0.55 * input.throttle);   // revving on the spot
     const rpm = 950 + frac * 6300 * (0.8 + 0.2 * input.throttle);
-    const hz = hzAt(rpm);
+    const hz = hzAt(rpm) * (bike ? 1.75 : 1);           // the bike: a small single revving high
     // crossfade between the two recordings either side of the current pitch (equal power), then pitch-shift each
     const L = this.layers;
     let i = 0; while (i < L.length - 2 && hz > L[i + 1].hz) i++;
@@ -72,8 +83,8 @@ export class CarAudio {
       if (L[j].src) L[j].src.playbackRate.setTargetAtTime(hz / L[j].hz, t, 0.03);
     }
     // on throttle: louder and brighter; off throttle: muffled, quieter (engine braking)
-    this.engFilter.frequency.setTargetAtTime(1400 + input.throttle * 4500 + frac * 1500, t, 0.06);
-    this.engGain.gain.setTargetAtTime(0.55 + input.throttle * 0.6 + frac * 0.2, t, 0.06);
+    this.engFilter.frequency.setTargetAtTime((1400 + input.throttle * 4500 + frac * 1500) * (bike ? 1.4 : 1), t, 0.06);
+    this.engGain.gain.setTargetAtTime((0.55 + input.throttle * 0.6 + frac * 0.2) * (bike ? 0.8 : 1), t, 0.06);
     const onTarmac = car.surface === 3 || car.surface === 6 || car.surface === 7;
     const slide = car.grounded ? Math.min(1, Math.max(0, car.slip - 0.08) * 3) * Math.min(1, kmh / 30) : 0;
     this.squeal.gain.setTargetAtTime(onTarmac ? slide * 0.22 : 0, t, 0.05);
@@ -85,6 +96,21 @@ export class CarAudio {
     if (car.hit > 3 || car.landing > 0.3) {
       const v = Math.min(0.9, Math.max(car.hit / 25, car.landing));
       this.thud.gain.cancelScheduledValues(t); this.thud.gain.setValueAtTime(v, t); this.thud.gain.setTargetAtTime(0, t, 0.12);
+    }
+  }
+
+  updateJet(jet, t, kmh) {
+    for (const L of this.layers) L.gain.gain.setTargetAtTime(0, t, 0.05);
+    this.squeal.gain.setTargetAtTime(0, t, 0.05); this.crunch.gain.setTargetAtTime(0, t, 0.05);
+    const on = jet.mode === 'crashed' ? 0 : 1, th = jet.throttle * on;
+    this.jetRoar.gain.setTargetAtTime(on * (0.12 + th * 0.55), t, 0.15);
+    this.jetHiss.gain.setTargetAtTime(on * (0.02 + th * 0.06), t, 0.15);
+    this.whine.gain.setTargetAtTime(on * (0.012 + th * 0.02), t, 0.2);
+    this.whineOsc.frequency.setTargetAtTime(380 + th * 900, t, 0.4);
+    this.wind.gain.setTargetAtTime(jet.mode === 'air' ? Math.min(0.35, (kmh / 1200) ** 2 * 0.35 + 0.04) : 0, t, 0.2);
+    if (jet.hit > 3 || jet.landing > 0.3) {
+      const v = Math.min(0.9, Math.max(jet.hit / 25, jet.landing));
+      this.thud.gain.cancelScheduledValues(t); this.thud.gain.setValueAtTime(v, t); this.thud.gain.setTargetAtTime(0, t, 0.2);
     }
   }
 }

@@ -8,6 +8,9 @@ import { createMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
 import { Glider } from './glider.js';
+import { createVehicles } from './vehicles.js';
+import { BIKE } from './bike.js';
+import { JET } from './jet.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -43,9 +46,16 @@ const save = () => { try { localStorage.setItem('yr-tuning-2', JSON.stringify(tu
 const loadingEl = document.getElementById('loading');
 const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Loading map… ${n}/${of}`; });
 scene.add(world.group);
-const car = new Car(world, tuning);
-scene.add(car.mesh);
-const glider = new Glider(car);         // G opens a hang-glider wing (glider.js)
+// vehicles (vehicles.js): `car` below is a stand-in for whichever vehicle you're in (V switches)
+const bikeTuning = { ...BIKE }, jetTuning = { ...JET };
+try { Object.assign(bikeTuning, JSON.parse(localStorage.getItem('yr-tuning-bike-1') || '{}')); Object.assign(jetTuning, JSON.parse(localStorage.getItem('yr-tuning-jet-1') || '{}')); } catch {}
+const vehicles = createVehicles({ scene, world, tuning, bikeTuning, jetTuning, canSwitch: kind => {
+  // switching vehicle mid-race ends the race (each race belongs to one vehicle)
+  if (challenges.state !== 'idle' && challenges.vehicle !== kind) challenges.quit();
+  return true;
+} });
+const car = vehicles.player;
+const glider = new Glider(vehicles.car);         // G opens a hang-glider wing over the car (glider.js)
 const [sx, sz] = world.spawn;
 // campus drives are mostly gravel service roads in OpenStreetMap; take asphalt if it is close, else gravel
 let spawn = world.placeOn(sx, sz, 3, 80);
@@ -54,11 +64,11 @@ car.reset(...spawn);
 const effects = new Effects(scene);
 const audio = new CarAudio();
 const minimap = await createMinimap();
-const challenges = await createChallenges({ scene, world, car, minimap });
+const challenges = await createChallenges({ scene, world, car, minimap, vehicles });
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
 
-const gui = new GUI({ title: 'Car tuning (T)' });
+const gui = new GUI({ title: 'Tuning (T)' });
 const RANGES = {
   accel: [5, 60, 0.5], topSpeed: [100, 1500, 10], brakeDecel: [10, 100, 1],
   steerLock: [0.2, 0.9, 0.01], steerRate: [2, 20, 0.5], cornerGrip: [10, 60, 0.5], turnResponse: [3, 30, 0.5],
@@ -70,6 +80,11 @@ const RANGES = {
 for (const k in RANGES) gui.add(tuning, k, ...RANGES[k]).onChange(save);
 gui.add({ reset: () => { Object.assign(tuning, TUNING_DEFAULTS); save(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'reset').name('Reset to defaults');
 gui.add({ copy: () => navigator.clipboard?.writeText(JSON.stringify(tuning, null, 1)) }, 'copy').name('Copy settings');
+const saveB = () => { try { localStorage.setItem('yr-tuning-bike-1', JSON.stringify(bikeTuning)); localStorage.setItem('yr-tuning-jet-1', JSON.stringify(jetTuning)); } catch {} };
+const fb = gui.addFolder('Dirt bike'); for (const [k, r] of Object.entries({ accel: [5, 40, 0.5], topSpeed: [80, 500, 5], cornerGrip: [10, 50, 0.5], steerLock: [0.3, 1.2, 0.01], wheelie: [0.2, 0.9, 0.01], gravity: [9.8, 30, 0.2] })) fb.add(bikeTuning, k, ...r).onChange(saveB);
+const fj = gui.addFolder('Jet'); for (const [k, r] of Object.entries({ thrust: [6, 40, 0.5], liftK: [0.001, 0.005, 0.0001], rollRate: [0.5, 5, 0.1], maxG: [3, 12, 0.5], gravity: [9.8, 30, 0.2] })) fj.add(jetTuning, k, ...r).onChange(saveB);
+fb.close(); fj.close();
+gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuning, JET); saveB(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'resetV').name('Reset bike + jet');
 gui.close();
 
 // H: back to the Delphian campus from anywhere (waits for the campus tiles to stream in first)
@@ -86,6 +101,7 @@ async function goHome() {
 
 // F: put the car back on its wheels right where it is, facing the way it was pointing (keeps the clock running)
 function flipUpright() {
+  if (vehicles.current.flipUpright) { vehicles.current.flipUpright(); return; }
   const f = new THREE.Vector3(0, 0, 1).applyQuaternion(car.quat);
   if (Math.hypot(f.x, f.z) < 0.2) f.set(0, 1, 0).applyQuaternion(car.quat).negate();   // nose straight up/down: use the roof
   car.reset(car.pos.x, car.pos.z, Math.atan2(f.x, f.z));
@@ -101,24 +117,36 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyH') goHome();
   if (e.code === 'KeyT') gui._closed ? gui.open() : gui.close();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
-  if (e.code === 'KeyG' && !e.repeat) glider.toggle();
+  if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.kind === 'car') glider.toggle(); else vehicles.current.say?.('The glider is for the car', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
-const input = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
   const k = c => keys.has(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
   input.handbrake = k('Space');
+  input.lean = k('ShiftLeft') || k('ShiftRight');
+  // jet: W/S throttle lever, ↑/↓ pitch (↓ = nose up, like pulling a stick), ←/→ roll, A/D rudder / nose wheel
+  const J = input.jet;
+  J.thr = (k('KeyW') ? 1 : 0) - (k('KeyS') ? 1 : 0);
+  J.pitch = (k('ArrowDown') ? 1 : 0) - (k('ArrowUp') ? 1 : 0);
+  J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
+  J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
   const gp = navigator.getGamepads?.()[0];
   if (gp) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
     if (gp.buttons[6]?.value > 0.05) input.brake = gp.buttons[6].value;
     if (gp.buttons[0]?.pressed) input.handbrake = true;
+    if (gp.buttons[1]?.pressed) input.lean = true;
+    J.thr = (gp.buttons[7]?.value > 0.05 ? gp.buttons[7].value : 0) - (gp.buttons[6]?.value > 0.05 ? gp.buttons[6].value : 0) || J.thr;
+    if (Math.abs(gp.axes[3] ?? 0) > 0.12) J.pitch = gp.axes[3];
+    if (Math.abs(gp.axes[2] ?? 0) > 0.12) J.roll = gp.axes[2];
+    if (Math.abs(ax) > 0.12) J.yaw = ax;
   }
 }
 
@@ -128,7 +156,46 @@ let camMode = 0;
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3(), fw = new THREE.Vector3();
 let glideCam = 0;                       // 0 = driving camera, 1 = gliding camera (pulled back, follows the flight path)
 let camYaw = null, camPitch = 0, camY = null, shakeT = 0, shake = 0;
+const jUp = new THREE.Vector3(), jDir = new THREE.Vector3();
+const jLastPos = new THREE.Vector3(), jMove = new THREE.Vector3();
+let jFollowing = false;
+// jet: chase camera behind the flight path that rolls part way with the wings; cockpit view on C
+function updateJetCamera(dt) {
+  const v = vehicles.current, rp = v.renderPos;
+  fw.set(0, 0, 1).applyQuaternion(v.renderQuat); jUp.set(0, 1, 0).applyQuaternion(v.renderQuat);
+  const sp = v.vel.length();
+  if (sp > 30 && v.mode === 'air') jDir.copy(v.vel).divideScalar(sp).lerp(fw, 0.45).normalize(); else jDir.copy(fw);
+  shake = Math.max(shake * Math.exp(-dt * 6), v.hit * 0.02, v.landing * 0.4); v.landing *= Math.exp(-dt * 8); shakeT += dt * 31;
+  const roll = v.mode === 'air' ? 0.6 : 0.2;
+  const upB = tmp.set(0, 1, 0).lerp(jUp, roll).normalize();
+  if (camMode === 2) {
+    camera.position.copy(rp).addScaledVector(jUp, 1.05).addScaledVector(fw, 2.9);
+    camLook.copy(camera.position).add(fw.clone().multiplyScalar(50));
+    camera.up.copy(jUp);
+  } else {
+    const dist = camMode === 1 ? 46 : 19 + Math.min(sp, 300) * 0.012, high = camMode === 1 ? 12 : 4.6;
+    const target = fw.clone().copy(rp).addScaledVector(jDir, -dist).addScaledVector(upB, high);
+    // Carry the camera with the rendered jet before easing changes in the viewing offset.
+    // Smoothing absolute positions made the jet outrun the camera, triggering repeated snaps.
+    jMove.subVectors(rp, jLastPos);
+    if (!jFollowing || jMove.lengthSq() > 10000) camPos.copy(target);
+    else camPos.add(jMove).lerp(target, 1 - Math.exp(-dt * (v.mode === 'air' ? 9 : 14)));
+    const gh = world.heightAt(camPos.x, camPos.z) + 1.2; if (camPos.y < gh) camPos.y = gh;
+    camera.position.copy(camPos);
+    camera.position.x += Math.sin(shakeT * 1.3) * shake; camera.position.y += Math.sin(shakeT * 1.7 + 1) * shake;
+    camLook.copy(rp).addScaledVector(jDir, 25).addScaledVector(upB, 2);
+    camera.up.copy(upB);
+  }
+  jLastPos.copy(rp); jFollowing = camMode !== 2;
+  camera.lookAt(camLook);
+  camYaw = Math.atan2(fw.x, fw.z); camY = rp.y; camPitch = 0;
+  const fov = 68 + Math.min(sp * 3.6, 1500) * 0.012;
+  camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
+}
 function updateCamera(dt) {
+  if (vehicles.current.cam?.jet) { updateJetCamera(dt); return; }
+  jFollowing = false;
+  const vc = vehicles.current.cam || {};
   fw.set(0, 0, 1).applyQuaternion(car.renderQuat);
   const sp = car.vel.length();
   const gl = car.glide?.active, hs = Math.hypot(car.vel.x, car.vel.z);
@@ -152,12 +219,12 @@ function updateCamera(dt) {
   const amp = shake;
   shakeT += dt * 31;
   if (camMode === 2) {          // nose cam
-    tmp.set(0, 0.62, 0.9).applyQuaternion(car.renderQuat).add(car.renderPos);
+    tmp.set(...(vc.nose || [0, 0.62, 0.9])).applyQuaternion(car.renderQuat).add(car.renderPos);
     camera.position.copy(tmp);
     camLook.copy(tmp).add(fw.multiplyScalar(10));
     camera.up.set(0, 1, 0).applyQuaternion(car.renderQuat);
   } else {
-    let dist = camMode === 1 ? 12 : 5.4 + Math.min(sp, 75) * 0.022, high = camMode === 1 ? 4.5 : 1.85;
+    let dist = camMode === 1 ? 12 : (vc.dist ?? 5.4) + Math.min(sp, 75) * (vc.distPerSpeed ?? 0.022), high = camMode === 1 ? 4.5 : (vc.high ?? 1.85);
     if (glideCam > 0.001) { dist += (13 + Math.min(sp, 60) * 0.05 - dist) * glideCam; high += (2.8 - high) * glideCam; }
     const cx = Math.sin(camYaw), cz = Math.cos(camYaw);
     tmp.set(car.renderPos.x - cx * dist, camY + high - Math.sin(camPitch) * dist, car.renderPos.z - cz * dist);
@@ -179,6 +246,11 @@ function updateCamera(dt) {
 const STEP = 1 / 120;
 let acc = 0, last = performance.now(), fps = 60, frames = 0, fpsT = 0;
 const speedEl = document.getElementById('speed'), infoEl = document.getElementById('info');
+const vmsgEl = Object.assign(document.createElement('div'), { id: 'veh-msg' }); document.getElementById('hud').append(vmsgEl);
+// bike / jet read-out (throttle, height, warnings…) sits above the speed, clear of the help text bottom-right
+const vlineEl = Object.assign(document.createElement('div'), { id: 'veh-line' });
+vlineEl.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px;font-variant-numeric:tabular-nums;';
+speedEl.before(vlineEl);
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
@@ -206,7 +278,14 @@ function frame(now) {
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
   const kmh = Math.round(car.vel.length() * 3.6);
   speedEl.innerHTML = `${kmh}<small>km/h</small>`;
-  infoEl.textContent = `${car.drifting ? 'DRIFT · ' : ''}${SURFACES[car.surface]} · ${Math.round(fps)} fps`;
+  const v = vehicles.current;
+  const info = `${v.kind === 'car' ? (car.drifting ? 'DRIFT · ' : '') : v.name + ' · '}${v.kind === 'jet' ? '' : SURFACES[car.surface] + ' · '}${Math.round(fps)} fps`;
+  if (info !== infoEl._last) { infoEl.innerHTML = info; infoEl._last = info; }
+  const vline = v.hudInfo ? v.hudInfo().replace(/ · $/, '') : '';
+  if (vline !== vlineEl._last) { vlineEl.innerHTML = vline; vlineEl._last = vline; }
+  v.msgT = (v.msgT || 0) - dt;
+  const msg = v.msgT > 0 && v.kind !== 'car' ? v.msg : '';
+  if (msg !== vmsgEl._last) { vmsgEl.textContent = msg; vmsgEl._last = msg; }
 }
 requestAnimationFrame(frame);
 
@@ -217,3 +296,5 @@ addEventListener('resize', () => {
 // for debugging / automated test drives
 window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide };
 window.game.glider = glider;
+window.game.vehicles = vehicles;
+if (vehicles.saved && vehicles.saved !== 'car') vehicles.switchTo(vehicles.saved);

@@ -32,6 +32,8 @@ const CSS = `
 .ch-panel .ch-item .ch-meta { float: right; opacity: .85; font-variant-numeric: tabular-nums; }
 .ch-panel .ch-item .ch-desc { display: block; opacity: .75; font-size: 12.5px; margin-top: 2px; }
 .ch-panel .ch-hint { opacity: .65; font-size: 12px; margin-top: 10px; }
+.ch-panel .ch-group { font-weight: 800; font-size: 13px; opacity: .8; margin: 12px 0 2px; }
+#ch-menu { max-height: 86vh; overflow-y: auto; box-sizing: border-box; }
 .ch-panel .ch-big { font-size: 48px; font-weight: 900; font-variant-numeric: tabular-nums; margin: 4px 0; }
 .ch-panel .ch-new { color: #ffd23f; font-weight: 800; font-size: 18px; }
 `;
@@ -61,10 +63,16 @@ const MAT = {
 };
 const POST = new THREE.BoxGeometry(0.9, POST_H, 0.9).translate(0, POST_H / 2, 0);
 const BAR = new THREE.BoxGeometry(1, 1.4, 0.5);
+const VICON = { car: '🏎️', bike: '🏍️', jet: '✈️' }, VNAME = { car: 'Car races', bike: 'Dirt bike races', jet: 'Jet races (rings in the air)' };
 const BEAM = new THREE.CylinderGeometry(2.2, 2.2, 260, 12, 1, true).translate(0, 130 + POST_H, 0);
 
 function makeArch(g, kind) {
   const grp = new THREE.Group();
+  if (g.y !== undefined) {                 // jet races: a ring floating in the air, facing along the course
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(g.r, Math.max(1.2, g.r * 0.05), 8, 40), kind === 'finish' ? MAT.ringFinish : MAT.later);
+    grp.add(ring); grp.position.set(g.x, g.y, g.z); grp.rotation.y = g.yaw; grp.visible = false;
+    return { grp, bar: ring, kind, placed: true, ring: true };
+  }
   const l = new THREE.Mesh(POST, MAT.post), r = new THREE.Mesh(POST, MAT.post);
   l.position.x = g.w / 2; r.position.x = -g.w / 2;
   const bar = new THREE.Mesh(BAR, kind === 'finish' ? MAT.finish : kind === 'start' ? MAT.start : MAT.later);
@@ -124,13 +132,14 @@ function makeRamp(world, r) {
 }
 
 // ---------------------------------------------------------------- manager
-export async function createChallenges({ scene, world, car, minimap, base = './assets/' }) {
+export async function createChallenges({ scene, world, car, minimap, vehicles = null, base = './assets/' }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
   // the map's fixed ramps (always there, not part of any challenge)
   const fixedList = await fetch(base + 'ramps.json').then(r => r.ok ? r.json() : []).catch(() => []);
   const fixedRamps = fixedList.map(r => ({ r, grp: null }));
   world.setFixedRamps?.(fixedList);
   MAT.finish = new THREE.MeshBasicMaterial({ map: checkerTexture() });
+  MAT.ringFinish = new THREE.MeshBasicMaterial({ color: 0xffd23f });
   RAMP_MAT = new THREE.MeshLambertMaterial({ map: chevronTexture() });
   MAT.finish.map.repeat.set(4, 1); MAT.finish.map.wrapS = THREE.RepeatWrapping;
 
@@ -151,6 +160,7 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
   let ch = null, arches = [], state = 'idle', t = 0, cd = 0, next = 1, splits = [], splitT = 0, sel = 0, result = null;
   let menuOpen = false, placeToken = 0;
   const lastPos = new THREE.Vector2(), curPos = new THREE.Vector2();
+  let lastY = 0, curY = 0;
 
   // ---- sound blips (own tiny audio context; created on first key press)
   let ac = null;
@@ -183,6 +193,7 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
     arches.forEach((a, i) => {
       a.grp.visible = i === 0 ? state !== 'running' || next <= 1 : i >= next;
       if (a.kind === 'cp') a.bar.material = i === next ? MAT.next : MAT.later;
+      if (a.ring) a.grp.visible = i >= next || (i === 0 && state !== 'running');
     });
     const g = ch.gates[next];
     beam.visible = !!g && (state === 'running' || state === 'countdown');
@@ -205,6 +216,12 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
   async function start(i) {
     ch = list[i]; sel = i; result = null;
     closeMenu(); done.style.display = 'none';
+    vehicles?.switchTo(ch.vehicle || 'car');
+    // jet races: a crash (or R) puts you back in the air at the last ring you flew through
+    if (vehicles) vehicles.jet.respawn = ch.vehicle === 'jet' ? () => {
+      if (state !== 'running' || next < 2) return null;
+      const g = ch.gates[next - 1]; return [g.x, g.y, g.z, g.yaw, 450];
+    } : null;
     buildArches();
     ramps = (ch.ramps || []).map(r => ({ r, grp: null }));
     track = ch.track ? makeTrack(ch.track) : null;
@@ -218,6 +235,7 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
 
   function quit() {
     placeToken++; state = 'idle'; ch = null; clearArches();
+    if (vehicles) vehicles.jet.respawn = null;
     hud.style.display = 'none'; count.style.display = 'none'; done.style.display = 'none'; split.style.opacity = 0;
     minimap.setOverlay?.(null);
   }
@@ -246,6 +264,10 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
     if (d0 > 0 || d1 < 0 || d0 === d1) return false;
     const k = -d0 / (d1 - d0);
     const ix = lastPos.x + (curPos.x - lastPos.x) * k, iz = lastPos.y + (curPos.y - lastPos.y) * k;
+    if (g.y !== undefined) {                 // a ring: through the hole, not just across the line
+      const iy = lastY + (curY - lastY) * k;
+      return Math.hypot((ix - g.x) * cx + (iz - g.z) * cz, iy - g.y) <= g.r + 1;
+    }
     return Math.abs((ix - g.x) * cx + (iz - g.z) * cz) <= g.w / 2 + 1.5;
   }
 
@@ -269,7 +291,8 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
     if (state === 'placing') sub = 'Getting to the start…';
     else if (state === 'running' || state === 'countdown') {
       const g = ch.gates[next], dist = g ? Math.hypot(g.x - car.pos.x, g.z - car.pos.z) : 0;
-      sub = `${next === n ? 'Finish' : `Checkpoint ${next}/${n - 1}`} · ${dist < 1000 ? Math.round(dist) + ' m' : (dist / 1000).toFixed(1) + ' km'}`;
+      sub = `${next === n ? 'Finish' : `${g?.y !== undefined ? 'Ring' : 'Checkpoint'} ${next}/${n - 1}`} · ${dist < 1000 ? Math.round(dist) + ' m' : (dist / 1000).toFixed(1) + ' km'}`;
+      if (g?.y !== undefined) { const dy = g.y - car.pos.y; sub += ` · ${Math.abs(dy) < 8 ? 'level' : (dy > 0 ? '↑ ' : '↓ ') + Math.round(Math.abs(dy)) + ' m'}`; }
       const b = best[ch.id]; if (b) sub += ` · best ${fmtTime(b.time)}`;
     } else if (state === 'finished') sub = 'Finished';
     hud.innerHTML = `<div class="ch-name">${ch.name}</div><div class="ch-time">${fmtTime(t)}</div><div class="ch-sub">${sub}</div>`;
@@ -277,10 +300,12 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
 
   // ---- menu
   function renderMenu() {
-    menu.innerHTML = `<h2>Challenges</h2>` + list.map((c, i) =>
-      `<button class="ch-item${i === sel ? ' sel' : ''}" data-i="${i}"><b>${c.name}</b>
+    let lastV = null;
+    menu.innerHTML = `<h2>Races</h2>` + list.map((c, i) => {
+      const v = c.vehicle || 'car', head = v !== lastV ? `<div class="ch-group">${VICON[v]} ${VNAME[v]}</div>` : ''; lastV = v;
+      return head + `<button class="ch-item${i === sel ? ' sel' : ''}" data-i="${i}"><b>${VICON[v]} ${c.name}</b>
         <span class="ch-meta">${(c.length / 1000).toFixed(1)} km · best ${fmtTime(best[c.id]?.time)}</span>
-        <span class="ch-desc">${c.desc}</span></button>`).join('') +
+        <span class="ch-desc">${c.desc}</span></button>`; }).join('') +
       `<div class="ch-hint">↑/↓ + Enter or click to start · J or Esc to close${state !== 'idle' ? ' · Backspace restarts a run' : ''}</div>`;
     menu.querySelectorAll('.ch-item').forEach(b => b.addEventListener('click', () => start(+b.dataset.i)));
   }
@@ -304,7 +329,7 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
   }, true);
 
   return {
-    list, get state() { return state; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
+    list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
     best: () => best, start, quit, openMenu, closeMenu,
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
@@ -315,10 +340,12 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
     get track() { return track; },
     // hold the car on the line during the countdown (and while the menu is open)
     holdInput(input) {
-      if (state === 'placing' || state === 'countdown' || menuOpen) { input.throttle = 0; input.brake = 0; input.handbrake = true; input.steer = 0; }   // no brake: at a standstill it means reverse
+      const hold = state === 'placing' || state === 'countdown' || menuOpen;
+      if (hold) { input.throttle = 0; input.brake = 0; input.handbrake = true; input.steer = 0; input.lean = false; }
+      if (input.jet) input.jet.hold = hold;             // jet: brakes on (you can run the throttle up)   // no brake: at a standstill it means reverse
     },
     update(dt) {
-      curPos.set(car.pos.x, car.pos.z);
+      curPos.set(car.pos.x, car.pos.z); curY = car.pos.y;
       for (const q of fixedRamps) if (!q.grp) {           // fixed ramps: mesh once the road under them has loaded
         const { x, z, yaw } = q.r, ex = x + Math.sin(yaw) * RAMP_LEN, ez = z + Math.cos(yaw) * RAMP_LEN;
         if (world.loadedAt(x, z) && world.loadedAt(ex, ez)) { q.grp = makeRamp(world, q.r); group.add(q.grp); }
@@ -345,7 +372,7 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
       }
       if (splitT > 0 && (splitT -= dt) <= 0) split.style.opacity = 0;
       if (state !== 'idle') renderHud();
-      lastPos.copy(curPos);
+      lastPos.copy(curPos); lastY = curY;
       if (beam.visible) { const p = 0.22 + 0.08 * Math.sin(performance.now() / 250); MAT.beam.opacity = p; }
     },
   };
