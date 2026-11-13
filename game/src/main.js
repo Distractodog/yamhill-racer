@@ -174,7 +174,7 @@ function frame(now) {
   readInput();
   challenges.holdInput(input);
   acc += dt;
-  while (acc >= STEP) { car.savePrev(); car.step(STEP, input); acc -= STEP; }
+  while (acc >= STEP) { car.savePrev(); car.step(STEP, input); challenges.constrain(); acc -= STEP; }
   challenges.update(dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;

@@ -28,7 +28,8 @@ WILLAMINA = (-3640, 3330)
 ROAD = {'asphalt': 1.0, 'gravel': 1.6, 'trail': 8.0}
 TRAIL = {'trail': 1.0, 'gravel': 1.3, 'asphalt': 2.0}
 # jump ramps: one per `ramp_every` m of route, on straights at least `run` m long (room to fly and land)
-RAMP_LEN = 31          # up 11 m + top 2 m + down 18 m (shape lives in game/src/challenges.js)
+class RAMP: up = 11; top = 2; down = 18          # same shape as RAMP in game/src/data.js
+RAMP_LEN = RAMP.up + RAMP.top + RAMP.down
 CHALLENGES = [
     dict(id='long-walk', name='Long Walk climb', desc='Main Building to the top of the Long Walk, on the trails.',
          via=[MAIN_BUILDING, LONG_WALK_TOP], cost=TRAIL, gap=180, ramp_every=800, run=60, bend=0.45, gate_clear=35),
@@ -65,6 +66,9 @@ for f in sorted(glob.glob(os.path.join(ROOT, 'game', 'assets', 'tiles', '*', 'ti
 P = np.array(pts)
 from scipy.spatial import cKDTree
 tree = cKDTree(P)
+jset = {n for n, _ in juncs}
+strip_ids = np.array([i for i in range(len(pts)) if i not in jset])
+stree = cKDTree(P[strip_ids])                              # strip points only (junction centres have no real width)
 E = np.array(ends)
 etree = cKDTree(P[E])
 for i, j in etree.query_pairs(2.5):                       # strips cut at tile edges, or ending at the same point
@@ -129,7 +133,8 @@ for c in CHALLENGES:
     # ---- ramps
     F = np.array(fine)
     _, near = tree.query(F)
-    fy = np.array([ys[i] for i in near]); fw = np.array([widths[i] for i in near])
+    fy = np.array([ys[i] for i in near])
+    fw = np.array([widths[strip_ids[i]] for i in stree.query(F)[1]])
     jpts = np.array([pts[n] for n, _ in juncs]); jtree = cKDTree(jpts)
     def ok(s0):
         i0, i1 = np.searchsorted(cum, [s0 - 30, s0 + c['run']])
@@ -155,14 +160,52 @@ for c in CHALLENGES:
         s0 = min(cands)[1]; g = at(s0)
         i = np.searchsorted(cum, s0)
         ramps.append(dict(x=g['x'], z=g['z'], yaw=g['yaw'], w=round(float(fw[i]) + 2, 1), s=round(float(s0))))
+    # ---- jumps that help: a dip in the road (down >= 3 m and back up within 30-140 m, straight across). Flying over
+    # it from a ramp at the lip beats driving down into it and back out. Kept clear of the other ramps.
+    dips = []
+    for s0 in np.arange(150, length - 250, 5.0):
+        k = np.searchsorted(cum, s0 + RAMP.up)               # the lip
+        y0 = fy[k]
+        rim = None; low = 0
+        for j in range(k + 1, len(F)):
+            u = cum[j] - cum[k]
+            if u > 160: break
+            low = min(low, fy[j] - y0)
+            if u >= 30 and fy[j] - y0 >= -0.5 and low <= -3: rim = (j, u); break
+        if not rim or rim[1] > 140: continue
+        i0, i1 = np.searchsorted(cum, s0 - 30), min(len(F) - 1, rim[0] + 15)
+        seg = F[i0:i1 + 1]; a, b = seg[0], seg[-1]; d = b - a; L = np.hypot(*d)
+        off = np.abs((seg[:, 0] - a[0]) * d[1] - (seg[:, 1] - a[1]) * d[0]) / L
+        if off.max() > fw[i0:i1 + 1].min() * 0.5: continue           # flight stays inside the walls
+        if min(abs(s0 - g) for g in gate_s) < c['gate_clear']: continue
+        if jtree.query_ball_point(F[np.searchsorted(cum, s0):k + 8], 22, return_length=True).max() > 0: continue
+        dips.append((low, s0, rim[1]))
+    for low, s0, span in sorted(dips):                       # deepest dips first
+        if any(abs(s0 - r['s']) < 250 for r in ramps): continue
+        g = at(s0); i = np.searchsorted(cum, s0)
+        ramps.append(dict(x=g['x'], z=g['z'], yaw=g['yaw'], w=round(float(fw[i]) + 2, 1), s=round(float(s0)),
+                          dip=round(float(-low), 1), span=round(float(span))))
+    ramps.sort(key=lambda r: r['s'])
+
+    # ---- track edges for the invisible walls: centre line every 4 m with the half-width of the road there
+    # at junctions the wall opens out to the whole junction piece (its ring radius), so hairpin turns have room
+    jrad = np.minimum(np.array([r for _, r in juncs]), 14.0)     # ring radius can reach far down a road stub: cap it
+    def half_width(j):
+        hw = float(fw[j]) / 2
+        for q in jtree.query_ball_point(F[j], jrad.max()):
+            d = float(np.hypot(*(F[j] - jpts[q])))
+            if d < jrad[q]: hw = max(hw, float(jrad[q]) - d * 0.5)
+        return hw
+    track = [[round(float(F[j][0]), 2), round(float(F[j][1]), 2), round(half_width(j), 2)]
+             for j in list(range(0, len(F), 2)) + [len(F) - 1]]
     simple = resample(line, 8.0)
     result.append(dict(id=c['id'], name=c['name'], desc=c['desc'], length=round(length),
-                       start=dict(x=start['x'], z=start['z'], yaw=start['yaw']), gates=gates, ramps=ramps,
+                       start=dict(x=start['x'], z=start['z'], yaw=start['yaw']), gates=gates, ramps=ramps, track=track,
                        route=[[round(x, 1), round(z, 1)] for x, z in simple]))
     surf = {}
     for a, b in zip(nodes, nodes[1:]): surf[kinds[b]] = surf.get(kinds[b], 0) + math.dist(pts[a], pts[b])
     print(f"{c['name']}: {length:.0f} m, {len(gates) - 1} gates after the start, {len(ramps)} ramps at",
-          [r['s'] for r in ramps], 'surfaces',
+          [(r['s'], f"dip {r['dip']} m over {r['span']} m") if 'dip' in r else r['s'] for r in ramps], 'surfaces',
           {k: round(v) for k, v in surf.items()})
 
 if os.environ.get("DRY"): sys.exit()

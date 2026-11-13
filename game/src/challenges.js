@@ -3,6 +3,7 @@
 // checkpoint in order to the finish. Best times (and their checkpoint splits) are saved per browser.
 import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
+import { makeTrack } from './track.js';
 
 const BEST_KEY = 'yr-best-1';
 const POST_H = 7, COUNTDOWN = 3;
@@ -163,11 +164,12 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
     } catch {}
   }
 
+  let track = null;     // invisible walls along the route (track.js) while a run is on
   let ramps = [];       // { r, grp|null } — meshes built once the ground under them has streamed in
   function clearArches() {
     for (const a of arches) group.remove(a.grp); arches = []; beam.visible = false;
     for (const q of ramps) if (q.grp) { group.remove(q.grp); q.grp.traverse(o => o.geometry?.dispose()); }
-    ramps = []; world.setRamps?.([]);
+    ramps = []; world.setRamps?.([]); track = null;
   }
 
   function buildArches() {
@@ -205,6 +207,7 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
     closeMenu(); done.style.display = 'none';
     buildArches();
     ramps = (ch.ramps || []).map(r => ({ r, grp: null }));
+    track = ch.track ? makeTrack(ch.track) : null;
     world.setRamps?.(ch.ramps || []);
     state = 'placing'; next = 1; t = 0; splits = [];
     hud.style.display = 'block'; renderHud();
@@ -303,6 +306,13 @@ export async function createChallenges({ scene, world, car, minimap, base = './a
   return {
     list, get state() { return state; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
     best: () => best, start, quit, openMenu, closeMenu,
+    // walls: call after every physics step. Only during the countdown and the run (not after the finish)
+    constrain() {
+      if (!track || (state !== 'countdown' && state !== 'running')) return;
+      const hit = track.constrain(car);
+      if (hit > 0) car.hit = Math.max(car.hit || 0, hit * 0.5);
+    },
+    get track() { return track; },
     // hold the car on the line during the countdown (and while the menu is open)
     holdInput(input) {
       if (state === 'placing' || state === 'countdown' || menuOpen) { input.throttle = 0; input.brake = 0; input.handbrake = true; input.steer = 0; }   // no brake: at a standstill it means reverse

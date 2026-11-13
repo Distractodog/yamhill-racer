@@ -153,3 +153,63 @@ if (which === 'all' || which === 'ramps') {
   }
   W.setRamps([]);
 }
+
+if (which === 'all' || which === 'walls') {
+  // challenge walls (game/src/track.js): steer hard into the edge, then a bot drives whole routes; the car's centre
+  // must never get further out than the road edge
+  const { makeTrack } = await import('../game/src/track.js');
+  const CH = JSON.parse(fs.readFileSync(A + 'challenges.json'));
+  const outside = (c, T) => {           // how far the car centre is past the road edge (m), ≤ 0 inside
+    let best = Infinity;
+    for (let i = 0; i < T.length - 1; i++) {
+      const [ax, az, ah] = T[i], [bx, bz, bh] = T[i + 1], ex = bx - ax, ez = bz - az, L2 = ex * ex + ez * ez || 1e-9;
+      let t = ((c.pos.x - ax) * ex + (c.pos.z - az) * ez) / L2; t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(c.pos.x - ax - ex * t, c.pos.z - az - ez * t) - (ah + (bh - ah) * t);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+  const sher = CH.find(c => c.id === 'sheridan'), T = sher.track;
+  // a straight bit: the first ramp's run-out
+  const r0 = sher.ramps[0], fx = Math.sin(r0.yaw), fz = Math.cos(r0.yaw);
+  for (const [kmh, ang] of [[100, 0.6], [300, 0.35], [600, 0.2]]) {
+    const track = makeTrack(T); let worst = -9, hits = 0, maxHit = 0;
+    const sx = r0.x + fx * 60, sz = r0.z + fz * 60, yaw = r0.yaw + ang;     // pointed at the left edge
+    const { car } = run(`wall: into the edge at ${kmh} km/h, ${Math.round(ang * 57.3)}°`, sx, sz, yaw, 4, (t, i, c) => {
+      if (t === 0) c.vel.set(Math.sin(yaw) * kmh / 3.6, 0, Math.cos(yaw) * kmh / 3.6);
+      i.throttle = 1; i.steer = 0;
+      const h = track.constrain(c); if (h > 0) { hits++; maxHit = Math.max(maxHit, h); }
+      worst = Math.max(worst, outside(c, T));
+    }, 0.5);
+    console.log(`   furthest past the edge ${worst.toFixed(2)} m · wall contacts ${hits} steps, hardest ${(maxHit * 3.6).toFixed(0)} km/h · end ${(car.vel.length() * 3.6).toFixed(0)} km/h`);
+  }
+  // bot drives each whole route with walls + ramps on: pure pursuit, speed capped on bends
+  for (const c of CH) {
+    const track = makeTrack(c.track); W.setRamps(c.ramps);
+    const R = c.track, cap = c.id === 'long-walk' ? 110 : 260;
+    let tgt = 0, worst = -9, hits = 0, done = false, tEnd = null, slowT = 0, backT = 0, backs = 0;
+    const [sx, sz] = R[0], yaw = Math.atan2(R[3][0] - sx, R[3][1] - sz);
+    const { car } = run(`walls: bot drives ${c.name}`, sx, sz, yaw, c.length / (cap / 3.6) * 2 + 60, (t, i, k) => {
+      if (done) { i.throttle = 0; i.brake = 1; return; }
+      const sp = k.vel.length(), look = 10 + sp * 0.5;
+      while (R[tgt + 1] && Math.hypot(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) < look) tgt++;
+      fw.set(0, 0, 1).applyQuaternion(k.quat);
+      let d = Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) - Math.atan2(fw.x, fw.z); d = Math.atan2(Math.sin(d), Math.cos(d));
+      i.steer = Math.max(-1, Math.min(1, -d * 2.5));
+      // slow for what's coming: heading change over the next ~60 m
+      const a = R[Math.min(R.length - 1, tgt + 3)], b = R[Math.min(R.length - 1, tgt + 15)], a0 = R[tgt];
+      let turn = Math.atan2(b[0] - a[0], b[1] - a[1]) - Math.atan2(a[0] - a0[0], a[1] - a0[1]); turn = Math.abs(Math.atan2(Math.sin(turn), Math.cos(turn)));
+      const want = Math.max(50, cap * (1 - turn * 1.2));
+      i.throttle = sp * 3.6 < want ? 1 : 0; i.brake = sp * 3.6 > want + 25 ? 1 : 0;
+      // stuck (wedged on a tight bend): back up for 1.5 s with the wheel the other way, like a person would
+      slowT = sp < 1 ? slowT + DT : 0;
+      if (slowT > 1 && backT <= 0) { backT = 1.5; backs++; }
+      if (backT > 0) { backT -= DT; i.throttle = 0; i.brake = 1; i.steer = -i.steer; }
+      if (track.constrain(k) > 0) hits++;
+      worst = Math.max(worst, outside(k, R));
+      if (track.index >= R.length - 3) { done = true; tEnd = t; }
+    }, 30);
+    console.log(`   ${done ? `reached the finish in ${tEnd.toFixed(0)} s` : `DID NOT FINISH (got to ${(track.index / (R.length - 1) * 100).toFixed(0)}%)`} · furthest past the edge ${worst.toFixed(2)} m · wall contact ${hits} steps · backed up ${backs}×`);
+  }
+  W.setRamps([]);
+}
