@@ -11,6 +11,7 @@ const hzAt = rpm => {
   }
   const [rl, hl] = RPM_HZ[RPM_HZ.length - 1]; return hl * rpm / rl;
 };
+const GLIDING = { throttle: 0, brake: 0 };
 const GEARS = [0, 55, 100, 145, 190, 235, 300];   // km/h at the top of each gear
 
 export class CarAudio {
@@ -51,6 +52,7 @@ export class CarAudio {
 
   update(car, input, dt) {
     if (!this.ctx) return;
+    if (car.glide?.active) input = GLIDING;            // flying: W/S pitch the wing, the engine just idles
     const t = this.ctx.currentTime, kmh = car.vel.length() * 3.6;
     while (this.gear < GEARS.length - 1 && kmh > GEARS[this.gear]) this.gear++;
     while (this.gear > 1 && kmh < GEARS[this.gear - 1] - 8) this.gear--;
@@ -77,7 +79,9 @@ export class CarAudio {
     this.squeal.gain.setTargetAtTime(onTarmac ? slide * 0.22 : 0, t, 0.05);
     const loose = car.grounded && !onTarmac ? Math.min(1, kmh / 90) * (0.12 + slide * 0.25) : 0;
     this.crunch.gain.setTargetAtTime(loose, t, 0.06);
-    this.wind.gain.setTargetAtTime(Math.min(0.25, (kmh / 260) ** 2 * 0.25), t, 0.1);
+    const wind = Math.min(0.25, (kmh / 260) ** 2 * 0.25);
+    // under the wing: a steady rush of air that grows with airspeed
+    this.wind.gain.setTargetAtTime(car.glide?.active ? Math.min(0.4, 0.07 + (kmh / 200) ** 2 * 0.3) : wind, t, 0.15);
     if (car.hit > 3 || car.landing > 0.3) {
       const v = Math.min(0.9, Math.max(car.hit / 25, car.landing));
       this.thud.gain.cancelScheduledValues(t); this.thud.gain.setValueAtTime(v, t); this.thud.gain.setTargetAtTime(0, t, 0.12);

@@ -74,6 +74,7 @@ export class Car {
   }
 
   reset(x, z, yaw) {
+    this.glide?.cancel();
     const h = this.world.heightAt(x, z);
     this.pos.set(x, h + 0.75, z);
     this.quat.setFromAxisAngle(_v.set(0, 1, 0), yaw);
@@ -88,6 +89,7 @@ export class Car {
   }
 
   step(dt, input) {
+    if (this.glide?.active) { this.glide.step(dt, input); return; }     // flying: glider.js
     const t = this.t, W = this.world;
     this._prevVel.copy(this.vel);
     _up.set(0, 1, 0).applyQuaternion(this.quat);

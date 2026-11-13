@@ -213,3 +213,94 @@ if (which === 'all' || which === 'walls') {
   }
   W.setRamps([]);
 }
+
+if (which === 'all' || which === 'glider') {
+  // G glider (game/src/glider.js): off the Hwy 18 ramp with and without it, a gentle glide from a height over the
+  // fields, a held pull-up (stall), a banked turn, a dive into the ground, G on the ground, a tree, a pond
+  const { Glider } = await import('../game/src/glider.js');
+  const R0 = JSON.parse(fs.readFileSync(A + 'ramps.json'))[0];
+  W.setFixedRamps([R0]);
+  const fx = Math.sin(R0.yaw), fz = Math.cos(R0.yaw);
+  const res = {};
+  const glide = (name, x, z, yaw, secs, setup, ctl = () => {}) => {
+    let G, st = { stallT: 0, maxSink: 0, deployed: null, closed: null, peak: -1e9, minUp: 1, nan: false, start: null };
+    const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
+      if (t === 0) { G = new Glider(c); setup(c, G); }
+      i.throttle = 0; i.brake = 0; i.steer = 0;
+      ctl(t, i, c, G);
+      if (G.active) {
+        if (!st.deployed) st.deployed = [c.pos.x, c.pos.z, c.pos.y, t];
+        if (G.stall) st.stallT += DT;
+        st.maxSink = Math.max(st.maxSink, -c.vel.y); st.peak = Math.max(st.peak, c.pos.y);
+      } else if (st.deployed && !st.closed) st.closed = [c.pos.x, c.pos.z, c.pos.y, t, G.result, -c._prevVel.y, c.vel.length() * 3.6];
+      if (![c.pos.x, c.pos.y, c.vel.x, c.quat.w].every(isFinite)) st.nan = true;
+    }, 0.5);
+    up.set(0, 1, 0).applyQuaternion(car.quat);
+    const d = st.deployed, e = st.closed;
+    const flown = d && e ? Math.hypot(e[0] - d[0], e[1] - d[1]) : 0;
+    console.log(`   ${d ? `opened at ${d[3].toFixed(1)} s` : 'glider not opened'} · ${e ? `closed at ${e[3].toFixed(1)} s: ${e[4]}, ${flown.toFixed(0)} m flown, ` +
+      `dropped ${(d[2] - e[2]).toFixed(0)} m (peak +${(st.peak - d[2]).toFixed(0)} m), touchdown sink ${e[5].toFixed(1)} m/s at ${e[6].toFixed(0)} km/h` : 'still flying'}` +
+      ` · stalled ${st.stallT.toFixed(1)} s · end ${car.grounded ? 'on wheels' : 'in the air'}, upright ${up.y.toFixed(2)}${st.nan ? ' · NaN!' : ''}`);
+    return { car, G, st, flown };
+  };
+  // off the ramp at 250 km/h: plain jump vs glider opened 0.3 s after take-off
+  const sx = R0.x - fx * 60, sz = R0.z - fz * 60;
+  for (const withG of [false, true]) {
+    let off = null, land = null, onRamp = false;
+    const { car } = glide(`Hwy 18 ramp at 250 km/h${withG ? ', glider opened in the air' : ', plain jump'}`, sx, sz, R0.yaw, 30,
+      c => c.vel.set(fx * 250 / 3.6, 0, fz * 250 / 3.6),
+      (t, i, c, G) => {
+        i.throttle = !off && c.vel.length() * 3.6 < 250 ? 1 : 0;
+        if (W.rampAt(c.pos.x, c.pos.z) > 0) onRamp = true;
+        if (onRamp && !off && !c.grounded && W.rampAt(c.pos.x, c.pos.z) === 0) off = [c.pos.x, c.pos.z, t];
+        if (withG && off && !G.active && !G.result && t > off[2] + 0.3) G.toggle();
+        if (off && !land && (c.grounded || (G.result && G.result !== 'folded'))) land = [c.pos.x, c.pos.z];
+      });
+    res[withG ? 'gl' : 'plain'] = off && land ? Math.hypot(land[0] - off[0], land[1] - off[1]) : 0;
+    console.log(`   take-off → first touchdown ${res[withG ? 'gl' : 'plain'].toFixed(0)} m`);
+  }
+  console.log(`   glider carried you ${(res.gl / Math.max(1, res.plain)).toFixed(1)}× as far as the plain jump`);
+  // gentle glide from 60 m over the open fields, no input → should land upright
+  const g1 = glide('glide from 60 m at 110 km/h, hands off', ...FIELD, Math.PI / 2, 40,
+    (c, G) => { c.pos.y += 60; c.vel.set(110 / 3.6, 0, 0); c.airTime = 1; G.toggle(); });
+  if (g1.st.closed) console.log(`   glide ratio ${(g1.flown / (g1.st.deployed[2] - g1.st.closed[2])).toFixed(1)} : 1`);
+  // hold S (nose up) the whole way: should climb, stall, drop the nose, recover, never NaN
+  glide('glide from 60 m, holding S (pull up) all the way', ...FIELD, Math.PI / 2, 40,
+    (c, G) => { c.pos.y += 60; c.vel.set(110 / 3.6, 0, 0); c.airTime = 1; G.toggle(); }, (t, i) => { i.brake = 1; });
+  // bank right for 5 s, then let go
+  {
+    let h0 = null, h1 = null;
+    glide('glide from 80 m, bank right (D) 5 s then let go', ...FIELD, Math.PI / 2, 40,
+      (c, G) => { c.pos.y += 80; c.vel.set(110 / 3.6, 0, 0); c.airTime = 1; G.toggle(); },
+      (t, i, c) => { i.steer = t > 1 && t < 6 ? 1 : 0; if (t > 0.9 && h0 === null) h0 = Math.atan2(c.vel.x, c.vel.z); if (t > 7 && h1 === null) h1 = Math.atan2(c.vel.x, c.vel.z); });
+    let dh = (h1 - h0) * 57.3; dh = ((dh + 540) % 360) - 180;
+    console.log(`   heading changed ${dh.toFixed(0)}° (negative = turned right; wraps past ±180°)`);
+  }
+  // hold W (dive) from 40 m: nose-first into the ground = crash
+  glide('dive (holding W) from 40 m', ...FIELD, Math.PI / 2, 12,
+    (c, G) => { c.pos.y += 40; c.vel.set(110 / 3.6, 0, 0); c.airTime = 1; G.toggle(); }, (t, i) => { i.throttle = 1; });
+  // G on the ground: too slow (refused), fast enough (hops up and flies)
+  for (const kmh of [50, 150]) glide(`G on the ground at ${kmh} km/h`, ...FIELD, Math.PI / 2, 12,
+    c => c.vel.set(kmh / 3.6, 0, 0), (t, i, c, G) => { if (Math.abs(t - 0.5) < DT / 2) G.toggle(); i.throttle = t < 0.5 ? 1 : 0; });
+  // a tall tree straight ahead at crown height
+  {
+    let tree = null;
+    for (let z = -400; z < 900 && !tree; z += 37) for (let x = -900; x < 900 && !tree; x += 37)
+      W.treesNear(x, z, 20, (tx, tz, tr, h) => { if (!tree && h > 25) tree = [tx, tz, h]; });
+    const [tx, tz, th] = tree, ty = W.terrainAt(tx, tz) + th * 0.6;
+    const { G } = glide(`fly at a ${th.toFixed(0)} m tree at 60% of its height`, tx - 150, tz, Math.PI / 2, 15,
+      (c, G) => { c.reset(tx - 150, tz, Math.PI / 2); c.pos.y = ty; c.vel.set(100 / 3.6, 0, 0); c.airTime = 1; G.toggle(); });
+    console.log(`   ${G.result === 'tree' ? 'hit the tree' : 'DID NOT HIT THE TREE (' + G.result + ')'}`);
+  }
+  // a pond: glide down onto it slowly → lands in the water and the car's water physics take over
+  {
+    const p = [...W.ponds].sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
+    const cx = (p.x0 + p.x1) / 2, cz = (p.z0 + p.z1) / 2;
+    let maxDepth = 0;
+    const { G } = glide('glide down onto the biggest pond', cx, cz, 0, 8,
+      (c, G) => { c.pos.y = p.level + 6; c.vel.set(0, -1, 70 / 3.6); c.airTime = 1; G.toggle(); },
+      (t, i, c) => { maxDepth = Math.max(maxDepth, c.waterDepth || 0); });
+    console.log(`   closed as '${G.result}', then max water depth ${maxDepth.toFixed(2)} m`);
+  }
+  W.setFixedRamps([]);
+}

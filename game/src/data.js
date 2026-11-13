@@ -144,7 +144,7 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
     const b0 = Math.max(0, Math.floor((z - r - z0) / GC)), b1 = Math.min(GN - 1, Math.floor((z + r - z0) / GC));
     for (let gz = b0; gz <= b1; gz++) for (let gx = a0; gx <= a1; gx++) {
       const l = tgrid.get(gz * GN + gx); if (!l) continue;
-      for (const t of l) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]));
+      for (const t of l) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]), trees[t * 4 + 2], trees[t * 4 + 3]);   // x, z, trunk r, height, broadleaf?
     }
   }
   return { tx, tz, x0, z0, gx0, gz0, NN, H, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],

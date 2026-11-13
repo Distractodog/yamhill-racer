@@ -6,6 +6,7 @@ import { Effects } from './effects.js';
 import { CarAudio } from './audio.js';
 import { createMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
+import { Glider } from './glider.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -43,6 +44,7 @@ const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Lo
 scene.add(world.group);
 const car = new Car(world, tuning);
 scene.add(car.mesh);
+const glider = new Glider(car);         // G opens a hang-glider wing (glider.js)
 const [sx, sz] = world.spawn;
 // campus drives are mostly gravel service roads in OpenStreetMap; take asphalt if it is close, else gravel
 let spawn = world.placeOn(sx, sz, 3, 80);
@@ -97,6 +99,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyH') goHome();
   if (e.code === 'KeyT') gui._closed ? gui.open() : gui.close();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
+  if (e.code === 'KeyG' && !e.repeat) glider.toggle();
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => keys.delete(e.code));
@@ -121,20 +124,24 @@ function readInput() {
 // Chase cam that follows the car's heading with a little lag, so drifts show the car sideways.
 let camMode = 0;
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3(), fw = new THREE.Vector3();
+let glideCam = 0;                       // 0 = driving camera, 1 = gliding camera (pulled back, follows the flight path)
 let camYaw = null, camPitch = 0, camY = null, shakeT = 0, shake = 0;
 function updateCamera(dt) {
   fw.set(0, 0, 1).applyQuaternion(car.renderQuat);
   const sp = car.vel.length();
-  const yaw = Math.atan2(fw.x, fw.z);
+  const gl = car.glide?.active, hs = Math.hypot(car.vel.x, car.vel.z);
+  glideCam += ((gl ? 1 : 0) - glideCam) * Math.min(1, dt * 1.5);
+  const yaw = gl && hs > 4 ? Math.atan2(car.vel.x, car.vel.z) : Math.atan2(fw.x, fw.z);
   if (camYaw === null) camYaw = yaw;
   let d = yaw - camYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
-  camYaw += d * Math.min(1, dt * (car.drifting ? 3.5 : 11));
+  camYaw += d * Math.min(1, dt * (car.drifting ? 3.5 : gl ? 4 : 11));
   // follow the hill's overall slope (sampled 8 m ahead and behind), not the car's bounce over each ground
   // triangle – copying every little pitch and bob is what made the view shake at speed
   const rp = car.renderPos, hx = Math.sin(camYaw), hz = Math.cos(camYaw);
   const slope = Math.atan2(world.terrainAt(rp.x + hx * 8, rp.z + hz * 8) - world.terrainAt(rp.x - hx * 8, rp.z - hz * 8), 16);
   const airborne = !car.grounded && car.airTime > 0.2;
-  camPitch += ((airborne ? camPitch : slope * 0.6) - camPitch) * Math.min(1, dt * 3);
+  const pathPitch = Math.atan2(car.vel.y, hs + 1);                   // gliding: look along the glide path
+  camPitch += ((gl ? pathPitch * 0.8 : airborne ? camPitch : slope * 0.6) - camPitch) * Math.min(1, dt * 3);
   if (camY === null) camY = rp.y;
   camY += (rp.y - camY) * Math.min(1, dt * (airborne ? 4 : 7));
   // shake: only impacts and hard landings
@@ -148,7 +155,8 @@ function updateCamera(dt) {
     camLook.copy(tmp).add(fw.multiplyScalar(10));
     camera.up.set(0, 1, 0).applyQuaternion(car.renderQuat);
   } else {
-    const dist = camMode === 1 ? 12 : 5.4 + Math.min(sp, 75) * 0.022, high = camMode === 1 ? 4.5 : 1.85;
+    let dist = camMode === 1 ? 12 : 5.4 + Math.min(sp, 75) * 0.022, high = camMode === 1 ? 4.5 : 1.85;
+    if (glideCam > 0.001) { dist += (13 + Math.min(sp, 60) * 0.05 - dist) * glideCam; high += (2.8 - high) * glideCam; }
     const cx = Math.sin(camYaw), cz = Math.cos(camYaw);
     tmp.set(car.renderPos.x - cx * dist, camY + high - Math.sin(camPitch) * dist, car.renderPos.z - cz * dist);
     camPos.lerp(tmp, 1 - Math.exp(-dt * 22));
@@ -160,6 +168,7 @@ function updateCamera(dt) {
     camera.up.set(0, 1, 0);
   }
   camera.lookAt(camLook);
+  if (glideCam > 0.001 && camMode !== 2) camera.rotateZ(-car.glide.bank * 0.3 * glideCam);   // lean into the bank a little
   const fov = 66 + Math.min(sp * 3.6, 280) * 0.085 + (car.lonAcc > 4 ? 2 : 0);
   camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
 }
@@ -179,6 +188,7 @@ function frame(now) {
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
   car.syncMesh(dt);
+  glider.update(dt);
   car.mesh.updateMatrixWorld(true);
   effects.update(dt, car);
   audio.update(car, input, dt);
@@ -203,3 +213,4 @@ addEventListener('resize', () => {
 });
 // for debugging / automated test drives
 window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges };
+window.game.glider = glider;
