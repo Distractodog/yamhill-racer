@@ -29,18 +29,38 @@ export const GLIDER = {
   landUp: 0.82,      // car's up axis must be within ~35° of vertical to land on the wheels
 };
 
+// the dirt bike's glider: a smaller wing over the rider; the bike + rider are much lighter than the car, so the wing
+// carries them at lower speed (trim ~80 km/h instead of ~100) and it can hop off the ground from 70 km/h
+export const BIKE_GLIDER = {
+  params: { liftK: 0.0386 * 1.35, minGroundKmh: 70, hop: 5 },
+  bodyR: 0.7,
+  model: { H: 1.72, span: 3.5, nose: 1.35, tail: -0.95, tip: -1.05, crossZ: -0.4,
+    struts: [[[0.17, 0.42, 0.62], [0, 1.72, 0.62], 0.03], [[-0.17, 0.42, 0.62], [0, 1.72, 0.62], 0.03],
+      [[0, 0.45, -0.78], [0, 1.77, -0.6], 0.03]] },
+};
+
 const _up = new THREE.Vector3(), _fw = new THREE.Vector3(), _lt = new THREE.Vector3(), _v = new THREE.Vector3(),
   _a = new THREE.Vector3(), _w = new THREE.Vector3(), _t = new THREE.Vector3(), _q = new THREE.Quaternion();
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+// one HUD line shared by every vehicle's glider; the vehicle you're in writes it
+let hudEl = null, hudLast = null, hudOwner = null;
+
+// Works on any vehicle with the shared outside (vehicle.js): pos / quat / vel / ang, wheels, world, t.gravity, step().
+// The vehicle's step hands over to glide.step while it's open. Optional hooks on the vehicle:
+//   wheelReach()  – how far below a wheel's mount the tyre reaches (default: the car's spring + tyre)
+//   afterGlide()  – called when it folds, so a vehicle with its own orientation state (the bike) can pick it up
+//   bail()        – the vehicle's own crash; used instead of the car's tumble
+// opts: { params: overrides for GLIDER, model: wing size/placement for buildGliderModel, bodyR: building radius }
 
 export class Glider {
-  constructor(car) {
+  constructor(car, opts = {}) {
     this.car = car; car.glide = this;
+    this.P = { ...GLIDER, ...(opts.params || {}) }; this.bodyR = opts.bodyR ?? 1.5;
     this.active = false; this.open = 0; this.t = 0;
     this.stall = false; this.alpha = 0; this.agl = 0; this.bank = 0; this.lift = 0;
     this.result = '';                      // why it last closed: 'folded' | 'landed' | 'crash' | 'tree' | 'building' | 'water' | 'reset'
     this.msg = ''; this.msgT = 0;
-    this.mesh = buildGliderModel(); this.mesh.visible = false; car.mesh.add(this.mesh);
+    this.mesh = buildGliderModel(opts.model); this.mesh.visible = false; car.mesh.add(this.mesh);
     this.hud = null;
   }
 
@@ -50,22 +70,22 @@ export class Glider {
   heightAbove() {
     const c = this.car, W = c.world; let low = Infinity;
     for (const wh of c.wheels) {
-      _w.copy(wh.mount).applyQuaternion(c.quat).add(c.pos);
+      (wh.mount ? _w.copy(wh.mount) : _w.set(0, 0, wh.z || 0)).applyQuaternion(c.quat).add(c.pos);
       low = Math.min(low, _w.y - Math.max(W.heightAt(_w.x, _w.z), W.waterLevelAt(_w.x, _w.z)));
     }
-    return low - (c.t.restLength + 0.38);
+    return low - (c.wheelReach ? c.wheelReach() : c.t.restLength + 0.38);
   }
 
   toggle() {
     if (this.active) { this.fold('folded'); this.say('Glider folded'); return; }
     const c = this.car;
     if (!c.grounded && (c.airTime > 0.15 || this.heightAbove() > 1.5)) { this.deploy(); return; }
-    if (c.vel.length() * 3.6 >= GLIDER.minGroundKmh) {
+    if (c.vel.length() * 3.6 >= this.P.minGroundKmh) {
       _up.set(0, 1, 0).applyQuaternion(c.quat);
-      c.vel.addScaledVector(_up, GLIDER.hop); c.pos.y += 0.25;
+      c.vel.addScaledVector(_up, this.P.hop); c.pos.y += 0.25;
       this.deploy(); return;
     }
-    this.say(`Glider needs air, or ${GLIDER.minGroundKmh}+ km/h to hop off the ground`);
+    this.say(`Glider needs air, or ${this.P.minGroundKmh}+ km/h to hop off the ground`);
   }
 
   deploy() {
@@ -80,6 +100,7 @@ export class Glider {
     const c = this.car;
     this.active = false; this.result = why; this.stall = false;
     c.airTime = Math.max(c.airTime, 0.31); c.wasGrounded = false;
+    c.afterGlide?.();
   }
 
   // a reset / teleport / flip: just put it away
@@ -88,15 +109,17 @@ export class Glider {
   crash(why, spin = 1) {
     const c = this.car, sp = c.vel.length();
     this.fold(why);
+    const msg = why === 'tree' ? 'Crashed into a tree!' : why === 'building' ? 'Crashed into a building!' : 'Crash landing!';
+    if (c.bail) { c.bail(); c.say?.('Bail! ' + msg, 1.8); return; }     // the bike: its own crash (foot down, speed scrubbed)
     _fw.set(0, 0, 1).applyQuaternion(c.quat); _lt.set(1, 0, 0).applyQuaternion(c.quat);
     c.ang.addScaledVector(_fw, (this.bank >= 0 ? 1 : -1) * Math.min(6, 1.5 + sp * 0.06) * spin)
       .addScaledVector(_lt, -Math.min(3, sp * 0.03) * spin);
     c.hit = Math.max(c.hit, Math.min(40, sp * 0.6));
-    this.say(why === 'tree' ? 'Crashed into a tree!' : why === 'building' ? 'Crashed into a building!' : 'Crash landing!');
+    this.say(msg);
   }
 
   step(dt, input) {
-    const c = this.car, W = c.world, P = GLIDER, g = c.t.gravity;
+    const c = this.car, W = c.world, P = this.P, g = c.t.gravity;
     this.t += dt;
     c._prevVel.copy(c.vel);
     _up.set(0, 1, 0).applyQuaternion(c.quat);
@@ -114,10 +137,12 @@ export class Glider {
     // the wing trims itself to an angle that roughly carries the weight (a little more in a bank)
     // and when falling faster than a gentle glide it asks for more, so a jump turns into a glide instead of a drop
     // (fast: hold height and bleed speed instead; slow: settle into a ~3 m/s sink)
-    const fall = clamp(-c.vel.y - clamp(2.8 * (27 / Math.max(s, 1)) ** 2, 0.3, 3), 0, 20) * 3;
+    // (speeds scale with the wing's trim speed: exactly 27 / 22 m/s for the car's wing and gravity)
+    const vk = Math.sqrt(g / 24 * (GLIDER.liftK / P.liftK));
+    const fall = clamp(-c.vel.y - clamp(2.8 * (27 * vk / Math.max(s, 1)) ** 2, 0.3, 3), 0, 20) * 3;
     const need = (g / Math.max(0.55, Math.cos(bank)) + fall) / (P.liftK * Math.max(q, 1));
     const trim = clamp((need - P.cl0) / P.clA, P.trimMin, P.trimMax + 0.08 * Math.abs(Math.sin(bank)));   // a bit more in a bank
-    const fly = Math.min(1, (s / 22) ** 2);                             // controls go mushy when slow
+    const fly = Math.min(1, (s / (22 * vk)) ** 2);                             // controls go mushy when slow
     this.stall = alpha > P.stallA;
     let pitchIn = input.brake - input.throttle;                         // S / ↓ = nose up
     if (this.stall && pitchIn > 0) pitchIn = 0;
@@ -162,6 +187,7 @@ export class Glider {
     c.steer += (input.steer - c.steer) * Math.min(1, 6 * dt);
     for (const wh of c.wheels) { wh.contact = false; wh.comp = 0; wh.spin += vF * dt / 0.38 * Math.exp(-this.t); }
     c.latAcc *= 1 - Math.min(1, 4 * dt); c.lonAcc *= 1 - Math.min(1, 4 * dt);
+    if (c.lean !== undefined) { c.lean *= 1 - Math.min(1, 6 * dt); c.pitchRate = 0; c.yawRate = 0; }   // bike: the wing banks it now
 
     // ------------------------------------------------ touchdown, trees, buildings, map edge
     c.hit = 0;
@@ -177,11 +203,12 @@ export class Glider {
       return;
     }
     if (this.t > 0.3) {
-      c.collideGround();
+      if (c.collideGround) c.collideGround();
+      else if (c.pos.y < W.heightAt(c.pos.x, c.pos.z) + 0.25) c.hit = 1;     // a body without a ground box (bike)
       if (c.hit > 0) { this.crash('crash'); return; }
     }
     if (this.hitTree()) return;
-    c.collideBuildings();
+    c.collideBuildings(this.bodyR);
     if (c.hit > 6) { this.crash('building'); return; }
     c.keepInBounds();
   }
@@ -209,7 +236,8 @@ export class Glider {
   }
 
   // every frame: unfold / fold animation and the HUD line
-  update(dt) {
+  // current = this glider's vehicle is the one you're in (only that one writes the HUD line)
+  update(dt, current = true) {
     const target = this.active ? 1 : 0;
     this.open += clamp(target - this.open, -dt * 4, dt * 3);
     const m = this.mesh, e = 1 - (1 - this.open) ** 3;
@@ -218,12 +246,14 @@ export class Glider {
     m.position.y = -0.9 * (1 - e);
     this.msgT -= dt;
     if (typeof document === 'undefined') return;
-    if (!this.hud) {
+    if (!current) { if (hudOwner === this && hudEl) { hudEl.innerHTML = ''; hudLast = ''; hudOwner = null; } return; }
+    if (!hudEl) {
       const hud = document.getElementById('hud'); if (!hud) return;
-      this.hud = document.createElement('div'); this.hud.id = 'glide';
-      this.hud.style.cssText = 'font-size:14px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;';
-      hud.appendChild(this.hud);
+      hudEl = document.createElement('div'); hudEl.id = 'glide';
+      hudEl.style.cssText = 'font-size:14px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums;';
+      hud.appendChild(hudEl);
     }
+    hudOwner = this;
     let html = '';
     if (this.active) {
       const vs = this.car.vel.y;
@@ -231,20 +261,22 @@ export class Glider {
       if (this.stall) html += ' · <span style="color:#ff5a4a">STALL – push W</span>';
     }
     if (this.msgT > 0) html += `${html ? '<br>' : ''}<span style="opacity:.9">${this.msg}</span>`;
-    if (html !== this._last) { this.hud.innerHTML = html; this._last = html; }
+    if (html !== hudLast) { hudEl.innerHTML = html; hudLast = html; }
   }
 }
 
 // ---------------------------------------------------------------- model: hang-glider wing on two struts over the car
-export function buildGliderModel() {
-  const H = 2.0;                                   // wing height above the car's centre
-  const nose = [0, H + 0.05, 1.7], tail = [0, H + 0.12, -1.25];
+// defaults = the car's wing; the bike passes a smaller one (wing height, half-span, nose / tail / tip z, struts)
+export function buildGliderModel(o = {}) {
+  const H = o.H ?? 2.0;                            // wing height above the vehicle's centre
+  const SPAN = o.span ?? 4.7, NZ = o.nose ?? 1.7, TZ = o.tail ?? -1.25, TIPZ = o.tip ?? -1.35, f = SPAN / 4.7;
+  const nose = [0, H + 0.05, NZ], tail = [0, H + 0.12, TZ];
   const pos = [], col = [];
   const C = [new THREE.Color(0xf4c430), new THREE.Color(0xe8402f), new THREE.Color(0xfaf6ea)];   // yellow / red / white panels
   const tri = (a, b, c, k) => { pos.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) col.push(C[k].r, C[k].g, C[k].b); };
   const lerp = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
   for (const s of [1, -1]) {
-    const tip = [s * 4.7, H - 0.12, -1.35];
+    const tip = [s * SPAN, H - 0.12, TIPZ];
     const N = 6;
     for (let i = 0; i < N; i++) {
       const u0 = i / N, u1 = (i + 1) / N;
@@ -272,13 +304,14 @@ export function buildGliderModel() {
     m.castShadow = true; g.add(m);
   };
   rod(nose, tail, 0.045);                                          // keel
-  rod(nose, [4.7, H - 0.12, -1.35]); rod(nose, [-4.7, H - 0.12, -1.35]);    // leading edges
-  rod([-2.2, H - 0.02, -0.55], [2.2, H - 0.02, -0.55], 0.03);     // cross bar
-  rod([0.42, 0.28, 0.1], [0, H, 0.05], 0.04); rod([-0.42, 0.28, 0.1], [0, H, 0.05], 0.04);    // struts down to the car
-  rod([0, 0.5, -0.9], [0, H + 0.05, -0.5], 0.035);
+  rod(nose, [SPAN, H - 0.12, TIPZ]); rod(nose, [-SPAN, H - 0.12, TIPZ]);    // leading edges
+  const CZ = o.crossZ ?? -0.55;
+  rod([-2.2 * f, H - 0.02, CZ], [2.2 * f, H - 0.02, CZ], 0.03);   // cross bar
+  for (const [a, b, r] of o.struts || [[[0.42, 0.28, 0.1], [0, H, 0.05], 0.04], [[-0.42, 0.28, 0.1], [0, H, 0.05], 0.04],
+    [[0, 0.5, -0.9], [0, H + 0.05, -0.5], 0.035]]) rod(a, b, r);   // struts down to the vehicle
   // small tail fin on the keel
   const fin = new THREE.BufferGeometry();
-  fin.setAttribute('position', new THREE.Float32BufferAttribute([0, H + 0.12, -1.25, 0, H + 0.12, -0.6, 0, H + 0.75, -1.35], 3));
+  fin.setAttribute('position', new THREE.Float32BufferAttribute([0, H + 0.12, TZ, 0, H + 0.12, TZ + 0.65 * f, 0, H + 0.12 + 0.63 * f, TZ - 0.1 * f], 3));
   fin.computeVertexNormals();
   g.add(new THREE.Mesh(fin, new THREE.MeshLambertMaterial({ color: 0xe8402f, side: THREE.DoubleSide })));
   return g;

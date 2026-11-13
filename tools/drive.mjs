@@ -198,6 +198,11 @@ if (which === 'all' || which === 'walls') {
       fw.set(0, 0, 1).applyQuaternion(k.quat);
       let d = Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) - Math.atan2(fw.x, fw.z); d = Math.atan2(Math.sin(d), Math.cos(d));
       i.steer = Math.max(-1, Math.min(1, -d * 2.5));
+      if (isBike && sp > 4) {      // a rider asks for a lean: pure-pursuit turn rate → the lean that gives it → bars
+        const L = Math.max(6, look), w = 2 * sp * Math.sin(d) / L, lean = -Math.atan(w * sp / k.t.gravity);
+        const lmax = k.t.maxLean * Math.min(1, Math.max(0.05, (sp - 2) / 14));
+        i.steer = Math.max(-1, Math.min(1, lean / lmax + (lean - k.lean) * 0.8));
+      }
       // slow for what's coming: heading change over the next ~60 m
       const a = R[Math.min(R.length - 1, tgt + 3)], b = R[Math.min(R.length - 1, tgt + 15)], a0 = R[tgt];
       let turn = Math.atan2(b[0] - a[0], b[1] - a[1]) - Math.atan2(a[0] - a0[0], a[1] - a0[1]); turn = Math.abs(Math.atan2(Math.sin(turn), Math.cos(turn)));
@@ -323,20 +328,23 @@ if (which === 'all' || which === 'bike') {
   const bt = { ...BIKE, ...(process.env.BTUNE ? JSON.parse(process.env.BTUNE) : {}) };
   const mk = () => new Bike(W, bt);
   const bike = (name, x, z, yaw, secs, ctl, extra = () => {}) => {
-    let maxKmh = 0, bails = 0, maxRel = 0, wheelieT = 0, airMax = 0, minUp = 1;
+    let maxKmh = 0, bails = 0, maxRel = 0, wheelieT = 0, airMax = 0, minUp = 1, maxLean = 0, maxSlip = 0, washT = 0, stoppieT = 0, slideT = 0, compLo = 1, compHi = 0;
     const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
       i.lean = false; if (!c.grounded && t > 0) { i.throttle = i._t ?? 0; i.brake = i._b ?? 0; } ctl(t, i, c); i._t = i.throttle; i._b = i.brake;
       maxKmh = Math.max(maxKmh, c.vel.length() * 3.6);
       if (c.msgT > 0 && c.msg.startsWith('Bail') && c._lastBail !== c.msgT) { if (!c._bailOn) bails++; c._bailOn = true; } else c._bailOn = false;
       if (c.contacts === 2) maxRel = Math.max(maxRel, Math.abs(c.pitch - c.groundPitch));
       if (c.wheelie) wheelieT += DT;
+      if (c.stoppie) stoppieT += DT; if (c.washout) washT += DT; if (c.grounded && c.slip > 0.25) slideT += DT;
+      maxLean = Math.max(maxLean, Math.abs(c.lean)); if (c.grounded) maxSlip = Math.max(maxSlip, c.slip);
+      if (t > 1 && c.wheels[1].contact) { compLo = Math.min(compLo, c.wheels[1].comp); compHi = Math.max(compHi, c.wheels[1].comp); }
       airMax = Math.max(airMax, c.airTime);
       minUp = Math.min(minUp, new THREE.Vector3(0, 1, 0).applyQuaternion(c.quat).y);
       extra(t, i, c);
       if (process.env.BV && Math.round(t / DT) % 6 === 0 && (c.airTime > 0 || c.wheels[0].comp > 0.2)) console.log(t.toFixed(2), 'air', c.airTime.toFixed(2), 'pitch', (c.pitch * 57.3).toFixed(0), 'gp', (c.groundPitch * 57.3).toFixed(0), 'rate', c.pitchRate.toFixed(2), 'vy', c.vel.y.toFixed(1), 'thr', i.throttle, 'held', c.heldGas, 'g', c.grounded, 'comp', c.wheels.map(w => w.comp.toFixed(2)).join('/'));
       c.msgT -= DT;
     }, 0.5, mk);
-    console.log(`   top ${maxKmh.toFixed(0)} km/h · bails ${bails} · wheelie ${wheelieT.toFixed(1)} s · longest air ${airMax.toFixed(2)} s · lowest up ${minUp.toFixed(2)} · end ${(car.vel.length() * 3.6).toFixed(0)} km/h, pitch ${(car.pitch * 57.3).toFixed(0)}°, ${car.grounded ? 'on the ground' : 'in the air'}${isFinite(car.pos.x) ? '' : ' NaN!'}`);
+    console.log(`   top ${maxKmh.toFixed(0)} km/h · lean max ${(maxLean * 57.3).toFixed(0)}° · slip max ${(maxSlip * 57.3).toFixed(0)}°, sliding ${slideT.toFixed(1)} s · washout ${washT.toFixed(1)} s · stoppie ${stoppieT.toFixed(1)} s · shock ${compLo.toFixed(2)}–${compHi.toFixed(2)} m · bails ${bails} · wheelie ${wheelieT.toFixed(1)} s · longest air ${airMax.toFixed(2)} s · lowest up ${minUp.toFixed(2)} · end ${(car.vel.length() * 3.6).toFixed(0)} km/h, pitch ${(car.pitch * 57.3).toFixed(0)}°, ${car.grounded ? 'on the ground' : 'in the air'}${isFinite(car.pos.x) ? '' : ' NaN!'}`);
     return car;
   };
   const [sx, sz] = W.spawn;
@@ -351,6 +359,27 @@ if (which === 'all' || which === 'bike') {
   bike('bike: slalom on asphalt (campus road)', ...road, 10, (t, i) => { i.throttle = t < 3 ? 1 : 0.6; i.steer = t > 3 ? Math.sign(Math.sin(t * 3)) : 0; });
   bike('bike: rear-brake slide at 70', ...FIELD, Math.PI / 2, 7, (t, i, c) => { i.throttle = c.vel.length() * 3.6 < 70 || t > 4 ? 1 : 0; i.steer = t > 4 ? 1 : 0; i.handbrake = t > 4 && t < 5; });
   bike('bike: wheelie (Shift + throttle 4 s)', ...FIELD, Math.PI / 2, 8, (t, i) => { i.throttle = 1; i.lean = t > 1.5 && t < 5.5; });
+  // round 2 (2026-11-13): lean-steered corners, power slide, asphalt push, bumps, balanced wheelie, stoppie
+  const hold = kmh => (t, i, c) => { const sp = c.vel.length() * 3.6; i.throttle = sp < kmh ? 1 : 0; i.brake = sp > kmh + 10 ? 0.5 : 0; };
+  for (const kmh of [60, 120, 180]) {
+    let r0 = null;
+    const c = bike(`bike: corner at ${kmh} km/h on the field (hold D 4 s)`, ...FIELD, Math.PI / 2, 9, (t, i, k) => { hold(kmh)(t, i, k); i.steer = t > 4 ? 1 : 0; if (t > 4 && !r0) r0 = k.yaw; });
+    console.log(`   turned ${(((c.yaw - r0) * 57.3)).toFixed(0)}° in 5 s (negative = right)`);
+  }
+  bike('bike: power slide on grass (lean in, then full gas)', ...FIELD, Math.PI / 2, 9, (t, i, k) => {
+    if (t < 4) hold(70)(t, i, k); else i.throttle = 1; i.steer = t > 3 ? 0.8 : 0; });
+  bike('bike: power slide, then let off to catch it', ...FIELD, Math.PI / 2, 9, (t, i, k) => {
+    i.throttle = t < 4 ? (k.vel.length() * 3.6 < 70 ? 1 : 0) : t < 6 ? 1 : 0; i.steer = t > 3 && t < 6 ? 0.8 : 0; });
+  W.setFixedRamps([]);
+  bike('bike: full lock at 160 km/h on Hwy 18 (front washes out)', R0.x - Math.sin(R0.yaw) * 1500, R0.z - Math.cos(R0.yaw) * 1500, R0.yaw, 9,
+    (t, i, k) => { hold(160)(t, i, k); i.steer = t > 5 ? 1 : 0; });
+  bike('bike: 70 km/h straight on asphalt (smooth)', R0.x - Math.sin(R0.yaw) * 1500, R0.z - Math.cos(R0.yaw) * 1500, R0.yaw, 6, hold(70));
+  W.setFixedRamps([R0]);
+  bike('bike: 70 km/h straight on grass (bumps)', ...FIELD, Math.PI / 2, 6, hold(70));
+  bike('bike: wheelie balanced by tapping the gas (Shift held 6 s)', ...FIELD, Math.PI / 2, 9, (t, i, k) => {
+    i.lean = t > 2 && t < 8; i.throttle = t < 2 ? (k.vel.length() < 9 ? 1 : 0) : (k.pitch - k.groundPitch < 0.55 ? 1 : 0); });
+  bike('bike: stoppie (hard brake from 100 km/h)', ...FIELD, Math.PI / 2, 8, (t, i, k) => {
+    if (t < 4) hold(100)(t, i, k); else { i.throttle = 0; i.brake = 1; } });
   bike('bike: drop 10 m at 80 km/h, hands off', ...FIELD, Math.PI / 2, 4, (t, i, c) => { if (t === 0) { c.pos.y += 10; c.vel.set(22, 0, 0); } i.throttle = 0; });
   bike('bike: drop 10 m nose-down (holding W)', ...FIELD, Math.PI / 2, 4, (t, i, c) => { if (t === 0) { c.pos.y += 10; c.vel.set(22, 0, 0); } i.throttle = c.grounded ? 0 : 1; });
   W.setFixedRamps([R0]);
@@ -489,4 +518,83 @@ if (which === 'all' || which === 'jet') {
     console.log(`   ${done ? `finished in ${done.toFixed(1)} s` : `DID NOT FINISH (${rings}/${G.length - 1} rings)`}`);
   }
   W.setFixedRamps([R0]);
+}
+
+if (which === 'all' || which === 'bikeglider') {
+  // G glider on the dirt bike (glider.js BIKE_GLIDER): ramp jump vs glide, hands-off glide + landing on two wheels and
+  // riding on, G on the ground, a held bank, a dive (= the bike's bail), a tree
+  const { Glider, BIKE_GLIDER } = await import('../game/src/glider.js');
+  const { Bike, BIKE } = await import('../game/src/bike.js');
+  const R0 = JSON.parse(fs.readFileSync(A + 'ramps.json'))[0];
+  W.setFixedRamps([R0]);
+  const fx = Math.sin(R0.yaw), fz = Math.cos(R0.yaw);
+  const bglide = (name, x, z, yaw, secs, setup, ctl = () => {}) => {
+    let G, st = { stallT: 0, deployed: null, closed: null, peak: -1e9, nan: false, bails: 0, bailOn: false, after: null };
+    const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
+      if (t === 0) { G = new Glider(c, BIKE_GLIDER); setup(c, G); }
+      i.throttle = 0; i.brake = 0; i.steer = 0; i.lean = false;
+      ctl(t, i, c, G);
+      if (G.active) {
+        if (!st.deployed) st.deployed = [c.pos.x, c.pos.z, c.pos.y, t];
+        if (G.stall) st.stallT += DT;
+        st.peak = Math.max(st.peak, c.pos.y);
+      } else if (st.deployed && !st.closed) st.closed = [c.pos.x, c.pos.z, c.pos.y, t, G.result, -c._prevVel.y, c.vel.length() * 3.6];
+      const bailing = c.msgT > 0 && c.msg.startsWith('Bail'); if (bailing && !st.bailOn) st.bails++; st.bailOn = bailing;
+      if (![c.pos.x, c.pos.y, c.vel.x, c.quat.w, c.yaw, c.pitch].every(isFinite)) st.nan = true;
+    }, 0.5, () => new Bike(W, { ...BIKE }));
+    const d = st.deployed, e = st.closed;
+    const flown = d && e ? Math.hypot(e[0] - d[0], e[1] - d[1]) : 0;
+    console.log(`   ${d ? `opened at ${d[3].toFixed(1)} s` : 'glider not opened'} · ${e ? `closed at ${e[3].toFixed(1)} s: ${e[4]}, ${flown.toFixed(0)} m flown, ` +
+      `dropped ${(d[2] - e[2]).toFixed(0)} m (peak +${(st.peak - d[2]).toFixed(0)} m), touchdown sink ${e[5].toFixed(1)} m/s at ${e[6].toFixed(0)} km/h` : 'still flying'}` +
+      ` · stalled ${st.stallT.toFixed(1)} s · bails ${st.bails} · end ${car.grounded ? 'on wheels' : 'in the air'} at ${(car.vel.length() * 3.6).toFixed(0)} km/h` +
+      `, pitch vs ground ${((car.pitch - car.groundPitch) * 57.3).toFixed(0)}°${st.nan ? ' · NaN!' : ''}`);
+    return { car, G, st, flown };
+  };
+  // off the Hwy 18 ramp at 150 km/h: plain jump vs glider opened 0.3 s after take-off
+  const sx = R0.x - fx * 60, sz = R0.z - fz * 60, res = {};
+  for (const withG of [false, true]) {
+    let off = null, land = null, onRamp = false;
+    bglide(`bike: Hwy 18 ramp at 150 km/h${withG ? ', glider opened in the air' : ', plain jump'}`, sx, sz, R0.yaw, 25,
+      c => c.vel.set(fx * 150 / 3.6, 0, fz * 150 / 3.6),
+      (t, i, c, G) => {
+        i.throttle = !off && c.vel.length() * 3.6 < 150 ? 1 : 0;
+        if (W.rampAt(c.pos.x, c.pos.z) > 0) onRamp = true;
+        if (onRamp && !off && !c.grounded && W.rampAt(c.pos.x, c.pos.z) === 0) off = [c.pos.x, c.pos.z, t];
+        if (withG && off && !G.active && !G.result && t > off[2] + 0.3) G.toggle();
+        if (off && !land && (c.grounded || (G.result && G.result !== 'folded'))) land = [c.pos.x, c.pos.z];
+      });
+    res[withG ? 'gl' : 'plain'] = off && land ? Math.hypot(land[0] - off[0], land[1] - off[1]) : 0;
+    console.log(`   take-off → first touchdown ${res[withG ? 'gl' : 'plain'].toFixed(0)} m`);
+  }
+  console.log(`   the bike's glider carried you ${(res.gl / Math.max(1, res.plain)).toFixed(1)}× as far as the plain jump`);
+  // hands off from 40 m at 80 km/h, then ride on for 3 s after landing
+  let landT = null, rideOn = null;
+  const g1 = bglide('bike: glide from 40 m at 80 km/h, hands off, then ride on', ...FIELD, Math.PI / 2, 30,
+    (c, G) => { c.pos.y += 40; c.vel.set(80 / 3.6, 0, 0); c.airTime = 1; G.toggle(); },
+    (t, i, c, G) => { if (G.result === 'landed') { i.throttle = 1; landT ??= t; if (t - landT < 3) rideOn = [c.vel.length() * 3.6, c.grounded, c.msg]; } });
+  if (rideOn) console.log(`   3 s after landing, on the throttle: ${rideOn[0].toFixed(0)} km/h, ${rideOn[1] ? 'on wheels' : 'in the air'}`);
+  if (g1.st.closed) console.log(`   glide ratio ${(g1.flown / (g1.st.deployed[2] - g1.st.closed[2])).toFixed(1)} : 1`);
+  // G on the ground: too slow (refused), fast enough (hops up and flies)
+  for (const kmh of [40, 110]) bglide(`bike: G on the ground at ${kmh} km/h`, ...FIELD, Math.PI / 2, 12,
+    c => c.vel.set(kmh / 3.6, 0, 0), (t, i, c, G) => { if (Math.abs(t - 0.5) < DT / 2) G.toggle(); i.throttle = t < 0.5 ? 1 : 0; });
+  // bank right for 4 s from 60 m, then let go
+  bglide('bike: glide from 60 m, bank right (D) 4 s then let go', ...FIELD, Math.PI / 2, 30,
+    (c, G) => { c.pos.y += 60; c.vel.set(80 / 3.6, 0, 0); c.airTime = 1; G.toggle(); }, (t, i) => { i.steer = t > 1 && t < 5 ? 1 : 0; });
+  // hold S all the way (stall, recover)
+  bglide('bike: glide from 40 m, holding S (pull up) all the way', ...FIELD, Math.PI / 2, 30,
+    (c, G) => { c.pos.y += 40; c.vel.set(80 / 3.6, 0, 0); c.airTime = 1; G.toggle(); }, (t, i) => { i.brake = 1; });
+  // dive into the ground: the bike's own bail
+  bglide('bike: dive (holding W) from 40 m', ...FIELD, Math.PI / 2, 10,
+    (c, G) => { c.pos.y += 40; c.vel.set(80 / 3.6, 0, 0); c.airTime = 1; G.toggle(); }, (t, i) => { i.throttle = 1; });
+  // a tall tree at crown height
+  {
+    let tree = null;
+    for (let z = -400; z < 900 && !tree; z += 37) for (let x = -900; x < 900 && !tree; x += 37)
+      W.treesNear(x, z, 20, (tx, tz, tr, h) => { if (!tree && h > 25) tree = [tx, tz, h]; });
+    const [tx, tz, th] = tree, ty = W.terrainAt(tx, tz) + th * 0.6;
+    const { G } = bglide(`bike: fly at a ${th.toFixed(0)} m tree`, tx - 150, tz, Math.PI / 2, 12,
+      (c, G) => { c.reset(tx - 150, tz, Math.PI / 2); c.pos.y = ty; c.vel.set(80 / 3.6, 0, 0); c.airTime = 1; G.toggle(); });
+    console.log(`   ${G.result === 'tree' ? 'hit the tree' : 'DID NOT HIT THE TREE (' + G.result + ')'}`);
+  }
+  W.setFixedRamps([]);
 }

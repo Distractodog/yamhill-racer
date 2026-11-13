@@ -7,7 +7,7 @@ import { CarAudio } from './audio.js';
 import { createMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
-import { Glider } from './glider.js';
+import { Glider, BIKE_GLIDER } from './glider.js';
 import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
@@ -74,6 +74,7 @@ const vehicles = createVehicles({ scene, world, tuning, bikeTuning, jetTuning, c
 } });
 const car = vehicles.player;
 const glider = new Glider(vehicles.car);         // G opens a hang-glider wing over the car (glider.js)
+const bikeGlider = new Glider(vehicles.bike, BIKE_GLIDER);   // …and a smaller one over the dirt bike
 const [sx, sz] = world.spawn;
 // campus drives are mostly gravel service roads in OpenStreetMap; take asphalt if it is close, else gravel
 let spawn = world.placeOn(sx, sz, 3, 80);
@@ -145,7 +146,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyF') flipUpright();
   if (e.code === 'KeyH') goHome();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
-  if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.kind === 'car') glider.toggle(); else vehicles.current.say?.('The glider is for the car', 1.5); }
+  if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.glide) vehicles.current.glide.toggle(); else vehicles.current.say?.('The jet has its own wings', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => { keys.delete(e.code); letters.delete(e.code); });
@@ -284,6 +285,7 @@ function updateCamera(dt) {
   }
   camera.lookAt(camLook);
   if (glideCam > 0.001 && camMode !== 2) camera.rotateZ(-car.glide.bank * 0.3 * glideCam);   // lean into the bank a little
+  if (vc.roll && camMode !== 2 && !(glideCam > 0.001)) camera.rotateZ(-car.lean * vc.roll);   // bike: the view leans a little with it
   const fov = 66 + Math.min(sp * 3.6, 280) * 0.085 + (car.lonAcc > 4 ? 2 : 0);
   camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
 }
@@ -343,7 +345,7 @@ function frame(now) {
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
   car.syncMesh(dt);
-  glider.update(dt);
+  glider.update(dt, vehicles.current === vehicles.car); bikeGlider.update(dt, vehicles.current === vehicles.bike);
   car.mesh.updateMatrixWorld(true);
   effects.update(dt, car);
   audio.update(car, input, dt);
@@ -377,6 +379,6 @@ addEventListener('resize', () => {
 });
 // for debugging / automated test drives
 window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide };
-window.game.glider = glider;
+window.game.glider = glider; window.game.bikeGlider = bikeGlider;
 window.game.vehicles = vehicles;
 // Every fresh load starts in the car; V still switches vehicles during play.

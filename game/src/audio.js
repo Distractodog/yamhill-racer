@@ -69,7 +69,7 @@ export class CarAudio {
     while (this.gear > 1 && kmh < G[this.gear - 1] - 8) this.gear--;
     const lo = G[this.gear - 1], hi = G[this.gear];
     let frac = Math.min(1.05, Math.max(0, (kmh - lo) / (hi - lo)));
-    if (!car.grounded || car.slip > 0.3) frac = Math.min(1.1, frac + 0.25 * input.throttle);
+    if (!car.grounded || car.slip > 0.3 || car.wheelie) frac = Math.min(1.1, frac + 0.25 * input.throttle);   // spinning up: revs
     if (kmh < 8 && car.grounded) frac = Math.max(frac, 0.55 * input.throttle);   // revving on the spot
     const rpm = 950 + frac * 6300 * (0.8 + 0.2 * input.throttle);
     const hz = hzAt(rpm) * (bike ? 1.75 : 1);           // the bike: a small single revving high
