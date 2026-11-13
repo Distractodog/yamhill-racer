@@ -49,6 +49,18 @@
   #fullmap.open { display: block; }
   #fullmap .fm-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 12px;
                       text-shadow: 0 1px 3px #000; pointer-events: none; }
+  #welcome { position: fixed; inset: 0; display: grid; place-items: center; background: #0006; z-index: 30; padding: 16px; box-sizing: border-box; }
+  #welcome[hidden] { display: none; }
+  #welcome .card { width: min(440px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; box-sizing: border-box;
+    background: #142016f2; color: #fff; border: 1px solid #ffffff30; border-radius: 16px; box-shadow: 0 10px 40px #0008; padding: 22px 24px; font: 14px system-ui, sans-serif; }
+  #welcome h2 { margin: 0 0 6px; font-size: 22px; }
+  #welcome p { margin: 0 0 12px; line-height: 1.5; color: #d1d8d2; }
+  #welcome dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 14px; line-height: 1.4; }
+  #welcome dt { font-weight: 700; color: #ffd76a; white-space: nowrap; } #welcome dd { margin: 0; color: #e6ece7; }
+  #welcome .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+  #welcome label { color: #d1d8d2; font-size: 13px; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  #welcome-start { background: #ffd23f; color: #142016; border: 0; border-radius: 10px; padding: 10px 18px; font: 800 15px system-ui, sans-serif; cursor: pointer; }
+  #welcome-help { background: none; border: 0; color: #9fd4ff; text-decoration: underline; font: inherit; cursor: pointer; padding: 0; }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font-size: 20px;
              background: #2d4a2f; z-index: 100; }
 </style>
@@ -67,6 +79,26 @@
   <button id="settings-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Settings</button>
   <button id="help-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>How to play?</button>
 </nav>
+<section id="welcome" role="dialog" aria-labelledby="welcome-title" hidden>
+  <div class="card">
+    <h2 id="welcome-title">Welcome to Yamhill Racer</h2>
+    <p>Drive the real Delphian School campus and the roads of Yamhill County, from Willamina to McMinnville, in a car,
+      on a dirt bike or in a jet.</p>
+    <dl>
+      <dt>W A S D / arrows</dt><dd>Drive and steer · Space handbrake</dd>
+      <dt>V</dt><dd>Switch vehicle: car, dirt bike or jet</dd>
+      <dt>J</dt><dd>Races: pick one and press Enter, wait for 3-2-1-GO, then go through every checkpoint</dd>
+      <dt>M</dt><dd>Full map: click it to drop a pin and follow the arrow there</dd>
+      <dt>G</dt><dd>Car glider: open it in the air or above 90 km/h</dd>
+      <dt>R</dt><dd>Back to a safe spot if you're stuck</dd>
+    </dl>
+    <p>Jet and other controls: <button id="welcome-help" type="button">How to play</button></p>
+    <div class="row">
+      <label><input id="welcome-hide" type="checkbox"> Don't show this again</label>
+      <button id="welcome-start" type="button">Start driving</button>
+    </div>
+  </div>
+</section>
 <section id="settings-panel" role="dialog" aria-labelledby="settings-title" hidden>
   <header class="panel-heading"><h2 id="settings-title">Settings</h2><button id="settings-close" aria-label="Close panel">×</button></header>
   <div id="tuning-content">

@@ -8,6 +8,24 @@ export function createSettings() {
   const help = document.getElementById('help-content');
   const closeButton = document.getElementById('settings-close');
   let current = null, ready = false, changed = () => {}, beforeOpen = () => {}, returnFocus = null;
+  // welcome card: shown once the map has loaded, unless "Don't show this again" was ticked (saved per browser)
+  const WELCOME_KEY = 'yr-welcome-hidden-1';
+  const welcome = document.getElementById('welcome'), welcomeHide = document.getElementById('welcome-hide');
+  let welcomeOpen = false;
+  function closeWelcome() {
+    if (!welcomeOpen) return;
+    welcomeOpen = false; welcome.hidden = true;
+    try { if (welcomeHide.checked) localStorage.setItem(WELCOME_KEY, '1'); else localStorage.removeItem(WELCOME_KEY); } catch {}
+    changed();
+  }
+  function showWelcome() {
+    let hidden = false; try { hidden = localStorage.getItem(WELCOME_KEY) === '1'; } catch {}
+    if (hidden || !welcome) return;
+    welcomeOpen = true; welcome.hidden = false; welcomeHide.checked = false;
+    document.getElementById('welcome-start').focus({ preventScroll: true });
+  }
+  document.getElementById('welcome-start')?.addEventListener('click', closeWelcome);
+  document.getElementById('welcome-help')?.addEventListener('click', () => { closeWelcome(); show('help'); });
   function close() {
     if (!current) return;
     current = null; panel.hidden = true;
@@ -30,6 +48,16 @@ export function createSettings() {
   closeButton.addEventListener('click', close);
   addEventListener('keydown', e => {
     if (!ready) return;
+    if (welcomeOpen) {
+      // Enter / Esc / Space close the card (and do nothing else); game shortcuts close it and still work;
+      // every other key is kept from the game so nothing drives while it's up
+      if (e.code === 'Enter' || e.code === 'NumpadEnter' || e.code === 'Escape' || e.code === 'Space') {
+        if (e.code === 'Space' && document.activeElement === welcomeHide) { e.gameUI = true; return; }   // toggles the box
+        e.preventDefault(); e.stopImmediatePropagation(); closeWelcome(); return;
+      }
+      if (/^(KeyV|KeyJ|KeyM|KeyT)$/.test(e.code)) { closeWelcome(); if (e.code !== 'KeyT') return; }
+      else { e.gameUI = true; if (e.code !== 'Tab') e.stopImmediatePropagation(); return; }
+    }
     const editing = e.target instanceof Element && e.target.matches('input, textarea, select, [contenteditable="true"]');
     if (e.code === 'KeyT' && !editing) {
       e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) show('tuning'); return;
@@ -47,7 +75,8 @@ export function createSettings() {
     }
   }, true);
   return {
-    get open() { return current !== null; }, close,
-    ready(onChange, onOpen) { changed = onChange; beforeOpen = onOpen; ready = true; settingsButton.disabled = false; helpButton.disabled = false; },
+    get open() { return current !== null || welcomeOpen; }, close, showWelcome, closeWelcome,
+    get welcomeOpen() { return welcomeOpen; },
+    ready(onChange, onOpen) { changed = onChange; beforeOpen = onOpen; ready = true; settingsButton.disabled = false; helpButton.disabled = false; showWelcome(); },
   };
 }
