@@ -230,6 +230,7 @@ export async function createMinimap(base = './assets/') {
   }
 
   addEventListener('keydown', e => {
+    if (e.gameUI) return;
     if (e.code === 'KeyM') toggle();
     if (e.code === 'Escape' && open) toggle(false);
     if (e.code === 'KeyP' && pin) setPin(null);

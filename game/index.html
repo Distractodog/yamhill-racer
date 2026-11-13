@@ -11,11 +11,30 @@
   #speed { font-size: 46px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
   #speed small { font-size: 16px; font-weight: 600; margin-left: 4px; }
   #info { font-size: 13px; opacity: .9; margin-top: 4px; }
-  #help { position: fixed; right: 16px; bottom: 14px; color: #fff; font-size: 12px; text-align: right;
-          text-shadow: 0 1px 3px #000a; pointer-events: none; line-height: 1.5; }
-  #credits { position: fixed; left: 50%; transform: translateX(-50%); bottom: 4px; color: #fff; font-size: 10px; opacity: .7;
-             text-shadow: 0 1px 2px #000a; white-space: nowrap; }
+  #menu-bar { position: fixed; top: 14px; left: 16px; display: flex; gap: 8px; z-index: 22; }
+  .menu-button { border: 1px solid #ffffff35; border-radius: 10px; padding: 9px 13px; background: #142016e8;
+    color: #fff; font: 600 13px system-ui, sans-serif; cursor: pointer; box-shadow: 0 3px 14px #0003; }
+  .menu-button:hover, .menu-button[aria-expanded="true"] { background: #2f4133; border-color: #ffffff80; }
+  button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid #ffd23f; outline-offset: 3px; }
+  #settings-panel { position: fixed; top: 63px; left: 16px; width: min(390px, calc(100vw - 32px)); max-height: calc(100dvh - 85px);
+    box-sizing: border-box; overflow: auto; z-index: 23; color: #fff; background: #142016f5; border: 1px solid #ffffff25;
+    border-radius: 14px; box-shadow: 0 10px 40px #0007; padding: 18px; font-size: 13px; }
+  [hidden] { display: none !important; }
+  .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .panel-heading h2 { margin: 0; font-size: 21px; }
+  #settings-close { background: #ffffff12; border: 0; border-radius: 8px; color: white; font-size: 22px; cursor: pointer; width: 32px; height: 32px; }
+  #settings-panel h3 { margin: 20px 0 8px; font-size: 14px; color: #ffd76a; }
+  #settings-panel p { line-height: 1.5; color: #d1d8d2; }
+  #settings-panel dl { display: grid; grid-template-columns: minmax(95px, auto) 1fr; gap: 8px 14px; margin: 0; line-height: 1.45; }
+  #settings-panel dt { font-weight: 700; color: #fff; } #settings-panel dd { margin: 0; color: #d1d8d2; }
+  #settings-panel kbd { font: 600 12px system-ui, sans-serif; }
+  #settings-panel .lil-gui { width: 100%; --background-color: #1d2c20; --widget-color: #ffffff18; --hover-color: #ffffff25;
+    --focus-color: #ffffff30; --number-color: #ffd76a; --font-size: 12px; }
+  #settings-panel .lil-gui.root > .title { display: none; }
+  #settings-help { margin-top: 16px; }
+  #credits { border-top: 1px solid #ffffff25; margin-top: 20px; padding-top: 12px; color: #aebcaf; font-size: 11px; line-height: 1.6; }
   #credits a { color: inherit; }
+  @media (max-width: 600px) { #minimap { width: 140px !important; height: 140px !important; } #menu-bar { flex-direction: column; } #settings-panel { top: 104px; max-height: calc(100dvh - 120px); } }
   #minimap { position: fixed; top: 14px; right: 14px; width: 210px; height: 210px; border-radius: 14px; overflow: hidden;
              border: 2px solid #fffd; box-shadow: 0 3px 14px #0006; cursor: pointer; background: #3c5a32; }
   #minimap.hidden { display: none; }
@@ -30,9 +49,8 @@
   #fullmap.open { display: block; }
   #fullmap .fm-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 12px;
                       text-shadow: 0 1px 3px #000; pointer-events: none; }
-  .lil-gui.autoPlace { right: auto !important; left: 15px; }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font-size: 20px;
-             background: #2d4a2f; }
+             background: #2d4a2f; z-index: 100; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -45,8 +63,43 @@
 <body>
 <div id="loading">Loading map…</div>
 <div id="hud"><div id="speed">0<small>km/h</small></div><div id="info"></div></div>
-<div id="help">V vehicles (car · dirt bike · jet) · W/S or ↑/↓ drive · A/D steer · Space handbrake · Shift wheelie (bike) · G glider (car)<br>Jet: W/S throttle · ↑/↓ pitch · ←/→ roll · A/D rudder · J races · R reset · F flip upright · H back to campus · T tuning · C camera · M map (click it to pin a spot, P removes the pin)</div>
-<div id="credits">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · elevation USGS 3DEP · tree heights Meta/WRI (CC BY 4.0)</div>
+<nav id="menu-bar" aria-label="Game options">
+  <button id="settings-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Settings</button>
+  <button id="help-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>How to play?</button>
+</nav>
+<section id="settings-panel" role="dialog" aria-labelledby="settings-title" hidden>
+  <header class="panel-heading"><h2 id="settings-title">Settings</h2><button id="settings-close" aria-label="Close panel">×</button></header>
+  <div id="tuning-content">
+    <p>Make each vehicle feel right for you. Changes are saved automatically.</p>
+    <div id="tuning-controls"></div>
+    <button id="settings-help" class="menu-button">How to play?</button>
+  </div>
+  <div id="help-content" hidden>
+    <p>Explore Yamhill, choose a vehicle, or pick a race.</p>
+    <h3>Car &amp; dirt bike</h3>
+    <dl><dt><kbd>W / ↑</kbd></dt><dd>Accelerate</dd><dt><kbd>S / ↓</kbd></dt><dd>Brake / reverse</dd>
+    <dt><kbd>A D / ← →</kbd></dt><dd>Steer</dd><dt><kbd>Space</kbd></dt><dd>Handbrake / bike rear-brake slide</dd>
+    <dt><kbd>Shift</kbd></dt><dd>Bike wheelie; lean back in the air</dd><dt><kbd>W S / ↑ ↓</kbd></dt><dd>Bike air lean: release and press again after take-off</dd></dl>
+    <h3>Car glider</h3>
+    <dl><dt><kbd>G</kbd></dt><dd>Open / fold glider. From the ground, reach 90 km/h first.</dd>
+    <dt><kbd>W / ↑ · S / ↓</kbd></dt><dd>Nose down · nose up</dd><dt><kbd>A D / ← →</kbd></dt><dd>Bank left / right</dd></dl>
+    <h3>Jet</h3>
+    <dl><dt><kbd>W / S</kbd></dt><dd>Increase / decrease throttle</dd><dt><kbd>↑ / ↓</kbd></dt><dd>Nose down / nose up</dd>
+    <dt><kbd>← / →</kbd></dt><dd>Roll left / right</dd><dt><kbd>A / D</kbd></dt><dd>Rudder / ground steering</dd>
+    <dt><kbd>Space</kbd></dt><dd>Wheel brakes</dd></dl><p>On the ground, accelerate past 230 km/h and hold ↓ to lift the nose.</p>
+    <h3>Every vehicle</h3>
+    <dl><dt><kbd>V</kbd></dt><dd>Vehicle picker: 1 car, 2 dirt bike, 3 jet; or ↑ / ↓ then Enter</dd>
+    <dt><kbd>J</kbd></dt><dd>Race list: ↑ / ↓ to choose, Enter to start</dd><dt><kbd>R</kbd></dt><dd>Reset to a safe spot</dd>
+    <dt><kbd>F</kbd></dt><dd>Flip upright / level the jet</dd><dt><kbd>H</kbd></dt><dd>Return to campus</dd>
+    <dt><kbd>C</kbd></dt><dd>Cycle cameras</dd><dt><kbd>T</kbd></dt><dd>Open / close tuning in Settings</dd>
+    <dt><kbd>Backspace</kbd></dt><dd>Restart the current race</dd><dt><kbd>Enter</kbd></dt><dd>Retry after finishing a race</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Close a menu or map; otherwise leave the race</dd></dl>
+    <h3>Map &amp; navigation</h3>
+    <dl><dt><kbd>M</kbd></dt><dd>Open / close the full map</dd><dt><kbd>+ / −</kbd></dt><dd>Zoom the full map; mouse wheel works too</dd>
+    <dt><kbd>0</kbd></dt><dd>Fit the whole map</dd><dt>Drag</dt><dd>Pan the map</dd><dt>Click</dt><dd>Place / remove a map pin</dd><dt><kbd>P</kbd></dt><dd>Remove the pin</dd></dl>
+    <div id="credits">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · elevation USGS 3DEP · tree heights Meta/WRI (CC BY 4.0)</div>
+  </div>
+</section>
 <script type="module" src="src/main.js"></script>
 </body>
 </html>

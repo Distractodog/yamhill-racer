@@ -6,7 +6,6 @@ import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
 import { activeProxy } from './vehicle.js';
 
-const KEY = 'yr-vehicle-1';
 export const VEHICLES = [
   { kind: 'car', icon: '🏎️', name: 'Car', help: 'W/S drive · A/D steer · Space handbrake · G glider' },
   { kind: 'bike', icon: '🏍️', name: 'Dirt bike', help: 'W/S ride · A/D steer · Shift wheelie · Space rear-brake slide · in the air W/S lean' },
@@ -55,7 +54,6 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     }
     scene.add(next.mesh);
     cur = next;
-    try { localStorage.setItem(KEY, kind); } catch {}
     listeners.forEach(f => f(next));
     return true;
   }
@@ -78,6 +76,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   function show() { open = true; sel = VEHICLES.findIndex(v => v.kind === cur.kind); render(); menu.style.display = 'block'; }
   function close() { open = false; if (menu) menu.style.display = 'none'; }
   if (menu) addEventListener('keydown', e => {
+    if (e.gameUI) return;
     if (e.repeat) return;
     if (e.code === 'KeyV') { open ? close() : show(); e.stopImmediatePropagation(); return; }
     if (!open) return;
@@ -88,10 +87,9 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     else if (/^(Digit|Numpad)[1-3]$/.test(e.code)) pick(VEHICLES[+e.code.slice(-1) - 1].kind);
   }, true);
 
-  let saved = null; try { saved = localStorage.getItem(KEY); } catch {}
   return {
     player, all, car, bike, jet, switchTo, show, close,
-    get current() { return cur; }, get open() { return open; }, saved,
+    get current() { return cur; }, get open() { return open; },
     onSwitch(f) { listeners.push(f); },
   };
 }

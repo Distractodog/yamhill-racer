@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import GUI from 'lil-gui';
-import { loadWorld, SURFACES } from './world.js';
+import { loadWorld } from './world.js';
 import { Car, TUNING_DEFAULTS } from './car.js';
 import { Effects } from './effects.js';
 import { CarAudio } from './audio.js';
@@ -11,6 +11,9 @@ import { Glider } from './glider.js';
 import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
+import { createSettings } from './settings.js';
+
+const settings = createSettings();
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -68,7 +71,8 @@ const challenges = await createChallenges({ scene, world, car, minimap, vehicles
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
 
-const gui = new GUI({ title: 'Tuning (T)' });
+const gui = new GUI({ title: 'Vehicle tuning', container: document.getElementById('tuning-controls') });
+const fc = gui.addFolder('Car');
 const RANGES = {
   accel: [5, 60, 0.5], topSpeed: [100, 1500, 10], brakeDecel: [10, 100, 1],
   steerLock: [0.2, 0.9, 0.01], steerRate: [2, 20, 0.5], cornerGrip: [10, 60, 0.5], turnResponse: [3, 30, 0.5],
@@ -77,15 +81,15 @@ const RANGES = {
   springK: [20000, 150000, 500], damping: [1000, 15000, 100], restLength: [0.2, 0.9, 0.01], snap: [0, 200, 1],
   downforce: [0, 0.02, 0.0005], gravity: [9.8, 40, 0.2], airControl: [0, 8, 0.1], airStabilize: [0, 8, 0.1],
 };
-for (const k in RANGES) gui.add(tuning, k, ...RANGES[k]).onChange(save);
-gui.add({ reset: () => { Object.assign(tuning, TUNING_DEFAULTS); save(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'reset').name('Reset to defaults');
-gui.add({ copy: () => navigator.clipboard?.writeText(JSON.stringify(tuning, null, 1)) }, 'copy').name('Copy settings');
+for (const k in RANGES) fc.add(tuning, k, ...RANGES[k]).onChange(save);
+fc.add({ reset: () => { Object.assign(tuning, TUNING_DEFAULTS); save(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'reset').name('Reset to defaults');
+fc.add({ copy: () => navigator.clipboard?.writeText(JSON.stringify(tuning, null, 1)) }, 'copy').name('Copy settings');
 const saveB = () => { try { localStorage.setItem('yr-tuning-bike-1', JSON.stringify(bikeTuning)); localStorage.setItem('yr-tuning-jet-1', JSON.stringify(jetTuning)); } catch {} };
 const fb = gui.addFolder('Dirt bike'); for (const [k, r] of Object.entries({ accel: [5, 40, 0.5], topSpeed: [80, 500, 5], cornerGrip: [10, 50, 0.5], steerLock: [0.3, 1.2, 0.01], wheelie: [0.2, 0.9, 0.01], gravity: [9.8, 30, 0.2] })) fb.add(bikeTuning, k, ...r).onChange(saveB);
 const fj = gui.addFolder('Jet'); for (const [k, r] of Object.entries({ thrust: [6, 40, 0.5], liftK: [0.001, 0.005, 0.0001], rollRate: [0.5, 5, 0.1], maxG: [3, 12, 0.5], gravity: [9.8, 30, 0.2] })) fj.add(jetTuning, k, ...r).onChange(saveB);
 fb.close(); fj.close();
 gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuning, JET); saveB(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'resetV').name('Reset bike + jet');
-gui.close();
+gui.open();
 
 // H: back to the Delphian campus from anywhere (waits for the campus tiles to stream in first)
 async function goHome() {
@@ -109,13 +113,16 @@ function flipUpright() {
 
 // ---------------------------------------------------------------- input
 const keys = new Set();
+settings.ready(() => keys.clear(), () => {
+  vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
+});
 addEventListener('keydown', e => {
+  if (e.gameUI) return;
   keys.add(e.code);
   audio.start();
   if (e.code === 'KeyR') car.resetToSafe();
   if (e.code === 'KeyF') flipUpright();
   if (e.code === 'KeyH') goHome();
-  if (e.code === 'KeyT') gui._closed ? gui.open() : gui.close();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
   if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.kind === 'car') glider.toggle(); else vehicles.current.say?.('The glider is for the car', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -124,7 +131,7 @@ addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
-  const k = c => keys.has(c);
+  const k = c => !settings.open && keys.has(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
@@ -137,7 +144,7 @@ function readInput() {
   J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
   J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
   const gp = navigator.getGamepads?.()[0];
-  if (gp) {
+  if (gp && !settings.open) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
     if (gp.buttons[6]?.value > 0.05) input.brake = gp.buttons[6].value;
@@ -279,7 +286,7 @@ function frame(now) {
   const kmh = Math.round(car.vel.length() * 3.6);
   speedEl.innerHTML = `${kmh}<small>km/h</small>`;
   const v = vehicles.current;
-  const info = `${v.kind === 'car' ? (car.drifting ? 'DRIFT · ' : '') : v.name + ' · '}${v.kind === 'jet' ? '' : SURFACES[car.surface] + ' · '}${Math.round(fps)} fps`;
+  const info = `${v.kind === 'car' ? 'Car' : v.name}${car.drifting ? ' · DRIFT' : ''}`;
   if (info !== infoEl._last) { infoEl.innerHTML = info; infoEl._last = info; }
   const vline = v.hudInfo ? v.hudInfo().replace(/ · $/, '') : '';
   if (vline !== vlineEl._last) { vlineEl.innerHTML = vline; vlineEl._last = vline; }
@@ -297,4 +304,4 @@ addEventListener('resize', () => {
 window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide };
 window.game.glider = glider;
 window.game.vehicles = vehicles;
-if (vehicles.saved && vehicles.saved !== 'car') vehicles.switchTo(vehicles.saved);
+// Every fresh load starts in the car; V still switches vehicles during play.

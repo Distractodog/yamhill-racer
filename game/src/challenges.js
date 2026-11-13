@@ -314,6 +314,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   // capture phase: runs before the map's own Esc handler, so Esc with the full map open only closes the map
   addEventListener('keydown', e => {
+    if (e.gameUI) return;
     if (e.repeat) return;
     if (e.code === 'KeyJ') { menuOpen ? closeMenu() : openMenu(); return; }
     if (menuOpen) {
