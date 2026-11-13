@@ -15,6 +15,7 @@ export const GLIDER = {
   stallA: 0.26,      // stall angle of attack (rad, ≈ 15°)
   cd0: 0.045, cdK: 0.06,  // drag = cd0 + cdK × CL²  (best glide ≈ 9.5:1)
   maxLoad: 3,        // lift never more than 3 × gravity
+  maxDrag: 9.8,      // m/s² – drag never brakes harder than ~1 real g (at 1000+ km/h the wing would otherwise be a wall)
   trimMax: 0.12,     // the wing trims itself between these angles of attack
   trimMin: -0.06,
   pitchRate: 0.8,    // rad/s nose up/down at full stick (against the wing's own stability)
@@ -137,8 +138,10 @@ export class Glider {
     let L = P.liftK * q * cl;
     L = clamp(L, -P.maxLoad * g, P.maxLoad * g);
     this.lift = L / g;
-    const cd = P.cd0 + P.cdK * cl * cl + (this.stall ? Math.min(0.3, (alpha - P.stallA) * 1.5 + 0.08) : 0) + 0.3 * Math.sin(beta) ** 2;
-    const D = P.liftK * q * cd;
+    // induced drag from the lift you actually get: lift above the load limit is thrown away, so is its drag
+    const clEff = q > 1 ? L / (P.liftK * q) : cl;
+    const cd = P.cd0 + P.cdK * clEff * clEff + (this.stall ? Math.min(0.3, (alpha - P.stallA) * 1.5 + 0.08) : 0) + 0.3 * Math.sin(beta) ** 2;
+    const D = Math.min(P.liftK * q * cd, P.maxDrag);
     _a.set(0, -g, 0);
     if (s > 0.5) {
       _v.copy(c.vel).divideScalar(s);

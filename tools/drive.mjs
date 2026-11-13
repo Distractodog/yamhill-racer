@@ -260,6 +260,15 @@ if (which === 'all' || which === 'glider') {
     console.log(`   take-off → first touchdown ${res[withG ? 'gl' : 'plain'].toFixed(0)} m`);
   }
   console.log(`   glider carried you ${(res.gl / Math.max(1, res.plain)).toFixed(1)}× as far as the plain jump`);
+  // opened at top speed: should bleed speed gently (drag ≤ 1 g), not stop dead
+  for (const kmh of [600, 1200]) {
+    const marks = [];
+    glide(`glider opened at ${kmh} km/h, 60 m up, hands off`, ...FIELD, Math.PI / 2, 12,
+      (c, G) => { c.pos.y += 60; c.vel.set(kmh / 3.6, 0, 0); c.airTime = 1; G.toggle(); },
+      (t, i, c) => { if (t === 0) marks.y0 = c.pos.y;
+        for (const m of [0.5, 2, 5]) if (marks.length < 3 && t >= m && marks.length === [0.5, 2, 5].indexOf(m)) marks.push([c.vel.length() * 3.6, c.pos.y - marks.y0]); });
+    console.log(`   after 0.5 s / 2 s / 5 s: ${marks.map(([v, h]) => `${v.toFixed(0)} km/h ${h >= 0 ? '+' : ''}${h.toFixed(0)} m`).join(' / ')}`);
+  }
   // gentle glide from 60 m over the open fields, no input → should land upright
   const g1 = glide('glide from 60 m at 110 km/h, hands off', ...FIELD, Math.PI / 2, 40,
     (c, G) => { c.pos.y += 60; c.vel.set(110 / 3.6, 0, 0); c.airTime = 1; G.toggle(); });
