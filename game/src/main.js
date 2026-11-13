@@ -40,7 +40,18 @@ const SUN_DIR = new THREE.Vector3(-0.45, 0.8, 0.35).normalize();
 
 // ---------------------------------------------------------------- tuning (remembered per browser)
 const tuning = { ...TUNING_DEFAULTS };
-try { Object.assign(tuning, JSON.parse(localStorage.getItem('yr-tuning-2') || '{}')); } catch {}
+// Saved values are only taken for known settings and when they're real numbers (a NaN is saved as null, which
+// would zero that setting for good; settings from an older build that aren't in the menu any more are dropped).
+function loadSaved(key, target, defaults, ranges) {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch {}
+  for (const k in saved) {
+    const v = saved[k];
+    if (!(k in defaults) || (ranges && !(k in ranges)) || typeof v !== typeof defaults[k] || (typeof v === 'number' && !Number.isFinite(v))) continue;
+    target[k] = ranges ? Math.min(ranges[k][1], Math.max(ranges[k][0], v)) : v;
+  }
+}
+loadSaved('yr-tuning-2', tuning, TUNING_DEFAULTS);
 // a browser that saved an old default gets the new one (keeps anything Ethan changed himself)
 const OLD_DEFAULTS = { topSpeed: [270, 600], accel: [17], brakeDecel: [32] };
 for (const k in OLD_DEFAULTS) if (OLD_DEFAULTS[k].includes(tuning[k])) tuning[k] = TUNING_DEFAULTS[k];
@@ -51,7 +62,11 @@ const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Lo
 scene.add(world.group);
 // vehicles (vehicles.js): `car` below is a stand-in for whichever vehicle you're in (V switches)
 const bikeTuning = { ...BIKE }, jetTuning = { ...JET };
-try { Object.assign(bikeTuning, JSON.parse(localStorage.getItem('yr-tuning-bike-1') || '{}')); Object.assign(jetTuning, JSON.parse(localStorage.getItem('yr-tuning-jet-1') || '{}')); } catch {}
+// what the Settings menu can change (min, max, step); only these are saved and loaded back
+const BIKE_RANGES = { accel: [5, 40, 0.5], topSpeed: [80, 500, 5], cornerGrip: [10, 50, 0.5], steerLock: [0.3, 1.2, 0.01], wheelie: [0.2, 0.9, 0.01], gravity: [9.8, 30, 0.2] };
+const JET_RANGES = { thrust: [6, 40, 0.5], liftK: [0.001, 0.005, 0.0001], rollRate: [0.5, 5, 0.1], maxG: [3, 12, 0.5], gravity: [9.8, 30, 0.2] };
+loadSaved('yr-tuning-bike-1', bikeTuning, BIKE, BIKE_RANGES);
+loadSaved('yr-tuning-jet-1', jetTuning, JET, JET_RANGES);
 const vehicles = createVehicles({ scene, world, tuning, bikeTuning, jetTuning, canSwitch: kind => {
   // switching vehicle mid-race ends the race (each race belongs to one vehicle)
   if (challenges.state !== 'idle' && challenges.vehicle !== kind) challenges.quit();
@@ -84,9 +99,10 @@ const RANGES = {
 for (const k in RANGES) fc.add(tuning, k, ...RANGES[k]).onChange(save);
 fc.add({ reset: () => { Object.assign(tuning, TUNING_DEFAULTS); save(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'reset').name('Reset to defaults');
 fc.add({ copy: () => navigator.clipboard?.writeText(JSON.stringify(tuning, null, 1)) }, 'copy').name('Copy settings');
-const saveB = () => { try { localStorage.setItem('yr-tuning-bike-1', JSON.stringify(bikeTuning)); localStorage.setItem('yr-tuning-jet-1', JSON.stringify(jetTuning)); } catch {} };
-const fb = gui.addFolder('Dirt bike'); for (const [k, r] of Object.entries({ accel: [5, 40, 0.5], topSpeed: [80, 500, 5], cornerGrip: [10, 50, 0.5], steerLock: [0.3, 1.2, 0.01], wheelie: [0.2, 0.9, 0.01], gravity: [9.8, 30, 0.2] })) fb.add(bikeTuning, k, ...r).onChange(saveB);
-const fj = gui.addFolder('Jet'); for (const [k, r] of Object.entries({ thrust: [6, 40, 0.5], liftK: [0.001, 0.005, 0.0001], rollRate: [0.5, 5, 0.1], maxG: [3, 12, 0.5], gravity: [9.8, 30, 0.2] })) fj.add(jetTuning, k, ...r).onChange(saveB);
+const pick = (o, ranges) => Object.fromEntries(Object.keys(ranges).map(k => [k, o[k]]));
+const saveB = () => { try { localStorage.setItem('yr-tuning-bike-1', JSON.stringify(pick(bikeTuning, BIKE_RANGES))); localStorage.setItem('yr-tuning-jet-1', JSON.stringify(pick(jetTuning, JET_RANGES))); } catch {} };
+const fb = gui.addFolder('Dirt bike'); for (const [k, r] of Object.entries(BIKE_RANGES)) fb.add(bikeTuning, k, ...r).onChange(saveB);
+const fj = gui.addFolder('Jet'); for (const [k, r] of Object.entries(JET_RANGES)) fj.add(jetTuning, k, ...r).onChange(saveB);
 fb.close(); fj.close();
 gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuning, JET); saveB(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'resetV').name('Reset bike + jet');
 gui.open();
@@ -112,13 +128,18 @@ function flipUpright() {
 }
 
 // ---------------------------------------------------------------- input
-const keys = new Set();
-settings.ready(() => keys.clear(), () => {
+const keys = new Set();                 // physical keys held (e.code)
+// The letter each held key prints on this keyboard layout, so the key *labelled* W is throttle on AZERTY / Dvorak too
+// (there it sends code KeyZ / Comma). Physical WASD keeps working as well.
+const letters = new Map();              // e.code → 'KeyW' etc. from e.key
+const clearKeys = () => { keys.clear(); letters.clear(); };
+settings.ready(clearKeys, () => {
   vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
 addEventListener('keydown', e => {
   if (e.gameUI) return;
   keys.add(e.code);
+  if (/^[a-z]$/i.test(e.key)) letters.set(e.code, 'Key' + e.key.toUpperCase());
   audio.start();
   if (e.code === 'KeyR') car.resetToSafe();
   if (e.code === 'KeyF') flipUpright();
@@ -127,11 +148,29 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.kind === 'car') glider.toggle(); else vehicles.current.say?.('The glider is for the car', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
 });
-addEventListener('keyup', e => keys.delete(e.code));
-addEventListener('blur', () => keys.clear());
+addEventListener('keyup', e => { keys.delete(e.code); letters.delete(e.code); });
+addEventListener('blur', clearKeys);
+addEventListener('visibilitychange', clearKeys);
+const held = c => keys.has(c) || [...letters.values()].includes(c);
+// Gamepad: the first one with the standard (Xbox-style) layout, and only once it has been touched. Other devices
+// (joysticks, wheels, odd drivers) number their buttons differently or read "pressed" at rest: one like that used to
+// force the jet's throttle down and hold the brakes every frame, so W seemed to do nothing.
+const padRest = new Map();              // gamepad index → resting snapshot, or 'live' once something moved
+addEventListener('gamepaddisconnected', e => padRest.delete(e.gamepad.index));
+function activePad() {
+  for (const gp of navigator.getGamepads?.() || []) {
+    if (!gp || gp.connected === false || gp.mapping !== 'standard') continue;
+    const r = padRest.get(gp.index);
+    if (r === 'live') return gp;
+    const snap = gp.buttons.map(b => (b.value > 0.5 || b.pressed) ? 1 : 0).join('') + '|' + gp.axes.map(a => Math.round(a * 2)).join(',');
+    if (r === undefined) padRest.set(gp.index, snap);
+    else if (snap !== r) { padRest.set(gp.index, 'live'); return gp; }
+  }
+  return null;
+}
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
-  const k = c => !settings.open && keys.has(c);
+  const k = c => !settings.open && held(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
@@ -143,14 +182,14 @@ function readInput() {
   J.pitch = (k('ArrowDown') ? 1 : 0) - (k('ArrowUp') ? 1 : 0);
   J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
   J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
-  const gp = navigator.getGamepads?.()[0];
+  const gp = activePad();
   if (gp && !settings.open) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
     if (gp.buttons[6]?.value > 0.05) input.brake = gp.buttons[6].value;
     if (gp.buttons[0]?.pressed) input.handbrake = true;
     if (gp.buttons[1]?.pressed) input.lean = true;
-    J.thr = (gp.buttons[7]?.value > 0.05 ? gp.buttons[7].value : 0) - (gp.buttons[6]?.value > 0.05 ? gp.buttons[6].value : 0) || J.thr;
+    if (!J.thr) J.thr = (gp.buttons[7]?.value > 0.05 ? gp.buttons[7].value : 0) - (gp.buttons[6]?.value > 0.05 ? gp.buttons[6].value : 0);   // W/S win
     if (Math.abs(gp.axes[3] ?? 0) > 0.12) J.pitch = gp.axes[3];
     if (Math.abs(gp.axes[2] ?? 0) > 0.12) J.roll = gp.axes[2];
     if (Math.abs(ax) > 0.12) J.yaw = ax;
@@ -258,6 +297,41 @@ const vmsgEl = Object.assign(document.createElement('div'), { id: 'veh-msg' }); 
 const vlineEl = Object.assign(document.createElement('div'), { id: 'veh-line' });
 vlineEl.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px;font-variant-numeric:tabular-nums;';
 speedEl.before(vlineEl);
+// Debug readout (F8, or open the game with ?debug): what this browser actually sends the game, so a player can
+// screenshot it when a control doesn't work on their machine.
+const BUILD = '2026-11-13 input fix';
+const dbgEl = Object.assign(document.createElement('pre'), { id: 'debug-readout' });
+dbgEl.style.cssText = 'position:fixed;left:8px;top:64px;z-index:50;margin:0;padding:8px 10px;max-width:min(560px,calc(100vw - 16px));' +
+  'background:rgba(0,0,0,.72);color:#e8f0e8;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;border-radius:6px;pointer-events:none;';
+dbgEl.hidden = !/[?&]debug\b/.test(location.search);
+document.body.append(dbgEl);
+addEventListener('keydown', e => { if (e.code === 'F8' && !e.repeat) { dbgEl.hidden = !dbgEl.hidden; e.preventDefault(); } });
+let dbgT = 0;
+function updateDebug(dt) {
+  if (dbgEl.hidden || (dbgT -= dt) > 0) return;
+  dbgT = 0.2;
+  const v = vehicles.current, J = input.jet, f2 = x => (+x).toFixed(2);
+  const held = [...keys].map(c => letters.has(c) && letters.get(c) !== c ? `${c}→${letters.get(c).slice(3)}` : c).join(' ') || '(none)';
+  const pads = [...(navigator.getGamepads?.() || [])].filter(Boolean).map(gp => {
+    const st = gp.mapping !== 'standard' ? 'IGNORED (not standard layout)' : padRest.get(gp.index) === 'live' ? 'in use' : 'waiting to be touched';
+    const ax = gp.axes.map((a, i) => Math.abs(a) > 0.05 ? `a${i}=${f2(a)}` : '').filter(Boolean).join(' ');
+    const bt = gp.buttons.map((b, i) => b.pressed || b.value > 0.05 ? `b${i}=${f2(b.value)}` : '').filter(Boolean).join(' ');
+    return `  #${gp.index} ${gp.id.slice(0, 48)} [${gp.mapping || 'no mapping'}] ${st}\n     ${ax || 'axes at rest'} · ${bt || 'no buttons'}`;
+  });
+  let saved = ''; try { saved = localStorage.getItem('yr-tuning-jet-1') || '(none)'; } catch { saved = '(blocked)'; }
+  dbgEl.textContent = [
+    `DEBUG (F8 hides) · build ${BUILD}`,
+    `${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 110)}`,
+    `page focused: ${document.hasFocus() ? 'yes' : 'NO – click the game'} · typing in: ${document.activeElement?.tagName || '-'} · fps ${Math.round(fps)}`,
+    `menus: settings ${settings.open ? 'OPEN (game keys off)' : 'closed'} · vehicle ${vehicles.open ? 'open' : 'closed'} · map ${minimap.open ? 'open' : 'closed'}`,
+    `keys held: ${held}`,
+    `game input: throttle ${f2(input.throttle)} brake ${f2(input.brake)} steer ${f2(input.steer)} space ${input.handbrake ? 'on' : 'off'}`,
+    `jet input: thr ${f2(J.thr)} pitch ${f2(J.pitch)} roll ${f2(J.roll)} yaw ${f2(J.yaw)}${J.hold ? ' · HELD (race start)' : ''}`,
+    v.kind === 'jet' ? `jet: ${v.mode} · lever ${Math.round(v.throttle * 100)}% · thrust ${v.t.thrust} · lever rate ${v.t.throttleRate}/s` : `vehicle: ${v.kind}`,
+    `saved jet settings: ${saved.slice(0, 120)}`,
+    `gamepads: ${pads.length ? '\n' + pads.join('\n') : 'none'}`,
+  ].join('\n');
+}
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
@@ -293,6 +367,7 @@ function frame(now) {
   v.msgT = (v.msgT || 0) - dt;
   const msg = v.msgT > 0 && v.kind !== 'car' ? v.msg : '';
   if (msg !== vmsgEl._last) { vmsgEl.textContent = msg; vmsgEl._last = msg; }
+  updateDebug(dt);
 }
 requestAnimationFrame(frame);
 

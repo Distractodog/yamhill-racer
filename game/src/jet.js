@@ -387,7 +387,10 @@ export class Jet extends Vehicle {
   hudInfo() {
     if (this.mode === 'crashed') return 'CRASHED · back in a moment (R now)';
     const thr = `THR ${Math.round(this.throttle * 100)}%`;
-    if (this.mode === 'ground') return `${thr} · on the ground${this.v * 3.6 > this.t.rotateKmh ? ' · ↓ to lift the nose' : ''} · `;
+    if (this.mode === 'ground') {
+      const hint = this.v * 3.6 > this.t.rotateKmh ? ' · ↓ to lift the nose' : this.throttle < 0.3 && this.v < 3 ? ' · hold W to throttle up' : '';
+      return `${thr} · on the ground${hint} · `;
+    }
     const vs = this.vel.y;
     let h = `${thr} · ALT ${Math.max(0, Math.round(this.agl))} m · ${vs >= 0 ? '↑' : '↓'}${Math.abs(vs).toFixed(0)} m/s · ${this.gLoad.toFixed(1)} g`;
     if (this.stall) h += ' · <span style="color:#ff5a4a">STALL – nose down, more throttle</span>';
