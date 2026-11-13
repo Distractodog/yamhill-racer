@@ -15,7 +15,7 @@ const CSS = `
 #ch-hud .ch-name { font-size: 13px; font-weight: 700; opacity: .9; }
 #ch-hud .ch-time { font-size: 40px; font-weight: 800; line-height: 1.05; }
 #ch-hud .ch-sub { font-size: 13px; opacity: .92; }
-#ch-split { position: fixed; top: 120px; left: 50%; transform: translateX(-50%); font: 800 26px system-ui, sans-serif;
+#ch-split { position: fixed; top: 172px; left: 50%; transform: translateX(-50%); font: 800 26px system-ui, sans-serif;
   color: #fff; text-shadow: 0 1px 4px #000c; pointer-events: none; opacity: 0; transition: opacity .3s;
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 #ch-split .ahead { color: #5df07a; } #ch-split .behind { color: #ff6b5e; }

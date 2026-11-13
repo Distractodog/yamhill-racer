@@ -6,6 +6,7 @@ import { Effects } from './effects.js';
 import { CarAudio } from './audio.js';
 import { createMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
+import { createPinGuide } from './pin.js';
 import { Glider } from './glider.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -54,6 +55,7 @@ const effects = new Effects(scene);
 const audio = new CarAudio();
 const minimap = await createMinimap();
 const challenges = await createChallenges({ scene, world, car, minimap });
+const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
 
 const gui = new GUI({ title: 'Car tuning (T)' });
@@ -197,6 +199,7 @@ function frame(now) {
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
+  pinGuide.update(dt);
   renderer.render(scene, camera);
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
@@ -212,5 +215,5 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 // for debugging / automated test drives
-window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges };
+window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide };
 window.game.glider = glider;

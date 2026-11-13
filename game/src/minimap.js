@@ -1,5 +1,6 @@
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
-// The full map zooms (scroll / pinch / + − / double-click, around the pointer) and pans (drag).
+// The full map zooms (scroll / pinch / + −, around the pointer) and pans (drag). A click drops a pin
+// (click it again, 📍 or P to clear); pin.js guides you to it.
 // The picture is baked by tools/build_minimap.py (ground colours + roads, trails, buildings, ponds).
 const LABELS = [
   { name: 'Delphian', x: -560, z: 60 },
@@ -8,6 +9,8 @@ const LABELS = [
   { name: 'Bellevue', x: 11860, z: -2110 },
   { name: 'McMinnville', x: 19100, z: -11000 },
 ];
+
+export const PIN_COLOR = '#ff2fd6';      // magenta: apart from the challenge colours (cyan / orange / yellow)
 
 export async function createMinimap(base = './assets/') {
   const meta = await fetch(base + 'minimap.json').then(r => r.json());
@@ -23,10 +26,10 @@ export async function createMinimap(base = './assets/') {
   corner.innerHTML = '<canvas></canvas><button aria-label="Open full map">⤢</button><span class="mm-n">N</span>';
   const full = document.createElement('div');
   full.id = 'fullmap';
-  full.innerHTML = '<canvas></canvas><div class="fm-hint">Scroll or + − to zoom · drag to move · M or Esc to close</div>' +
+  full.innerHTML = '<canvas></canvas><div class="fm-hint">Click to drop a pin · scroll or + − to zoom · drag to move · M or Esc to close</div>' +
     '<div class="fm-zoom"><button data-z="in" title="Zoom in (+)">+</button><button data-z="out" title="Zoom out (−)">−</button>' +
     '<button data-z="fit" title="Whole map (0)">⤢</button><button data-z="car" title="Centre on car">◎</button>' +
-    '<button data-z="close" title="Close (M)">✕</button></div>';
+    '<button data-z="unpin" title="Remove the pin (P)">📍</button><button data-z="close" title="Close (M)">✕</button></div>';
   const css = document.createElement('style');
   css.textContent = `#fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
     #fullmap canvas.drag { cursor: grabbing; }
@@ -35,7 +38,10 @@ export async function createMinimap(base = './assets/') {
       font: 700 20px/1 system-ui, sans-serif; cursor: pointer; box-shadow: 0 2px 8px #0005; }
     #fullmap .fm-zoom button:hover { background: #000e; }
     #fullmap .fm-zoom button:disabled { opacity: .35; cursor: default; }
-    #fullmap .fm-zoom button[data-z="close"] { margin-top: 8px; font-size: 16px; }`;
+    #fullmap .fm-zoom button[data-z="close"] { font-size: 16px; }
+    #fullmap .fm-zoom button[data-z="unpin"] { margin-top: 8px; font-size: 16px; position: relative; }
+    #fullmap .fm-zoom button[data-z="unpin"]::after { content: ''; position: absolute; left: 7px; right: 7px; top: 17px;
+      height: 2px; background: #fff; transform: rotate(-45deg); }`;
   document.head.append(css);
   document.body.append(corner, full);
   const cc = corner.querySelector('canvas'), fc = full.querySelector('canvas');
@@ -71,16 +77,40 @@ export async function createMinimap(base = './assets/') {
     const k = e.ctrlKey ? 0.012 : 0.0018;             // ctrlKey = trackpad pinch (small deltas)
     zoomAt(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : 1) * k), ...canvasPt(e));
   }, { passive: false });
-  fc.addEventListener('dblclick', e => zoomAt(e.shiftKey ? 0.5 : 2, ...canvasPt(e)));
+  // pin: { x, z } in world metres, or null. A click (press + release without dragging) drops it; clicking on it removes it
+  let pin = null; const pinListeners = [];
+  try { const p = JSON.parse(localStorage.getItem('yr-pin-1') || 'null'); if (p && isFinite(p.x) && isFinite(p.z)) pin = p; } catch {}
+  function setPin(p) {
+    pin = p ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : null;
+    try { localStorage.setItem('yr-pin-1', JSON.stringify(pin)); } catch {}
+    for (const f of pinListeners) f(pin);
+  }
+  const onMap = (x, z) => { const [a, b] = toPx(x, z); return a >= 0 && b >= 0 && a < img.width && b < img.height; };
   let drag = null;
-  fc.addEventListener('pointerdown', e => { drag = { id: e.pointerId, p: canvasPt(e) }; fc.setPointerCapture(e.pointerId); fc.classList.add('drag'); });
+  fc.addEventListener('pointerdown', e => {
+    drag = { id: e.pointerId, p: canvasPt(e), p0: canvasPt(e), moved: 0 }; fc.setPointerCapture(e.pointerId); fc.classList.add('drag');
+  });
   fc.addEventListener('pointermove', e => {
     if (!drag || e.pointerId !== drag.id) return;
     const p = canvasPt(e), s = fitScale() * zoom;
+    drag.moved = Math.max(drag.moved, Math.hypot(p[0] - drag.p0[0], p[1] - drag.p0[1]));
     vx -= (p[0] - drag.p[0]) / s; vy -= (p[1] - drag.p[1]) / s; drag.p = p; clampView();
   });
   const endDrag = () => { drag = null; fc.classList.remove('drag'); };
-  fc.addEventListener('pointerup', endDrag); fc.addEventListener('pointercancel', endDrag);
+  fc.addEventListener('pointerup', e => {
+    const click = drag && drag.moved < 6 * Math.min(devicePixelRatio, 2);
+    endDrag();
+    if (!click) return;
+    const [cx, cy] = canvasPt(e), s = fitScale() * zoom, d = Math.min(devicePixelRatio, 2);
+    const ix = vx + (cx - fc.width / 2) / s, iy = vy + (cy - fc.height / 2) / s;
+    if (pin) {                                     // clicked on the pin (its head sits ~19 px above the point): remove it
+      const [qx, qy] = toPx(pin.x, pin.z);
+      if (Math.hypot((qx - ix) * s, (qy - iy) * s - 13 * d) < 16 * d) { setPin(null); return; }
+    }
+    const x = ex0 + ix * mpp, z = ez0 + iy * mpp;
+    if (onMap(x, z)) setPin({ x, z });
+  });
+  fc.addEventListener('pointercancel', endDrag);
   const ZOOM_STEP = 1.6;
   function zoomCmd(z) {
     if (z === 'in') zoomAt(ZOOM_STEP);
@@ -88,6 +118,7 @@ export async function createMinimap(base = './assets/') {
     else if (z === 'fit') { zoom = 1; clampView(); }
     else if (z === 'car') { zoom = Math.max(zoom, 6); [vx, vy] = carPx; clampView(); }
     else if (z === 'close') toggle(false);
+    else if (z === 'unpin') setPin(null);
   }
   full.querySelectorAll('.fm-zoom button').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); zoomCmd(b.dataset.z); }));
 
@@ -106,6 +137,27 @@ export async function createMinimap(base = './assets/') {
     ctx.fillStyle = '#ff3b30'; ctx.strokeStyle = '#fff'; ctx.lineWidth = size * 0.28; ctx.lineJoin = 'round';
     ctx.stroke(); ctx.fill();
     ctx.restore();
+  }
+
+  // map pin: a teardrop whose point sits on (x, y)
+  function drawPin(ctx, x, y, size) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.beginPath(); ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(-size * 0.25, -size * 0.7, -size * 0.75, -size * 1.0, -size * 0.75, -size * 1.45);
+    ctx.arc(0, -size * 1.45, size * 0.75, Math.PI, 0);
+    ctx.bezierCurveTo(size * 0.75, -size * 1.0, size * 0.25, -size * 0.7, 0, 0); ctx.closePath();
+    ctx.fillStyle = PIN_COLOR; ctx.strokeStyle = '#fff'; ctx.lineWidth = size * 0.22; ctx.lineJoin = 'round';
+    ctx.stroke(); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, -size * 1.45, size * 0.28, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.restore();
+  }
+  // car → pin as a faint dashed line (map(x, z) → canvas px)
+  function drawPinLine(ctx, map, cx, cy, d) {
+    if (!pin) return;
+    const [a, b] = map(pin.x, pin.z);
+    ctx.save(); ctx.setLineDash([6 * d, 6 * d]); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(a, b);
+    ctx.strokeStyle = PIN_COLOR + '99'; ctx.lineWidth = 2.5 * d; ctx.stroke(); ctx.restore();
   }
 
   function label(ctx, text, x, y, px) {
@@ -142,7 +194,17 @@ export async function createMinimap(base = './assets/') {
       cctx.fillStyle = '#222824'; cctx.fillRect(0, 0, W, H);   // off the map (same as the baked picture)
       cctx.imageSmoothingQuality = 'high';
       cctx.drawImage(img, W / 2 - px * s, H / 2 - py * s, img.width * s, img.height * s);
-      drawOverlay(cctx, (gx, gz) => { const [a, b] = toPx(gx, gz); return [W / 2 + (a - px) * s, H / 2 + (b - py) * s]; }, d);
+      const cmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [W / 2 + (a - px) * s, H / 2 + (b - py) * s]; };
+      drawOverlay(cctx, cmap, d);
+      if (pin) {                                   // pin on the corner map; held at the edge when it's further away
+        let [a, b] = cmap(pin.x, pin.z); const m = 12 * d, inside = a > m && a < W - m && b > m * 2 && b < H - m;
+        if (!inside) {
+          const dx = a - W / 2, dy = b - H / 2, k = Math.min((W / 2 - m) / Math.abs(dx || 1e-9), (H / 2 - m) / Math.abs(dy || 1e-9));
+          a = W / 2 + dx * k; b = H / 2 + dy * k;
+          cctx.beginPath(); cctx.arc(a, b, 5 * d, 0, Math.PI * 2); cctx.fillStyle = PIN_COLOR; cctx.fill();
+          cctx.strokeStyle = '#fff'; cctx.lineWidth = 1.6 * d; cctx.stroke();
+        } else { drawPinLine(cctx, cmap, W / 2, H / 2, d); drawPin(cctx, a, b, 9 * d); }
+      }
       arrow(cctx, W / 2, H / 2, heading, 9 * d);
     } else {
       const d = fit(fc), W = fc.width, H = fc.height;
@@ -154,22 +216,28 @@ export async function createMinimap(base = './assets/') {
       fctx.imageSmoothingQuality = 'high';
       fctx.drawImage(img, ox, oy, img.width * s, img.height * s);
       for (const l of LABELS) { const [lx, ly] = toPx(l.x, l.z); label(fctx, l.name, ox + lx * s, oy + ly * s, 15 * d); }
-      drawOverlay(fctx, (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; }, d);
+      const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
+      drawOverlay(fctx, fmap, d);
+      drawPinLine(fctx, fmap, ox + px * s, oy + py * s, d);
+      full.querySelector('[data-z="unpin"]').disabled = !pin;
       // pulsing ring so you can spot yourself on the big map
       const t = performance.now() / 1000, r = (10 + 8 * ((t * 1.2) % 1)) * d;
       fctx.beginPath(); fctx.arc(ox + px * s, oy + py * s, r, 0, Math.PI * 2);
       fctx.strokeStyle = `rgba(255,59,48,${1 - ((t * 1.2) % 1)})`; fctx.lineWidth = 2.5 * d; fctx.stroke();
       arrow(fctx, ox + px * s, oy + py * s, heading, 11 * d);
+      if (pin) drawPin(fctx, ...fmap(pin.x, pin.z), 13 * d);
     }
   }
 
   addEventListener('keydown', e => {
     if (e.code === 'KeyM') toggle();
     if (e.code === 'Escape' && open) toggle(false);
+    if (e.code === 'KeyP' && pin) setPin(null);
     if (!open) return;
     if (e.code === 'Equal' || e.code === 'NumpadAdd') zoomCmd('in');
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') zoomCmd('out');
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
-  return { update, toggle, setOverlay: o => { overlay = o; }, get open() { return open; } };
+  return { update, toggle, setOverlay: o => { overlay = o; }, get open() { return open; },
+    get pin() { return pin; }, setPin, onPin: f => pinListeners.push(f) };
 }
