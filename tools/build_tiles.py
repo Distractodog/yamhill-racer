@@ -11,6 +11,8 @@ Per tile, game/assets/tiles/<tx>_<tz>/:
   height.bin    float32 (HN+2*HM)^2 heights on a 4 m grid: the tile's 501^2 vertices plus HM vertices of margin
   surface.bin   uint8 2000^2 surface classes at 1 m (0 grass, 1 forest floor, 5 pond bed, 6 building pad, 7 track)
   ground.png    2048^2 stylised ground colours
+  (written packed by default — height.bin.gz, surface.bin.gz, ponds.bin.gz, tile.json.gz, ground.jpg, see tilefmt.py;
+   YR_PACK=0 writes the plain files above)
   trees.bin     float32 [x, z, height, broadleaf] per tree
   tile.json     buildings, road/trail strips (render + physics pieces), ponds
 game/assets/world.json: tile size, list of tiles, spawn, height grid info.
@@ -24,12 +26,13 @@ from skimage.morphology import skeletonize
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
-import mapdata, align, roadnet
+import mapdata, align, roadnet, tilefmt
 from fetch_tiles import TILE, MARGIN, TX, TZ, TILE_SET, HSTEP, CX, CY, K, R
 
 RAW = os.path.join(ROOT, 'data', 'raw')
 ASSETS = os.environ.get('YR_ASSETS', os.path.join(ROOT, 'game', 'assets'))   # YR_ASSETS=dir builds somewhere else, to swap in after
 OUT = os.path.join(ASSETS, 'tiles')
+PACK = os.environ.get('YR_PACK', '1') != '0'      # packed tile files (tools/tilefmt.py); YR_PACK=0 writes the old ones
 os.makedirs(OUT, exist_ok=True)
 rng = np.random.default_rng(7)
 T0 = time.time()
@@ -457,7 +460,7 @@ for tx, tz in TILES:
     ex = ((rx0 + xx + .5 - TRACK_C[0]) / 40) ** 2 + ((rz0 + yy + .5 - TRACK_C[1]) / 88) ** 2
     surf[(ex < 1.0) & (ex > 0.62) & (surf <= 1)] = 7
     del yy, xx, ex
-    surf.tofile(os.path.join(out, 'surface.bin'))
+    tilefmt.write_bytes(out, 'surface.bin', surf.tobytes(), PACK)
 
     # ---- ground colours (2048^2 over the core)
     big = np.asarray(Image.fromarray(sat.astype(np.uint8)).filter(ImageFilter.GaussianBlur(10))).astype(np.float32)[core]
@@ -469,12 +472,12 @@ for tx, tz in TILES:
     for c, rgb in SURF_COL.items(): col[s2 == c] = np.array(rgb, np.float32)
     tone = ndimage.gaussian_filter(rng.standard_normal((TEXN // 8, TEXN // 8)).astype(np.float32), 4)
     col *= 1 + ndimage.zoom(tone / (tone.std() + 1e-6), 8, order=1)[:TEXN, :TEXN, None] * 0.05
-    Image.fromarray(np.clip(col, 0, 255).astype(np.uint8)).save(os.path.join(out, 'ground.png'))
+    tilefmt.write_ground(out, Image.fromarray(np.clip(col, 0, 255).astype(np.uint8)), PACK)
 
     # ---- heights: core + margin from the global grid
     hz0, hx0 = hi0 - HM, hj0 - HM
     hpad = np.pad(gh, HM, mode='edge')[hz0 + HM:hz0 + HM + HN + 2 * HM, hx0 + HM:hx0 + HM + HN + 2 * HM]
-    hpad.astype('<f4').tofile(os.path.join(out, 'height.bin'))
+    tilefmt.write_bytes(out, 'height.bin', hpad.astype('<f4').tobytes(), PACK)
     pid_pad = np.pad(pond_gid, HM)[hz0 + HM:hz0 + HM + HN + 2 * HM, hx0 + HM:hx0 + HM + HN + 2 * HM]
 
     # ---- trees (7 m jittered grid, core only)
@@ -489,7 +492,7 @@ for tx, tz in TILES:
     keep |= edge[pz, px] & (rng.random(gx.size) < 0.12) & (path_d[pz, px] > 3) & (bld_d[pz, px] > 6) & ~water_m[pz, px]
     hgt = np.clip(ndimage.maximum_filter(chm, 3)[pz, px] * rng.uniform(0.85, 1.1, gx.size), 6, 48)
     T = np.stack([gx, gz, hgt, broad[pz, px].astype(np.float32)], 1)[keep].astype('<f4')
-    T.tofile(os.path.join(out, 'trees.bin'))
+    tilefmt.write_bytes(out, 'trees.bin', T.tobytes(), PACK)
 
     # ---- strips: exact pieces for drawing, padded pieces for physics (a strip's width can reach over the edge)
     render, phys = [], []
@@ -508,17 +511,16 @@ for tx, tz in TILES:
     tponds = {}
     for k in np.unique(pid_pad[pid_pad > 0]):
         tponds[int(k)] = ponds_g[k - 1]['level']
-    json.dump({'tx': tx, 'tz': tz, 'buildings': [{'pts': np.round(b['pts'], 2).tolist(), 'h': b['h']} for b in tb
+    tilefmt.write_bytes(out, 'tile.json', json.dumps({'tx': tx, 'tz': tz, 'buildings': [{'pts': np.round(b['pts'], 2).tolist(), 'h': b['h']} for b in tb
                                                    if rx0 <= b['pts'][:, 0].mean() < rx1 and rz0 <= b['pts'][:, 1].mean() < rz1],
-               'paths': render, 'physPaths': phys, 'junctions': tj, 'physJunctions': pj, 'ponds': tponds},
-              open(os.path.join(out, 'tile.json'), 'w'))
-    pid_pad.astype(np.uint16).tofile(os.path.join(out, 'ponds.bin'))
+               'paths': render, 'physPaths': phys, 'junctions': tj, 'physJunctions': pj, 'ponds': tponds}).encode(), PACK)
+    tilefmt.write_bytes(out, 'ponds.bin', pid_pad.astype(np.uint16).tobytes(), PACK)
     world_tiles.append([tx, tz])
     log(f'tile {tx},{tz}: trees {len(T)}, buildings {len(tb)}, strips {len(render)}, ponds {len(tponds)} ({time.time() - t1:.0f}s)')
 
 # ---------------------------------------------------------------- 7. world.json
 json.dump({'tile': TILE, 'hstep': HSTEP, 'hn': HN, 'hm': HM, 'surfN': TILE, 'tiles': world_tiles,
            'extent': [GX0, GZ0, GX1, GZ1], 'spawn': SPAWN_OLD.round(2).tolist(),
-           'ponds': [p['level'] for p in ponds_g]},
+           'ponds': [p['level'] for p in ponds_g], **({'packed': tilefmt.PACKED} if PACK else {})},
           open(os.path.join(ASSETS, 'world.json'), 'w'), indent=1)
 log('done')

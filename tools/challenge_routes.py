@@ -6,6 +6,8 @@ well each surface suits the challenge) goes through each challenge's waypoints. 
 route every `gap` metres. Run after rebuilding the tiles:  .venv/bin/python tools/challenge_routes.py
 """
 import json, math, os, sys, heapq, glob
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tilefmt
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -59,8 +61,9 @@ def link(a, b, kind):
     L = math.dist(pts[a], pts[b]); adj[a].append((b, L, kind)); adj[b].append((a, L, kind))
 
 ends, juncs = [], []
-for f in sorted(glob.glob(os.path.join(ROOT, 'game', 'assets', 'tiles', '*', 'tile.json'))):
-    t = json.load(open(f))
+for f in sorted(glob.glob(os.path.join(ROOT, 'game', 'assets', 'tiles', '*'))):
+    if not os.path.isdir(f): continue
+    t = tilefmt.read_json(f)                     # packed (tile.json.gz) or plain tile.json
     for p in t['paths']:
         if p['kind'] not in ROAD or len(p['pts']) < 2: continue
         prev = None
@@ -229,8 +232,8 @@ _h = {}
 def tile_h(tx, tz):
     k = (tx, tz)
     if k not in _h:
-        f = os.path.join(ROOT, 'game', 'assets', 'tiles', f'{tx}_{tz}', 'height.bin')
-        _h[k] = np.fromfile(f, dtype=np.float32).reshape(HN, HN) if os.path.exists(f) else None
+        f = os.path.join(ROOT, 'game', 'assets', 'tiles', f'{tx}_{tz}')
+        _h[k] = np.frombuffer(tilefmt.read_bytes(f, 'height.bin'), np.float32).reshape(HN, HN) if os.path.isdir(f) else None
     return _h[k]
 def ground(x, z):
     tx, tz = math.floor((x + TT / 2) / TT), math.floor((z + TT / 2) / TT)

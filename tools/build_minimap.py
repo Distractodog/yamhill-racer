@@ -7,11 +7,14 @@ tile.json (roads, trails, buildings). Drawn at 2 m/px, then shrunk to OUT_MPP so
 """
 import json, os
 from pathlib import Path
+import sys
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'tools'))
+import tilefmt                                      # reads packed or plain tile files
 ASSETS = Path(os.environ.get('YR_ASSETS', ROOT / 'game' / 'assets'))
 DRAW_MPP, OUT_MPP = 2.0, 5.0
 ROAD = {  # (fill colour, outline colour, width in metres on the map; a bit wider than real so they read)
@@ -38,13 +41,13 @@ tiles = []
 for tx, tz in world['tiles']:
     d = ASSETS / 'tiles' / f'{tx}_{tz}'
     x0, z0 = tx * T - T / 2, tz * T - T / 2
-    ground = np.asarray(Image.open(d / 'ground.png').convert('RGB').resize((tile_px, tile_px), Image.LANCZOS)).copy()
-    surf = np.fromfile(d / 'surface.bin', np.uint8).reshape(T, T)
+    ground = np.asarray(tilefmt.read_ground(d).resize((tile_px, tile_px), Image.LANCZOS)).copy()
+    surf = np.frombuffer(tilefmt.read_bytes(d, 'surface.bin'), np.uint8).reshape(T, T)
     step = int(DRAW_MPP)
     wet = surf[::step, ::step][:tile_px, :tile_px] == 5            # pond bed
     ground[wet] = WATER
     img.paste(Image.fromarray(ground), (int((x0 - ex0) / DRAW_MPP), int((z0 - ez0) / DRAW_MPP)))
-    tiles.append(json.loads((d / 'tile.json').read_text()))
+    tiles.append(tilefmt.read_json(d))
 
 draw = ImageDraw.Draw(img)
 for tile in tiles:
