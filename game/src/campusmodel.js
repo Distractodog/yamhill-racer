@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { partPts } from './campus.js';
 import { addEntranceDressing } from './campusprops.js';
 import { addCourtyardDressing } from './campuscourt.js';
+import { addCampusPaint } from './campuspaint.js';
 
 const D2R = Math.PI / 180;
 // palette colours are sRGB (as picked from photos); vertex colours are linear
@@ -318,5 +319,5 @@ export function placeCampus(group, lods, geos, building, ground, mat) {
   for (const part of building.parts) for (const p of partPts(part)) { cx += p[0]; cz += p[1]; n++; }
   group.add(near, far);
   lods.push({ near, far, cx: cx / n, cz: cz / n });
-  if (building.name === 'Main Building') { addEntranceDressing(group, ground); addCourtyardDressing(group, ground); }
+  if (building.name === 'Main Building') { addEntranceDressing(group, ground); addCourtyardDressing(group, ground); addCampusPaint(group, ground); }
 }
