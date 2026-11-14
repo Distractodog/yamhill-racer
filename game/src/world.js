@@ -5,6 +5,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileData } from './data.js';
 import { readTileData, fetchReader, groundFile } from './tilepack.js';
 import { roadLOD, roadBatches, buildJunctions } from './roads.js';
+import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
+import { installPerf } from './perf.js';
 import { buildCampusGeometry } from './campusmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
@@ -14,6 +16,7 @@ const LOAD_R = 1300, DROP_R = 2600, FRAME_BUDGET_MS = 5;
 const AHEAD_S = 5, AHEAD_MAX = 1200;     // look-ahead loading at speed (AHEAD_MAX + LOAD_R stays inside DROP_R)
 
 export async function loadWorld(renderer, onProgress = () => {}) {
+  const notePerf = installPerf(renderer);
   const base = 'assets/';
   const W = await fetch(base + 'world.json').then(r => r.json());
   const world = makeWorld(W);
@@ -144,7 +147,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       out.chunks.push({ levels, cx: td.x0 + (j0 + j1) / 2 * HS, cz: td.z0 + (i0 + i1) / 2 * HS, lv: -1 });
     }
     // road / trail strips
-    for (const batch of roadBatches(td.renderRoads)) { g.add(roadLOD(td, stripMat, batch)); yield 'roads'; }   // near + far versions
+    for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) { g.add(placeRoadBlock(td, stripMat, batch, roadLOD)); yield 'roads'; }   // one near + far pair per block
     for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
     // ponds: a flat quad per height cell inside a pond
     const wpos = [];
@@ -318,6 +321,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         l.near.visible = near; l.far.visible = !near;
       }
     }
+    notePerf();
   }
 
   return Object.assign(world, { group, updateLOD, updateShadows, tick(t) { waterUniforms.time.value = t; },
