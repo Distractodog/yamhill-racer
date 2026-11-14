@@ -11,7 +11,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
   options[key] = process.argv[i + 1];
 }
 await mkdir(options.out, { recursive: true });
-const report = { phases: [], pageErrors: [], status: 'running', visualReview: 'NOT REVIEWED', ownerFlight: 'NOT VERIFIED' };
+const report = { phases: [], pageErrors: [], consoleErrors: [], status: 'running', visualReview: 'NOT REVIEWED', ownerFlight: 'NOT VERIFIED' };
 let browser, page;
 const save = () => writeFile(join(options.out, 'jet-visual-report.json'), JSON.stringify(report, null, 2));
 try {
@@ -19,11 +19,22 @@ try {
     headless: true, args: ['--window-size=1280,760', '--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal', '--disable-background-timer-throttling'] });
   page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760 });
   page.on('pageerror', e => { report.pageErrors.push(e.message); console.error('PAGE ERROR', e.message); });
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    const text = message.text(), location = message.location();
+    // Ignore only the browser's missing favicon request, never a shader/application error.
+    let favicon404 = false;
+    try { favicon404 = new URL(location.url).pathname === '/favicon.ico' && /^Failed to load resource:.*404/.test(text); } catch {}
+    if (favicon404) return;
+    report.consoleErrors.push({ text, url: location.url || '', line: location.lineNumber ?? null });
+    console.error('BROWSER CONSOLE ERROR', text);
+  });
+
   await page.evaluateOnNewDocument(() => { localStorage.setItem('yr-welcome-hidden-1', '1'); Object.defineProperty(navigator, 'getGamepads', { value: () => [] }); });
   await page.goto(options.url, { waitUntil: 'load' });
   await page.waitForFunction(() => window.game && game.world.pendingTiles() === 0, { timeout: 120000 });
   await page.evaluate(() => {
-    const g = window.game; g.vehicles.switchTo('jet'); g.setCam(0);
+    const g = window.game; g.renderer.debug.checkShaderErrors = true; g.vehicles.switchTo('jet'); g.setCam(0);
     const j = g.vehicles.jet, original = j.step;
     window.jetVisual = { phase: '', elapsed: 0, original, frames: [], state: () => ({ mode: j.mode, speedKmh: j.vel.length() * 3.6,
       bank: j.bank, stall: j.stall, agl: j.agl, surface: game.world.surfaceAt(j.pos.x, j.pos.z), pos: j.pos.toArray(), quaternion: j.quat.toArray(), message: j.msg }) };
@@ -121,7 +132,7 @@ try {
     await page.evaluate(() => { jetVisual.phase = ''; jetVisual.frames = []; jetVisual.last = null; });
     await capture('07-respawn', null, () => game.vehicles.jet.mode !== 'crashed', 30000);
   } else report.phases.push({ phase: '07-respawn', status: 'blocked', error: 'Crash phase did not capture a wreck' });
-  report.status = report.pageErrors.length || report.phases.some(p => p.status !== 'captured') ? 'failed' : 'captured-awaiting-visual-review';
+  report.status = report.pageErrors.length || report.consoleErrors.length || report.phases.some(p => p.status !== 'captured') ? 'failed' : 'captured-awaiting-visual-review';
 } catch (e) {
   report.status = 'blocked'; report.error = e.message; console.error('BLOCKED:', e.message);
 } finally {
@@ -129,5 +140,5 @@ try {
   await browser?.close(); await save();
 }
 console.table(report.phases.map(p => ({ phase: p.phase, status: p.status, fps: p.metrics?.fps?.toFixed(1), slowFrames: p.metrics?.slowFrames, screenshot: p.screenshot || 'none' })));
-console.log(`Page errors: ${report.pageErrors.length}; status: ${report.status}. Screenshots require visual review; owner flight remains unverified.`);
+console.log(`Page errors: ${report.pageErrors.length}; console errors: ${report.consoleErrors.length}; status: ${report.status}. Screenshots require visual review; owner flight remains unverified.`);
 if (report.status !== 'captured-awaiting-visual-review') process.exitCode = 1;
