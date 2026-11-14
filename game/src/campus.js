@@ -30,6 +30,7 @@ const add = (p, ...t) => { const r = [p[0], p[1]]; for (let i = 0; i < t.length;
 const DEPTH = 20.2;                    // the south range is a double-loaded corridor ~20 m deep
 const A0 = add(V[1], U, 13.2);         // east face of the west end wing
 const frontC = [(V[3][0] + V[4][0]) / 2, (V[3][1] + V[4][1]) / 2];
+export const ENTRANCE = { at: frontC, N, U };
 const brickWin = (rows, extra = {}) => ({ rows, sh: 3.6, sill: 1.0, w: 1.4, h: 2.1, every: 3.3, color: GLASS, margin: 1.6, below: true, ...extra });
 const ribbon = (rows, extra = {}) => ({ rows, sh: 3.4, sill: 1.0, w: 2.7, h: 1.5, every: 3.1, color: GLASS_L, margin: 1.2, below: true, ...extra });
 const flat = (color = ROOF_W, parapet = 0.9, trim = STONE) => ({ type: 'flat', color, parapet, trim });
@@ -45,7 +46,7 @@ const MAIN = {
       win: brickWin(4, { bays: { face: N, groups: [2, 2], anchor: frontC, span: 18, sill: STONE } }) },
     // centre block, stepped forward 6 m: the entrance + tower
     { name: 'centre', pts: [V[3], V[4], add(V[5], N, -DEPTH), add(V[2], N, -DEPTH)], h: 16.6, wall: BRICK, roof: flat(), win: brickWin(4),
-      doors: [{ edge: 0, t: 0.5, w: 3.2, h: 3.4, color: DOOR, frame: { w: 7.0, h: 5.6, color: STONE } }] },
+      doors: [{ edge: 0, t: 0.5, w: 1.15, h: 3.2, leaves: 2, color: [0.16, 0.17, 0.18], frame: { w: 3.6, h: 4.2, color: STONE }, sign: true }] },
     { name: 'tower', rect: { c: add(frontC, N, -2.6), L: 7.4, W: 6.4, a: -28 }, h: 26.5, wall: BRICK, roof: flat(ROOF_W, 0.6), win: null,
       boxes: [   // stone shaft, six small openings (2 by 3) near the top, then a stepped cap and coping
         { c: add(frontC, N, 0.85), L: 3.6, W: 0.5, a: -28, y0: 3.6, y1: 26.4, color: STONE },
@@ -87,8 +88,25 @@ const hipHouse = (name, osmC, parts) => ({
     win: { rows: 1, sh: 3, sill: 0.9, w: 1.3, h: 1.3, every: 3.6, color: GLASS, margin: 1.4 }, ...p })),
 });
 
+const step = (name, c, L, W, h, color) => ({ name, rect: { c, L, W, a: -28 }, h, wall: color, roof: { type: 'flat', color, parapet: 0 }, win: null });
+const CONCRETE = [0.78, 0.78, 0.75];
 export const CAMPUS = [
   MAIN,
+  // Upper flight and cheeks are solid. The lower tread is the same low wall. The plaza itself is not a wall.
+  { name: 'Entrance steps', osm: [], floorAt: add(frontC, N, 2.0), dy: 0.02,
+    parts: [
+      step('upper', add(frontC, N, 1.5), 6.4, 2.2, 0.72, STONE),
+      step('lower', add(frontC, N, 3.3), 7.2, 1.6, 0.34, CONCRETE),
+      step('cheek west', add(frontC, U, -3.6, N, 2.3), 0.4, 4.0, 0.55, STONE),
+      step('cheek east', add(frontC, U, 3.6, N, 2.3), 0.4, 4.0, 0.55, STONE),
+    ] },
+  { name: 'Entrance flags', osm: [], floorAt: add(frontC, N, 9, U, -5), dy: 0,
+    parts: [
+      { ...step('flag west', add(frontC, N, 9.2, U, -5.2), 0.22, 0.22, 7.2, [0.72, 0.73, 0.75]),
+        boxes: [{ c: add(frontC, N, 9.2, U, -4.5), L: 1.5, W: 0.05, a: -28, y0: 5.6, y1: 6.7, color: [0.70, 0.16, 0.18] }] },
+      { ...step('flag east', add(frontC, N, 9.2, U, 5.2), 0.22, 0.22, 7.2, [0.72, 0.73, 0.75]),
+        boxes: [{ c: add(frontC, N, 9.2, U, 4.5), L: 1.5, W: 0.05, a: -28, y0: 5.6, y1: 6.7, color: [0.15, 0.28, 0.62] }] },
+    ] },
   // Kitchen: one storey from the uphill courtyard; the downhill ground exposes the lower floor.
   // Its own floor/physics height avoids inheriting the main building's much higher floor and tower roof.
   { name: 'Back kitchen', osm: [], floorAt: add(V[12], U, 24, N, 1), dy: 0.2,
