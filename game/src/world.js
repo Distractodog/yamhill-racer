@@ -211,7 +211,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       for (const [x, z] of b.pts) { const h = td.terrainAt(x, z); lo = Math.min(lo, h); hi = Math.max(hi, h); }
       const plan = planFootprint(b, roads);
       const meshes = footprintMeshes(plan, td.terrainAt);
-      b.lo = lo; b.top = hi + (b.h || 6);
+      b.lo = lo; b.top = hi + (b.h || 6);   // collision keeps the footprint height so drive times stay put
       if (meshes) {
         const block = blockOf(plan);
         let cell = cells.get(block.key);
