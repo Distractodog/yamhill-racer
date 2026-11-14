@@ -13,7 +13,8 @@ parser.add_argument('--repo',type=Path,default=Path(__file__).resolve().parents[
 parser.add_argument('--fixtures',type=Path)
 parser.add_argument('--assets',type=Path)
 parser.add_argument('--report',type=Path)
-args=parser.parse_args()
+args = (parser.parse_args() if __name__ == '__main__' else
+        argparse.Namespace(repo=Path(__file__).resolve().parents[1], fixtures=None, assets=None, report=None))
 spec=importlib.util.spec_from_file_location('codec',args.repo/'tools/heightcodec_v3.py')
 codec=importlib.util.module_from_spec(spec);spec.loader.exec_module(codec)
 

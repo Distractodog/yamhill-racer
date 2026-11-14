@@ -1,24 +1,20 @@
-"""Tile file formats, shared by build_tiles.py, pack_tiles.py, verify_pack.py and the tools that read built tiles.
+"""Shared tile I/O: read legacy plain/v1/v2 tiles and write packed v3.
 
-Unpacked (world.json without "packed"): height.bin, surface.bin, ponds.bin, trees.bin, tile.json, ground.png.
-
-Packed (world.json "packed": 2), arrays byte-identical once unpacked:
-  height.bin.gz   gzip of height.bin with its float32 bytes split into 4 planes (all 1st bytes, then all 2nd, ...);
-                  game/src/tilepack.js puts them back. Same floats, ~30% smaller than plain gzip.
-  surface.bin.gz  gzip of surface.bin
-  ponds.bin.gz    gzip of ponds.bin
-  tile.json.gz    gzip of tile.json (same bytes inside)
-  trees.bin.gz    gzip of trees.bin with the same lossless 4-byte-plane shuffle as heights
-Version 1 remains readable: it stores trees.bin uncompressed; all other files are unchanged.
-  ground.jpg      ground colours, JPEG quality 90, full colour resolution (4:4:4), sRGB like the PNG
-gzip is written with mtime 0, so the same input always gives the same file (no git churn on rebuilds).
-GitHub Pages serves .gz as plain bytes (no Content-Encoding): the game unpacks them itself.
+V3 heights use H3Q0 prediction/2 cm quantization with strict-error corrections;
+trees use TRV3 local coordinate planes with exact heights/types/render buckets.
+Surface and pond rasters remain byte-identical gzip; geometry is compact JSON;
+ground.webp keeps full RGB dimensions. See the individual codec modules.
+Gzip level 9 and mtime zero make identical inputs byte reproducible.
 """
 import gzip, io, json, os
 import numpy as np
 from PIL import Image
+from heightcodec_v3 import encode as encode_heights, decode as decode_heights, MAGIC as HEIGHT_MAGIC
+from treecodec_v3 import encode_trees, decode_trees, MAGIC as TREE_MAGIC
+from imagecodec_v3 import encode_ground
+from jsoncodec_v3 import encode as encode_geometry
 
-PACKED = 2
+PACKED = 3
 GZ = ('height.bin', 'surface.bin', 'ponds.bin', 'tile.json', 'trees.bin')      # gzipped in packed tiles
 JPEG_Q = 90
 
@@ -40,13 +36,19 @@ def write_bytes(out, name, raw, packed=True):
     if not packed or name not in GZ:
         with open(os.path.join(out, name), 'wb') as f: f.write(raw)
         return
+    if name == 'height.bin': raw = encode_heights(raw)
+    elif name == 'trees.bin':
+        tx, tz = map(int, os.path.basename(os.path.normpath(out)).split('_'))
+        raw = encode_trees(raw, tx, tz)
+    elif name == 'tile.json': raw = encode_geometry(json.loads(raw))
     with open(os.path.join(out, name + '.gz'), 'wb') as f:
-        f.write(gz(shuffle4(raw) if name in ('height.bin', 'trees.bin') else raw))
+        f.write(gz(raw))
 
 
 def write_ground(out, img, packed=True):
     """img: PIL RGB image (2048^2)."""
-    if packed: img.save(os.path.join(out, 'ground.jpg'), 'JPEG', quality=JPEG_Q, subsampling=0, optimize=True)
+    if packed:
+        with open(os.path.join(out, 'ground.webp'), 'wb') as f: f.write(encode_ground(img))
     else: img.save(os.path.join(out, 'ground.png'))
 
 
@@ -59,7 +61,9 @@ def read_bytes(tile_dir, name):
     p = os.path.join(tile_dir, name)
     if name in GZ and not os.path.exists(p) and os.path.exists(p + '.gz'):
         with open(p + '.gz', 'rb') as f: b = gzip.decompress(f.read())
-        return unshuffle4(b) if name in ('height.bin', 'trees.bin') else b
+        if name == 'height.bin': return decode_heights(b) if b.startswith(HEIGHT_MAGIC) else unshuffle4(b)
+        if name == 'trees.bin': return decode_trees(b) if b.startswith(TREE_MAGIC) else unshuffle4(b)
+        return b
     with open(p, 'rb') as f: return f.read()
 
 
@@ -68,5 +72,7 @@ def read_json(tile_dir):
 
 
 def read_ground(tile_dir):
+    webp = os.path.join(tile_dir, 'ground.webp')
+    if os.path.exists(webp): return Image.open(webp).convert('RGB')
     p = os.path.join(tile_dir, 'ground.jpg')
     return Image.open(p if os.path.exists(p) else os.path.join(tile_dir, 'ground.png')).convert('RGB')

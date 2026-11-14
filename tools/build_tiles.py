@@ -11,7 +11,8 @@ Per tile, game/assets/tiles/<tx>_<tz>/:
   height.bin    float32 (HN+2*HM)^2 heights on a 4 m grid: the tile's 501^2 vertices plus HM vertices of margin
   surface.bin   uint8 2000^2 surface classes at 1 m (0 grass, 1 forest floor, 5 pond bed, 6 building pad, 7 track)
   ground.png    2048^2 stylised ground colours
-  (written packed by default — height.bin.gz, surface.bin.gz, ponds.bin.gz, tile.json.gz, ground.jpg, see tilefmt.py;
+  (written packed by default — height.bin.gz, surface.bin.gz, ponds.bin.gz, tile.json.gz, trees.bin.gz, ground.webp, see tilefmt.py;
+   v3 quantizes heights within 1 cm and tree positions within 2 cm, preserving raster bytes;
    YR_PACK=0 writes the plain files above)
   trees.bin     float32 [x, z, height, broadleaf] per tree
   tile.json     buildings, road/trail strips (render + physics pieces), ponds
