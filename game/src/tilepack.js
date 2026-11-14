@@ -1,5 +1,6 @@
 // Published tiles use only packed v3; Python tooling retains legacy conversion readers.
 import { decodeHeightsV3 } from './heightcodec_v3.js';
+import { decodeGeometry } from './geometrycodec_v3.js';
 import { decodeTrees } from './treecodec_v3.js';
 
 export async function gunzip(buf) {
@@ -18,7 +19,7 @@ export async function readTileData(read, packed) {
   const names = ['height.bin.gz', 'surface.bin.gz', 'trees.bin.gz', 'ponds.bin.gz', 'tile.json.gz'];
   const [height, sbuf, trees, pbuf, json] = await Promise.all(names.map(async name => gunzip(await read(name))));
   return { hbuf: decodeHeightsV3(height), sbuf, tbuf: decodeTrees(trees), pbuf,
-    tile: JSON.parse(new TextDecoder().decode(json)) };
+    tile: decodeGeometry(JSON.parse(new TextDecoder().decode(json))) };
 }
 
 // the game's reader: fetch from a tile folder URL

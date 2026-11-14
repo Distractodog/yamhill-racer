@@ -1,3 +1,4 @@
+import { decodeGeometry } from '../game/src/geometrycodec_v3.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
@@ -20,7 +21,7 @@ await detail.ready;detail.update([-500,-500,500,500],.1);assert.equal(loads,0,'o
 detail.update([-1000,-1000,7000,7000],1);await settle();assert.equal(detail.stats.pending,0);assert(maxActive<=MAP_DETAIL_LIMITS.concurrent);assert.equal(detail.stats.cached,20);
 detail.update([11000,11000,19000,19000],2);await settle();assert(detail.stats.cached<=20);assert(detail.stats.cached>0);
 const n=loads;detail.update([11000,11000,19000,19000],2);await new Promise(r=>setTimeout(r,10));assert.equal(loads,n,'cache must avoid refetches');detail.dispose();assert.equal(detail.stats.cached,0);
-const data=JSON.parse(zlib.gunzipSync(fs.readFileSync('game/assets/tiles/0_0/tile.json.gz')));const t=performance.now(),tile=prepareMapTile(data);const before=data.paths.reduce((n,p)=>n+p.pts.length,0),after=tile.roads.reduce((n,p)=>n+p.pts.length,0);
+const data=decodeGeometry(JSON.parse(zlib.gunzipSync(fs.readFileSync('game/assets/tiles/0_0/tile.json.gz'))));const t=performance.now(),tile=prepareMapTile(data);const before=data.paths.reduce((n,p)=>n+p.pts.length,0),after=tile.roads.reduce((n,p)=>n+p.pts.length,0);
 assert(after<before);assert(tile.roads.every(r=>r.pts.length>=2&&r.fine.length>=r.pts.length));
 const high=tile.roads.reduce((n,r)=>n+r.fine.length,0);assert(high<before);
 console.log(`PASS: zoom detail levels, bounded visible tiles, line simplification, no fabricated names, overview no-fetch, concurrency ${maxActive}, LRU cache, real campus paths ${before}→${after} points (${Math.round(performance.now()-t)} ms).`);

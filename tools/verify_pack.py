@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import struct
 import numpy as np
 import tilefmt
 
@@ -34,6 +35,20 @@ def delta(a, b, label, bound=.01):
     error = float(np.abs(a-b).max(initial=0))
     require(error <= bound, f'{label} error {error:.12g} exceeds {bound}')
     return error
+
+
+def exact_geometry(a, b, path='geometry'):
+    """Compare decoded JSON values, including IEEE negative zero and booleans."""
+    if isinstance(a,dict):
+        require(isinstance(b,dict) and a.keys()==b.keys(),path+' exact keys differ')
+        for key in a:exact_geometry(a[key],b[key],path+'.'+key)
+    elif isinstance(a,list):
+        require(isinstance(b,list) and len(a)==len(b),path+' exact list differs')
+        for i,(x,y) in enumerate(zip(a,b)):exact_geometry(x,y,path+f'[{i}]')
+    elif type(a) in (int,float):
+        require(type(b) in (int,float) and a==b and struct.pack('<d',float(a))==struct.pack('<d',float(b)),path+' exact number differs')
+    else:
+        require(type(a)==type(b) and a==b,path+' exact value differs')
 
 
 def geometry(a, b):
@@ -77,12 +92,22 @@ def geometry(a, b):
 
 def check_receipt(source, destination, files):
     receipt = json.loads((destination/'v3.json').read_text())
-    require(set(receipt) == {'version','source','files'} and receipt['version'] == 3, 'invalid v3 receipt schema')
+    require(isinstance(receipt,dict) and set(receipt) in ({'version','source','files'},{'version','source','files','profiles'}) and receipt.get('version') == 3, 'invalid v3 receipt schema')
     require(isinstance(receipt['files'],dict) and set(receipt['files']) == files, 'invalid v3 receipt file set')
     def digest(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
     require(receipt['source'] == {p.name:digest(p) for p in source.iterdir() if p.is_file()}, 'v3 receipt source checksums differ')
     require(receipt['files'] == {name:digest(destination/name) for name in files}, 'v3 receipt destination checksums differ')
+    if 'profiles' in receipt:
+        profiles=receipt['profiles']
+        require(isinstance(profiles,dict) and set(profiles)==files,'invalid v3 receipt profiles schema')
+        for name,profile in profiles.items():
+            require(isinstance(profile,dict) and set(profile)=={'codec','source'},'invalid v3 receipt profile schema')
+            codec=profile['codec']
+            require(isinstance(codec,str) and (codec=='legacy-unrecorded' or (len(codec)==64 and all(c in '0123456789abcdef' for c in codec))),'invalid v3 receipt codec profile')
+            original=('ground.jpg' if 'ground.jpg' in receipt['source'] else 'ground.png') if name=='ground.webp' else (name if name in receipt['source'] else name.removesuffix('.gz'))
+            require(profile['source']==receipt['source'].get(original),'v3 receipt profile source checksum differs')
+
 
 
 def sizes(root, exclude_baseline=False):
@@ -112,7 +137,7 @@ def verify(src, dst, only=()):
     version = world.get('packed')
     require(version in (1,2,3), 'world.json must specify supported packed version 1, 2 or 3')
     tiles = [tuple(map(int,t.split(','))) for t in only] if only else [tuple(t) for t in world['tiles']]
-    errors=[]; maxima={};edges={};means=[];trees_count=0;seams=0
+    errors=[]; maxima={};edges={};means=[];trees_count=0;seams=0;exact_trees=0;exact_json=0;exact_heights=0
     def record(label,error):
         message=str(error).replace(str(src),'SOURCE').replace(str(dst),'DESTINATION')
         errors.append({'location':label,'error':message})
@@ -143,6 +168,10 @@ def verify(src, dst, only=()):
                     require(gzip.decompress((d/name).read_bytes()).startswith(magic),name+' is not v3')
                 ah=np.frombuffer(tilefmt.read_bytes(s,'height.bin'),'<f4');bh=np.frombuffer(tilefmt.read_bytes(d,'height.bin'),'<f4')
                 err=delta(ah,bh,'heights');maxima['height_error']=max(maxima.get('height_error',0),err)
+                height_payload=gzip.decompress((d/'height.bin.gz').read_bytes())
+                if len(height_payload)>=16 and struct.unpack_from('<H',height_payload,6)[0]==8:
+                    require(ah.tobytes()==bh.tobytes(),'exact height sample bits differ')
+                    exact_heights+=1
                 side=world['hn']+2*world['hm'];require(bh.size==side*side,'height grid size')
                 h=bh.reshape(side,side);lo=world['hm'];hi=lo+world['hn']-1
                 edges[(tx,tz)]=[h[lo:hi+1,lo].copy(),h[lo:hi+1,hi].copy(),h[lo,lo:hi+1].copy(),h[hi,lo:hi+1].copy()]
@@ -155,9 +184,17 @@ def verify(src, dst, only=()):
                 require(radial<=.02,f'tree radial error {radial:.12g} exceeds 0.02')
                 origin=np.array([tx*world['tile']-world['tile']/2,tz*world['tile']-world['tile']/2])
                 require(np.array_equal(np.floor((a[:,:2].astype(float)-origin)/250),np.floor((b[:,:2].astype(float)-origin)/250)),'tree render bucket/order differs')
+                tree_payload=gzip.decompress((d/'trees.bin.gz').read_bytes())
+                if len(tree_payload)>=20 and struct.unpack_from('<I',tree_payload,16)[0]==0xffffffff:
+                    require(a.tobytes()==b.tobytes(),'exact tree record bits differ')
+                    exact_trees+=1
                 maxima['tree_radial_error']=max(maxima.get('tree_radial_error',0),radial);trees_count+=len(a)
                 aj=json.loads(tilefmt.read_bytes(s,'tile.json'));bj=json.loads(tilefmt.read_bytes(d,'tile.json'))
                 for key,value in geometry(aj,bj).items():maxima[key]=max(maxima.get(key,0),value)
+                stored_json=json.loads(gzip.decompress((d/'tile.json.gz').read_bytes()))
+                if isinstance(stored_json,dict) and stored_json.get('format')=='G3E1':
+                    exact_geometry(aj,bj)
+                    exact_json+=1
                 print(f'tile {tx},{tz}: v3 PASS height {err:.8f}, trees {radial:.8f}',flush=True)
             a=np.asarray(tilefmt.read_ground(s),np.int16);b=np.asarray(tilefmt.read_ground(d),np.int16)
             require(a.shape==b.shape,'ground image shape differs');means.append(float(np.abs(a-b).mean()))
@@ -175,7 +212,7 @@ def verify(src, dst, only=()):
     total_before,total_after=sum(before.values()),sum(after.values());print(f'TOTAL | {total_before} | {total_after} | {total_before-total_after}')
     if version == 3 and not only and total_after > 450_000_000:
         record('asset size',f'{total_after} bytes exceeds 450000000 byte limit')
-    report={'version':version,'tiles_checked':len(tiles),'tree_count':trees_count,'shared_core_seams_checked':seams,'max_errors':maxima,'ground_mean_absolute_channel_error':float(np.mean(means)) if means else None,'size_table':table,'total_before_bytes':total_before,'total_after_bytes':total_after,'size_limit_bytes':450_000_000 if version == 3 and not only else None,'errors':errors,'passed':not errors}
+    report={'version':version,'tiles_checked':len(tiles),'tree_count':trees_count,'exact_height_tiles_checked':exact_heights,'exact_tree_tiles_checked':exact_trees,'exact_geometry_tiles_checked':exact_json,'shared_core_seams_checked':seams,'max_errors':maxima,'ground_mean_absolute_channel_error':float(np.mean(means)) if means else None,'size_table':table,'total_before_bytes':total_before,'total_after_bytes':total_after,'size_limit_bytes':450_000_000 if version == 3 and not only else None,'errors':errors,'passed':not errors}
     print(f'{len(tiles)} tiles checked, {len(errors)} failures')
     return report
 

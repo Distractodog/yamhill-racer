@@ -1,30 +1,37 @@
+import copy
 import json
+import math
 import unittest
-from jsoncodec_v3 import encode
+from jsoncodec_v3 import encode,decode,decode_bytes
+
+
+def fixture():
+    road={'pts':[[1.23,-2.34],[8.9,4.5]],'w':17,'kind':'asphalt','yc':[[10.005,-0.0],[11.004,-.0084]]}
+    return {'paths':[road,road],'physPaths':[road],'ponds':{'3':10.123456789},
+            'junctions':[{'c':[1.23,2.34,10.005],'ring':[[1.2,2.3,9.994,1]]}],
+            'buildings':[{'pts':[[1.2,2.3]],'h':5.0051234}]}
 
 
 class GeometryTest(unittest.TestCase):
-    def test_geometry_and_overlay_bound(self):
-        road = {'pts': [[1.23, -2.34], [8.9, 4.5]], 'w': 17, 'kind': 'asphalt',
-                'yc': [[10.005, .0125], [11.004, -.0084]], 'stop': [True, False]}
-        tile = {'paths': [road], 'physPaths': [road], 'ponds': {'3': 10.123},
-                'junctions': [{'c': [1.23, 2.34, 10.005], 'ring': [[1.2, 2.3, 9.994, 1]]}],
-                'buildings': [{'pts': [[1.2, 2.3]], 'h': 5.005}]}
-        result = json.loads(encode(tile))
-        self.assertEqual(result['ponds'], tile['ponds'])
-        self.assertEqual(result['paths'][0]['stop'], [True, False])
-        self.assertEqual(result['paths'][0]['pts'], road['pts'])
-        for (y, c), (yy, cc) in zip(road['yc'], result['paths'][0]['yc']):
-            for cross in (-8.5, 0, 8.5):
-                self.assertLessEqual(abs(y+c*cross-yy-cc*cross), .01)
-        self.assertEqual(encode(tile), encode(tile))
-        self.assertNotIn(b' ', encode(tile))
-        self.assertEqual(road['yc'][0], [10.005, .0125])
+    def test_exact_and_independent(self):
+        source=fixture();raw=encode(source);wrapper=json.loads(raw);result=json.loads(decode_bytes(raw))
+        self.assertEqual(result,source);self.assertEqual(len(wrapper['roads']),1)
+        self.assertEqual(math.copysign(1,result['paths'][0]['yc'][0][1]),-1)
+        result['paths'][0]['pts'][0][0]=999
+        self.assertEqual(result['physPaths'][0]['pts'][0][0],1.23)
+        self.assertEqual(result['paths'][1]['pts'][0][0],1.23)
+        self.assertEqual(raw,encode(source))
+    def test_precision_fallback_and_legacy(self):
+        source=fixture();source['paths'][0]['pts'][0][0]=1.23456789123
+        source['paths'][0]['yc'][0][0]=9.1234567890123
+        self.assertEqual(decode(json.loads(encode(source))),source)
+        raw=b'{ "paths": [], "negative": -0.0 }\n'
+        self.assertIs(decode_bytes(raw),raw)
+    def test_bad_matrix_and_refs(self):
+        w=json.loads(encode(fixture()))
+        for change in [lambda x:x['tile']['paths'].update({'$p':[-1]}),lambda x:x['tile']['paths'].update({'$p':[99]}),lambda x:x['tile']['paths'].update({'$p':[True]}),lambda x:x['roads'][0].update({'pts':{'$d':[[100,100],[1],[]]}}),lambda x:x['roads'][0].update({'pts':{'$d':[[1,1],[1,2],[]]}}),lambda x:x['roads'][0].update({'pts':{'$d':[[100,100],[0,0],[0,0]]}}),lambda x:x['roads'][0].update({'pts':{'$d':[[100,100],[1,0],[0]]}}),lambda x:x['roads'][0].update({'pts':[[1]]}),lambda x:x.update({'extra':1})]:
+            bad=copy.deepcopy(w);change(bad)
+            with self.assertRaises(ValueError):decode(bad)
 
-    def test_wide_future_road_preserves_precision(self):
-        road = {'pts': [], 'w': 100, 'yc': [[1.005, .0005]]}
-        self.assertEqual(json.loads(encode({'paths': [road]}))['paths'][0]['yc'], road['yc'])
 
-
-if __name__ == '__main__':
-    unittest.main()
+if __name__=='__main__':unittest.main()

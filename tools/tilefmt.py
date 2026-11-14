@@ -1,8 +1,8 @@
 """Shared tile I/O: read legacy plain/v1/v2 tiles and write packed v3.
 
-V3 heights use H3Q0 prediction/2 cm quantization with strict-error corrections;
-trees use TRV3 local coordinate planes with exact heights/types/render buckets.
-Surface and pond rasters remain byte-identical gzip; geometry is compact JSON;
+V3 heights use lossless H3Q0 flag8 float-bit prediction; trees use exact
+TRV3 coordinate/height byte planes. Legacy v3 quantized payloads remain readable.
+Surface and pond rasters remain byte-identical gzip; geometry uses lossless G3E1 JSON;
 ground.webp keeps full RGB dimensions. See the individual codec modules.
 Gzip level 9 and mtime zero make identical inputs byte reproducible.
 """
@@ -12,7 +12,7 @@ from PIL import Image
 from heightcodec_v3 import encode as encode_heights, decode as decode_heights, MAGIC as HEIGHT_MAGIC
 from treecodec_v3 import encode_trees, decode_trees, MAGIC as TREE_MAGIC
 from imagecodec_v3 import encode_ground
-from jsoncodec_v3 import encode as encode_geometry
+from jsoncodec_v3 import encode as encode_geometry, decode_bytes as decode_geometry
 
 PACKED = 3
 GZ = ('height.bin', 'surface.bin', 'ponds.bin', 'tile.json', 'trees.bin')      # gzipped in packed tiles
@@ -63,6 +63,7 @@ def read_bytes(tile_dir, name):
         with open(p + '.gz', 'rb') as f: b = gzip.decompress(f.read())
         if name == 'height.bin': return decode_heights(b) if b.startswith(HEIGHT_MAGIC) else unshuffle4(b)
         if name == 'trees.bin': return decode_trees(b) if b.startswith(TREE_MAGIC) else unshuffle4(b)
+        if name == 'tile.json': return decode_geometry(b)
         return b
     with open(p, 'rb') as f: return f.read()
 

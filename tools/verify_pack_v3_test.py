@@ -64,7 +64,9 @@ class VerifyV3Test(unittest.TestCase):
 
     def test_height_error_and_seams(self):
         self.write(0,'height.bin',np.full((5,5),100.05,dtype='<f4').tobytes());self.fails('heights error')
-        self.write(0,'height.bin',np.full((5,5),100.001,dtype='<f4').tobytes());self.fails('height seams')
+        import struct
+        legacy=struct.pack('<4sHHfI',b'H3Q0',5,0,100.001,0)+bytes(50)
+        (self.dst/'tiles/0_0/height.bin.gz').write_bytes(gzip.compress(legacy,mtime=0));self.fails('height seams')
 
     def test_tree_position_height_type_and_bucket(self):
         original=np.frombuffer(self.raw[0]['trees.bin'],'<f4').reshape(-1,4)
@@ -95,6 +97,60 @@ class VerifyV3Test(unittest.TestCase):
         (self.dst/'tiles/0_0/tile.json.gz').write_bytes(gzip.compress(json.dumps(tile).encode(),mtime=0))
         self.fails('physPaths coordinates')
 
+    def test_exact_height_subtype_rejects_tiny_error(self):
+        # Decoder implementation is tested separately. Mark this fixture as
+        # flag8 and supply its decoded bytes to isolate verifier policy now.
+        import struct
+        path=self.dst/'tiles/0_0/height.bin.gz'
+        payload=bytearray(gzip.decompress(path.read_bytes()));struct.pack_into('<H',payload,6,8)
+        path.write_bytes(gzip.compress(payload,mtime=0))
+        reader=tilefmt.read_bytes
+        original=self.raw[0]['height.bin']
+        def checked(raw):
+            def read(folder,name):
+                if Path(folder)==path.parent and name=='height.bin':return raw
+                return reader(folder,name)
+            return read
+        with patch.object(tilefmt,'read_bytes',side_effect=checked(original)):
+            r=self.report();self.assertTrue(r['passed']);self.assertEqual(r['exact_height_tiles_checked'],2)
+        values=np.frombuffer(original,'<f4').copy();values[0]+=.0001
+        with patch.object(tilefmt,'read_bytes',side_effect=checked(values.tobytes())):
+            self.fails('exact height sample bits')
+        # Plain flag0 fixture remains checked by its quantization/seam bounds.
+        legacy=struct.pack('<4sHHfI',b'H3Q0',5,0,100,0)+bytes(50)
+        path.write_bytes(gzip.compress(legacy,mtime=0))
+        r=self.report();self.assertTrue(r['passed']);self.assertEqual(r['exact_height_tiles_checked'],1)
+
+    def test_exact_tree_subthreshold_and_signed_zero(self):
+        a=np.frombuffer(self.raw[0]['trees.bin'],'<f4').reshape(-1,4).copy()
+        a[0,1]+=.0001
+        self.write(0,'trees.bin',a.tobytes());self.fails('exact tree record bits')
+        a=np.frombuffer(self.raw[0]['trees.bin'],'<f4').reshape(-1,4).copy();a[0,1]=0
+        raw=a.tobytes();self.raw[0]['trees.bin']=raw
+        (self.src/'tiles/0_0/trees.bin.gz').write_bytes(gzip.compress(tilefmt.shuffle4(raw),mtime=0))
+        a[0,1]=-0.0;self.write(0,'trees.bin',a.tobytes());self.fails('exact tree record bits')
+
+    def test_exact_geometry_subthreshold_and_negative_zero(self):
+        original=json.loads(self.raw[0]['tile.json'])
+        changed=copy.deepcopy(original);changed['physPaths'][0]['yc'][0][0]+=.0001
+        self.write(0,'tile.json',json.dumps(changed).encode());self.fails('exact number')
+        original['paths'][0]['yc'][0][1]=-0.0
+        (self.src/'tiles/0_0/tile.json.gz').write_bytes(gzip.compress(json.dumps(original).encode(),mtime=0))
+        self.write(0,'tile.json',json.dumps(original).encode());self.assertTrue(self.report()['passed'])
+        changed=copy.deepcopy(original);changed['paths'][0]['yc'][0][1]=0.0
+        self.write(0,'tile.json',json.dumps(changed).encode());self.fails('exact number')
+
+    def test_exactness_counters_and_legacy_v3_tree(self):
+        r=self.report();self.assertEqual(r['exact_tree_tiles_checked'],2);self.assertEqual(r['exact_geometry_tiles_checked'],2)
+        # Legacy TRV3 remains verifiable under its old tolerance, not falsely
+        # labelled bit-exact. Coordinates here are represented exactly.
+        import struct
+        raw=struct.pack('<4f',0,0,8,0)
+        (self.src/'tiles/0_0/trees.bin.gz').write_bytes(gzip.compress(tilefmt.shuffle4(raw),mtime=0))
+        payload=treecodec_v3.HEADER.pack(b'TRV3',1,0,0,0)+struct.pack('<HH',25000,25000)+b'\0'+struct.pack('<f',8)
+        (self.dst/'tiles/0_0/trees.bin.gz').write_bytes(gzip.compress(payload,mtime=0))
+        r=self.report();self.assertTrue(r['passed']);self.assertEqual(r['exact_tree_tiles_checked'],1)
+
     def test_optional_receipt_checksums(self):
         src=self.src/'tiles/0_0';dst=self.dst/'tiles/0_0'
         sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
@@ -107,6 +163,19 @@ class VerifyV3Test(unittest.TestCase):
         (dst/'v3.json').write_text(json.dumps(receipt));self.fails('source checksums')
         receipt['version']=4
         (dst/'v3.json').write_text(json.dumps(receipt));self.fails('receipt schema')
+
+    def test_receipt_profiles(self):
+        src=self.src/'tiles/0_0';dst=self.dst/'tiles/0_0'
+        sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+        files={p.name:sha(p) for p in dst.iterdir()}
+        source={p.name:sha(p) for p in src.iterdir()}
+        profiles={name:{'codec':'a'*64,'source':source['ground.jpg' if name=='ground.webp' else name]} for name in files}
+        profiles['ground.webp']['codec']='legacy-unrecorded'
+        receipt={'version':3,'source':source,'files':files,'profiles':profiles}
+        def write(r):(dst/'v3.json').write_text(json.dumps(r))
+        write(receipt);self.assertTrue(self.report()['passed'])
+        for mutate,reason in [(lambda r:r['profiles']['height.bin.gz'].update(codec='bad'),'codec profile'),(lambda r:r['profiles']['trees.bin.gz'].update(source='0'*64),'profile source'),(lambda r:r['profiles'].pop('ground.webp'),'profiles schema')]:
+            bad=copy.deepcopy(receipt);mutate(bad);write(bad);self.fails(reason)
 
     def test_baseline_receipt_excluded_only_from_before_size(self):
         before=self.report()

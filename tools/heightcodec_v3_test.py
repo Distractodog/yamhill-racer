@@ -20,7 +20,9 @@ codec=importlib.util.module_from_spec(spec);spec.loader.exec_module(codec)
 
 def cases():
     rng=np.random.default_rng(937)
-    return {'flat':np.full((5,5),-83.125,dtype='<f4'),
+    return {'special_bits':np.array([0,0x80000000,1,0x80000001,0x7f7fffff,0xff7fffff,0x00800000,0x80800000,0x3f800000],dtype='<u4').view('<f4').reshape(3,3),
+            'wide_range':np.array([-10000,50000,1e20,-1e20],dtype='<f4').reshape(2,2),
+            'flat':np.full((5,5),-83.125,dtype='<f4'),
             'singleton':np.array([[0]],dtype='<f4'),
             'negative_ramp':np.arange(81,dtype='<f4').reshape(9,9)*.013-100,
             'modular_checkerboard':(np.indices((8,8)).sum(0)%2*1310.68).astype('<f4'),
@@ -33,7 +35,7 @@ class HeightCodecTest(unittest.TestCase):
         for name,a in cases().items():
             with self.subTest(name=name):
                 payload=codec.encode(a.tobytes());decoded=np.frombuffer(codec.decode(payload),'<f4')
-                self.assertLessEqual(float(np.max(abs(decoded.astype(float)-a.ravel().astype(float)))),.01)
+                self.assertEqual(decoded.tobytes(),a.tobytes())
                 self.assertEqual(payload,codec.encode(a.tobytes()))
                 self.assertEqual(gzip.compress(payload,mtime=0),gzip.compress(payload,mtime=0))
     def test_core_edges_preserved_exactly(self):
@@ -43,16 +45,25 @@ class HeightCodecTest(unittest.TestCase):
         for i in (8,508):
             np.testing.assert_array_equal(d[i,:],a[i,:])
             np.testing.assert_array_equal(d[:,i],a[:,i])
-        self.assertLessEqual(float(np.max(abs(d.astype(float)-a.astype(float)))),.01)
+        self.assertEqual(d.tobytes(),a.tobytes())
 
-    def test_corrections_exercised(self):
-        self.assertGreater(sum(codec.HEADER.unpack_from(codec.encode(a.tobytes()))[-1] for a in cases().values()),0)
+    def test_lossless_headers(self):
+        for a in cases().values():
+            self.assertEqual(codec.HEADER.unpack_from(codec.encode(a.tobytes()))[2:],(8,0.,0))
+
+    def test_legacy_decode(self):
+        payload,expected=legacy_fixture()
+        self.assertEqual(codec.decode(payload),expected)
     def test_invalid_grids(self):
-        for a in [np.array([],dtype='<f4'),np.array([1,2],dtype='<f4'),np.array([np.nan],dtype='<f4'),np.array([np.inf],dtype='<f4'),np.array([0,0,0,1310.8],dtype='<f4')]:
+        for a in [np.array([],dtype='<f4'),np.array([1,2],dtype='<f4'),np.array([np.nan],dtype='<f4'),np.array([np.inf],dtype='<f4')]:
             with self.assertRaises(ValueError):codec.encode(a.tobytes())
     def test_corrupt_payloads(self):
         for p in malformed():
             with self.assertRaises(ValueError):codec.decode(p)
+
+def legacy_fixture():
+    payload=codec.HEADER.pack(b'H3Q0',2,0,100.,1)+struct.pack('<4H',0,2,4,0)+struct.pack('<If',3,123.456)
+    return payload,np.array([100,100.02,100.04,123.456],dtype='<f4').tobytes()
 
 def malformed():
     p=codec.encode(np.arange(4,dtype='<f4').tobytes())
@@ -60,6 +71,10 @@ def malformed():
     q=bytearray(p);struct.pack_into('<H',q,6,1);yield bytes(q)
     q=bytearray(p);struct.pack_into('<H',q,4,0);yield bytes(q)
     q=bytearray(p);struct.pack_into('<f',q,8,float('nan'));yield bytes(q)
+    q=bytearray(p);struct.pack_into('<f',q,8,-0.0);yield bytes(q)
+    q=bytearray(p);struct.pack_into('<f',q,8,1.0);yield bytes(q)
+    yield codec.HEADER.pack(b'H3Q0',1,8,0.,0)+struct.pack('<I',0xff800000)
+    yield codec.HEADER.pack(b'H3Q0',1,0,0.,2)+bytes(2)+struct.pack('<IfIf',0,1.,0,2.)
     for index,value in [(4,0),(0,float('inf'))]:
         q=bytearray(p);struct.pack_into('<I',q,12,1);yield bytes(q)+struct.pack('<If',index,value)
 
@@ -68,6 +83,8 @@ def fixtures(root):
     for name,a in cases().items():
         payload=codec.encode(a.tobytes());(root/(name+'.bin')).write_bytes(payload)
         items.append(dict(name=name,source=a.tobytes().hex(),decoded=codec.decode(payload).hex()))
+    payload,expected=legacy_fixture();(root/'legacy.bin').write_bytes(payload)
+    items.append(dict(name='legacy',source=expected.hex(),decoded=codec.decode(payload).hex()))
     for i,p in enumerate(malformed()):(root/f'bad-{i}.bin').write_bytes(p)
     (root/'cases.json').write_text(json.dumps(items))
 
@@ -80,7 +97,7 @@ def audit(assets):
         a=np.frombuffer(raw,'<f4').reshape(n,n);payload=codec.encode(raw);d=np.frombuffer(codec.decode(payload),'<f4').reshape(n,n)
         return a,d,payload
     for tx,tz in chosen:
-        a,d,payload=read(tx,tz);err=float(np.max(abs(a.astype(float)-d.astype(float))));assert err<=.01
+        a,d,payload=read(tx,tz);err=float(np.max(abs(a.astype(float)-d.astype(float))));assert d.tobytes()==a.tobytes()
         if args.fixtures:
             name=f'real-{tx}_{tz}';(args.fixtures/(name+'.bin')).write_bytes(payload)
             cases_path=args.fixtures/'cases.json';items=json.loads(cases_path.read_text())

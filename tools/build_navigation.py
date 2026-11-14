@@ -2,7 +2,7 @@
 Run after a tile rebuild: python3 tools/build_navigation.py
 Connections follow challenge_routes.py's tile seams and junction pieces.
 """
-import gzip
+import tilefmt
 import json
 import math
 from pathlib import Path
@@ -33,8 +33,7 @@ def simplify(points, heights):
     return sorted(keep)
 for tx, tz in manifest['tiles']:
     folder = assets / 'tiles' / f'{tx}_{tz}'
-    path = folder / 'tile.json'
-    t = json.loads(path.read_bytes() if path.exists() else gzip.decompress((folder / 'tile.json.gz').read_bytes()))
+    t = tilefmt.read_json(folder)
     for road in t['paths']:
         if road['kind'] not in ('asphalt', 'gravel') or len(road['pts']) < 2:
             continue

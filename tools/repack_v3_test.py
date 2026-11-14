@@ -40,7 +40,7 @@ class RepackTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.assets,self.backup,self.scratch=fixture(self.root)
     def tearDown(self):self.temp.cleanup()
-    def run_repack(self,limit=None):return converter.repack(self.assets,self.backup,self.scratch,limit)
+    def run_repack(self,limit=None,refresh=None):return converter.repack(self.assets,self.backup,self.scratch,limit,refresh)
     def test_limit_resume_deterministic_and_backup_unchanged(self):
         original=snapshot(self.assets)
         first=self.run_repack(1);self.assertEqual(first,{'complete':False,'converted':1,'skipped':0})
@@ -71,15 +71,61 @@ class RepackTests(unittest.TestCase):
                 path.write_bytes(old+b'changed')
                 with self.assertRaisesRegex(ValueError,'Immutable backup'):self.run_repack()
                 self.assertEqual(snapshot(self.assets),before);path.write_bytes(old)
-    def test_failed_install_rolls_back_then_resumes(self):
-        original=snapshot(self.assets);rename=Path.rename
-        def fail_install(path,target):
-            if path.parent.name.startswith('tile-v3-') and path.name=='0_0':raise OSError('injected interruption')
-            return rename(path,target)
-        with patch.object(Path,'rename',fail_install):
+    def test_interrupted_file_install_then_resumes(self):
+        replace=converter.os.replace;calls=[]
+        def fail_install(source,target):
+            target=Path(target)
+            if target.parent.resolve()==(self.assets/'tiles/0_0').resolve():
+                calls.append(target.name)
+                if target.name=='trees.bin.gz':raise OSError('injected interruption')
+            return replace(source,target)
+        with patch.object(converter.os,'replace',fail_install):
             with self.assertRaisesRegex(OSError,'injected interruption'):self.run_repack()
-        self.assertEqual(snapshot(self.assets),original)
+        self.assertFalse((self.assets/'tiles/0_0/v3.json').exists())
+        self.assertTrue((self.assets/'tiles/0_0/ground.jpg').exists())
         self.assertTrue(self.run_repack()['complete'])
+        for key in ('0_0','1_0'):converter.verify_receipt(self.assets/'tiles'/key,self.backup/'tiles'/key)
+    def test_selected_refresh_preserves_imagery_and_profiles(self):
+        self.run_repack();before=snapshot(self.assets);profile=converter.codec_profile
+        def changed(name):return 'changed-height-profile' if name=='height.bin.gz' else profile(name)
+        with patch.object(converter,'codec_profile',changed):
+            with patch.object(converter.tilefmt,'write_ground',side_effect=AssertionError('Imagery must be copied')):
+                self.assertEqual(self.run_repack(refresh=['height.bin'])['converted'],2)
+                after=snapshot(self.assets)
+                self.assertEqual(self.run_repack(refresh=['height.bin'])['skipped'],2)
+                self.assertEqual(snapshot(self.assets),after)
+        for key in ('0_0','1_0'):
+            for name in converter.FILES:self.assertEqual(before[f'tiles/{key}/{name}'],after[f'tiles/{key}/{name}'])
+            receipt=json.loads((self.assets/'tiles'/key/'v3.json').read_text())
+            self.assertEqual(receipt['profiles']['height.bin.gz']['codec'],'changed-height-profile')
+    def test_interrupted_refresh_receipt_last(self):
+        self.run_repack();before=snapshot(self.assets);profile=converter.codec_profile;replace=converter.os.replace
+        def changed(name):return 'next-tree-codec' if name=='trees.bin.gz' else profile(name)
+        def stop_receipt(source,target):
+            target=Path(target)
+            if target.parent.resolve()==(self.assets/'tiles/0_0').resolve() and target.name=='v3.json':raise OSError('receipt interruption')
+            return replace(source,target)
+        with patch.object(converter,'codec_profile',changed):
+            with patch.object(converter.os,'replace',stop_receipt):
+                with self.assertRaisesRegex(OSError,'receipt interruption'):self.run_repack(refresh=['trees.bin'])
+            self.assertEqual(snapshot(self.assets)['tiles/0_0/v3.json'],before['tiles/0_0/v3.json'])
+            self.assertEqual(self.run_repack(refresh=['trees.bin'])['converted'],2)
+            self.assertEqual(self.run_repack(refresh=['trees.bin'])['skipped'],2)
+        self.assertEqual(snapshot(self.assets)['tiles/0_0/ground.webp'],before['tiles/0_0/ground.webp'])
+    def test_refresh_old_receipt_and_unknown_files(self):
+        self.run_repack()
+        for key in ('0_0','1_0'):
+            p=self.assets/'tiles'/key/'v3.json';r=json.loads(p.read_text());r.pop('profiles');p.write_text(json.dumps(r))
+        with patch.object(converter.tilefmt,'write_ground',side_effect=AssertionError('Imagery must be copied')):
+            self.assertEqual(self.run_repack(refresh=['trees.bin','tile.json'])['converted'],2)
+            self.assertEqual(self.run_repack(refresh=['trees.bin','tile.json'])['skipped'],2)
+        original=snapshot(self.assets)
+        with self.assertRaises(ValueError):self.run_repack(refresh=['ground.webp'])
+        self.assertEqual(snapshot(self.assets),original)
+        extra=self.assets/'tiles/1_0'/'height 2.bin.gz';extra.write_bytes(b'user file')
+        before=snapshot(self.assets)
+        with self.assertRaisesRegex(ValueError,'Unexpected files'):self.run_repack()
+        self.assertEqual(snapshot(self.assets),before)
     def test_overlap_rejected_before_mutation(self):
         original=snapshot(self.assets)
         for scratch in (self.assets,self.assets/'tmp',self.root,self.backup,self.backup/'tmp'):

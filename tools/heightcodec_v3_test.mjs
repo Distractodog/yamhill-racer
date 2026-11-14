@@ -1,4 +1,4 @@
-// Cross-language decoder identity, strict error bound, and malformed payload rejection.
+// Cross-language decoder identity, exact source bits, and malformed payload rejection.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,10 +18,10 @@ try {
   assert.equal(Buffer.from(decoded).toString('hex'),c.decoded,c.name+' Python/JS bit disagreement');
   const src=Buffer.from(c.source,'hex'),dv=new DataView(decoded);let max=0;
   for(let i=0;i<src.length;i+=4)max=Math.max(max,Math.abs(src.readFloatLE(i)-dv.getFloat32(i,true)));
-  assert(max<=.01,`${c.name} error ${max}`);
+  assert.equal(Buffer.from(decoded).toString('hex'),c.source,c.name+' source bits changed');
  }
  for(const name of await fs.readdir(tmp))if(name.startsWith('bad-')){
   const b=await fs.readFile(path.join(tmp,name));assert.throws(()=>decodeHeightsV3(b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength)),name);
  }
- console.log(`PASS ${cases.length} grids (adversarial plus optional real tiles), Python/JS bit identity, <=1cm errors, malformed inputs`);
+ console.log(`PASS ${cases.length} grids (adversarial plus optional real tiles), Python/JS bit identity, exact source float32 bits, malformed inputs`);
 }finally{await fs.rm(tmp,{recursive:true,force:true});}

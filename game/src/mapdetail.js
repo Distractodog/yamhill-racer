@@ -1,3 +1,4 @@
+import { decodeGeometry } from './geometrycodec_v3.js';
 // Progressive 2D map detail, independent of the 3D world's streaming radius.
 // Only visible tile JSON is requested; heights, textures and tree data are never loaded here.
 import { gunzip } from './tilepack.js';
@@ -44,7 +45,7 @@ export function createMapDetail(base='./assets/', { fetcher=globalThis.fetch, no
       const controller=new AbortController();pending.set(tile.key,controller);active++;
       const file=manifest.packed?'tile.json.gz':'tile.json';
       fetcher(`${base}tiles/${tile.key}/${file}`,{signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error('Map detail');return manifest.packed?JSON.parse(new TextDecoder().decode(await gunzip(await r.arrayBuffer()))):r.json();})
-        .then(raw=>{if(disposed)return;failures.delete(tile.key);cache.set(tile.key,{...prepareMapTile(raw),tx:tile.tx,tz:tile.tz,used:++clock});trim();revision++;})
+        .then(raw=>{raw=decodeGeometry(raw);if(disposed)return;failures.delete(tile.key);cache.set(tile.key,{...prepareMapTile(raw),tx:tile.tx,tz:tile.tz,used:++clock});trim();revision++;})
         .catch(e=>{if(e.name!=='AbortError'){failures.set(tile.key,now()+30000);revision++;}})
         .finally(()=>{pending.delete(tile.key);active--;pump();});
     }

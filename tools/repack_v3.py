@@ -16,6 +16,8 @@ from pathlib import Path
 import shutil
 import tempfile
 import tilefmt
+import ast
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ('height.bin.gz', 'surface.bin.gz', 'ponds.bin.gz', 'trees.bin.gz', 'tile.json.gz', 'ground.webp')
@@ -85,56 +87,84 @@ def verify_receipt(tile, source):
             raise ValueError('V3 tile failed checksum: '+tile.name+'/'+name)
 
 
-def repack(assets, backup, scratch, limit=None):
+REFRESH = {'height.bin', 'trees.bin', 'tile.json'}
+OBSOLETE = {'height.bin','surface.bin','ponds.bin','trees.bin','tile.json','ground.jpg','ground.png'}
+
+
+def codec_profile(name):
+    modules = {'height.bin.gz':'heightcodec_v3.py','trees.bin.gz':'treecodec_v3.py',
+               'tile.json.gz':'jsoncodec_v3.py','ground.webp':'imagecodec_v3.py'}
+    parts = [b'v3-file-profile-1', zlib.ZLIB_VERSION.encode()]
+    source=(ROOT/'tools/tilefmt.py').read_text()
+    function_name='write_ground' if name=='ground.webp' else 'write_bytes'
+    node=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name==function_name)
+    parts.append(ast.get_source_segment(source,node).encode())
+    if name in modules: parts.append((ROOT/'tools'/modules[name]).read_bytes())
+    return hashlib.sha256(b'\0'.join(parts)).hexdigest()
+
+
+def repack(assets, backup, scratch, limit=None, refresh=None):
+    selected = set(FILES) if refresh is None else {name+'.gz' for name in refresh}
+    if refresh is not None and (not refresh or set(refresh)-REFRESH):
+        raise ValueError('Unknown/empty refresh list; use height.bin,trees.bin,tile.json')
     assets, backup, scratch = (Path(p).resolve() for p in (assets, backup, scratch))
     if overlaps(assets, scratch) or overlaps(backup, scratch):
         raise ValueError('Scratch must not overlap assets or backup')
     world = prepare_backup(assets, backup)
     scratch.mkdir(parents=True, exist_ok=True)
+    # Fail before changing any tiles if user files are present. Cleanup is a
+    # separate authorized action, never inferred from a filename suffix.
+    for tx,tz in world['tiles']:
+        target=assets/'tiles'/f'{tx}_{tz}'
+        if target.exists() and set(p.name for p in target.iterdir())-set(FILES)-OBSOLETE-{RECEIPT}:
+            raise ValueError('Unexpected files in target tile '+target.name)
+    profiles={name:codec_profile(name) for name in FILES}
     converted = skipped = 0
     for tx, tz in world['tiles']:
-        key = f'{tx}_{tz}'
-        target, source = assets/'tiles'/key, backup/'tiles'/key
-        if (target/RECEIPT).exists():
-            # The entire immutable source was verified above. Only target
-            # corruption is recoverable; rebuild it from that trusted source.
-            try:
-                verify_receipt(target, source)
-            except (ValueError, KeyError, TypeError, OSError):
-                pass
-            else:
-                skipped += 1
-                continue
-        if limit is not None and converted >= limit:
-            return {'complete': False, 'converted': converted, 'skipped': skipped}
-        # Always decode the immutable v2 source, never requantize an output.
-        with tempfile.TemporaryDirectory(prefix='tile-v3-', dir=scratch) as temp:
-            staged = Path(temp)/key
-            staged.mkdir()
-            for name in ('height.bin', 'surface.bin', 'ponds.bin', 'trees.bin', 'tile.json'):
-                tilefmt.write_bytes(staged, name, tilefmt.read_bytes(source, name))
-            with tilefmt.read_ground(source) as image:
-                tilefmt.write_ground(staged, image)
-            # Validate the real readers and byte lengths before installing.
-            for name in ('height.bin', 'surface.bin', 'ponds.bin', 'trees.bin'):
-                if len(tilefmt.read_bytes(staged, name)) != len(tilefmt.read_bytes(source, name)):
-                    raise ValueError('Decoded size mismatch: '+key+'/'+name)
+        key=f'{tx}_{tz}';target,source=assets/'tiles'/key,backup/'tiles'/key
+        source_digests={p.name:sha(p) for p in sorted(source.iterdir()) if p.is_file()}
+        try:
+            receipt=json.loads((target/RECEIPT).read_text())
+            if not isinstance(receipt,dict) or receipt.get('version')!=3 or receipt.get('source')!=source_digests or not isinstance(receipt.get('files'),dict) or set(receipt['files'])!=set(FILES): receipt={}
+        except (ValueError,TypeError,OSError):receipt={}
+        old_profiles=receipt.get('profiles',{})
+        if not isinstance(old_profiles,dict):old_profiles={}
+        expected={name:{'codec':profiles[name],'source':source_digests['ground.jpg' if name=='ground.webp' else name]} for name in FILES}
+        reusable={name for name in FILES if (target/name).is_file() and receipt.get('files',{}).get(name)==sha(target/name)}
+        rebuild=set(FILES)-reusable
+        rebuild|={name for name in selected if old_profiles.get(name)!=expected[name]}
+        if not rebuild and not any((target/name).exists() for name in OBSOLETE):
+            skipped+=1;continue
+        if limit is not None and converted>=limit:return {'complete':False,'converted':converted,'skipped':skipped}
+        with tempfile.TemporaryDirectory(prefix='tile-v3-',dir=scratch) as temp:
+            staged=Path(temp)/key;staged.mkdir()
+            new_profiles={}
+            for name in FILES:
+                if name not in rebuild:
+                    shutil.copyfile(target/name,staged/name)
+                    new_profiles[name]=old_profiles.get(name,{'codec':'legacy-unrecorded','source':expected[name]['source']})
+                elif name=='ground.webp':
+                    with tilefmt.read_ground(source) as image:tilefmt.write_ground(staged,image)
+                    new_profiles[name]=expected[name]
+                else:
+                    rawname=name.removesuffix('.gz')
+                    tilefmt.write_bytes(staged,rawname,tilefmt.read_bytes(source,rawname))
+                    new_profiles[name]=expected[name]
+            for name in ('height.bin','surface.bin','ponds.bin','trees.bin'):
+                if len(tilefmt.read_bytes(staged,name))!=len(tilefmt.read_bytes(source,name)):raise ValueError('Decoded size mismatch: '+key+'/'+name)
             tilefmt.read_json(staged)
-            atomic_json(staged/RECEIPT, {'version': 3,
-                'source': {p.name: sha(p) for p in sorted(source.iterdir()) if p.is_file()},
-                'files': {name: sha(staged/name) for name in FILES}})
-            verify_receipt(staged, source)
-            previous = Path(temp)/'previous'
-            if target.exists(): target.rename(previous)
-            try: staged.rename(target)
-            except BaseException:
-                if previous.exists(): previous.rename(target)
-                raise
-        converted += 1
-        print(f'{converted+skipped}/{len(world["tiles"])} {key}', flush=True)
-    world['packed'] = 3
-    atomic_json(assets/'world.json', world)
-    return {'complete': True, 'converted': converted, 'skipped': skipped}
+            atomic_json(staged/RECEIPT,{'version':3,'source':source_digests,'files':{name:sha(staged/name) for name in FILES},'profiles':new_profiles})
+            verify_receipt(staged,source)
+            target.mkdir(parents=True,exist_ok=True)
+            # No tile-directory renames. A partial install leaves an absent or
+            # mismatching receipt, so the next run repairs from trusted v2 data.
+            for name in FILES:os.replace(staged/name,target/name)
+            for name in OBSOLETE:
+                if (target/name).exists():(target/name).unlink()
+            os.replace(staged/RECEIPT,target/RECEIPT)
+        converted+=1;print(f'{converted+skipped}/{len(world["tiles"])} {key}',flush=True)
+    world['packed']=3;atomic_json(assets/'world.json',world)
+    return {'complete':True,'converted':converted,'skipped':skipped}
 
 
 if __name__ == '__main__':
@@ -143,5 +173,6 @@ if __name__ == '__main__':
     parser.add_argument('--backup', type=Path, default=ROOT/'work/v3/baseline-assets')
     parser.add_argument('--scratch', type=Path, default=ROOT/'work/v3/staging')
     parser.add_argument('--limit', type=int)
+    parser.add_argument('--refresh', help='Comma-separated height.bin,trees.bin,tile.json; preserve other validated files')
     args = parser.parse_args()
-    print(json.dumps(repack(args.assets, args.backup, args.scratch, args.limit), sort_keys=True))
+    print(json.dumps(repack(args.assets, args.backup, args.scratch, args.limit, args.refresh.split(',') if args.refresh is not None else None), sort_keys=True))

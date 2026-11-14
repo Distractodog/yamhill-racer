@@ -1,3 +1,4 @@
+import { decodeGeometry } from '../game/src/geometrycodec_v3.js';
 // node tools/props_test.mjs
 // Street props come from the tile paths and stay off the campus and out of junctions.
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ const CAMPUS = (x, z) => x >= -900 && x <= -350 && z >= 130 && z <= 650;
 
 function load(name) {
   const raw = gunzipSync(readFileSync(new URL(`../game/assets/tiles/${name}/tile.json.gz`, import.meta.url)));
-  return JSON.parse(raw.toString());
+  return decodeGeometry(JSON.parse(raw.toString()));
 }
 function distPointSeg(px, pz, ax, az, bx, bz) {
   const dx = bx - ax, dz = bz - az, den = dx * dx + dz * dz || 1;
