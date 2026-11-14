@@ -11,7 +11,7 @@
 //         drops away)}, doors: [{edge, t, w, h, color, frame}], porch, boxes: [...] }
 
 // ---- palette (flat colours, lit by the scene's sun + sky)
-const BRICK = [0.93, 0.75, 0.55];      // Main Building: buff / tan brick
+const BRICK = [0.86, 0.58, 0.38];      // Main Building: buff / orange brick
 const STONE = [0.93, 0.90, 0.82];      // cast-stone trim, tower face, entrance surround
 const CREAM = [0.93, 0.89, 0.76];      // painted later wings (courtyard side)
 const GLASS = [0.27, 0.33, 0.40];
@@ -31,31 +31,39 @@ const DEPTH = 20.2;                    // the south range is a double-loaded cor
 const A0 = add(V[1], U, 13.2);         // east face of the west end wing
 const frontC = [(V[3][0] + V[4][0]) / 2, (V[3][1] + V[4][1]) / 2];
 const brickWin = (rows, extra = {}) => ({ rows, sh: 3.6, sill: 1.0, w: 1.4, h: 2.1, every: 3.3, color: GLASS, margin: 1.6, below: true, ...extra });
-const ribbon = rows => ({ rows, sh: 3.4, sill: 1.0, w: 2.7, h: 1.5, every: 3.1, color: GLASS_L, margin: 1.2, below: true });
+const ribbon = (rows, extra = {}) => ({ rows, sh: 3.4, sill: 1.0, w: 2.7, h: 1.5, every: 3.1, color: GLASS_L, margin: 1.2, below: true, ...extra });
 const flat = (color = ROOF_W, parapet = 0.9, trim = STONE) => ({ type: 'flat', color, parapet, trim });
 
 const MAIN = {
   name: 'Main Building', osm: [[-548.4, 371.4]], floorAt: [frontC[0] + N[0] * 4, frontC[1] + N[1] * 4], dy: 0.3,
   phys: [V],
   parts: [
-    // west end wing (3 storeys, lower than the front range in every photo)
-    { name: 'west wing', pts: [V[0], V[1], A0, V[15]], h: 12.2, wall: BRICK, roof: flat(), win: brickWin(3) },
-    // south front range, west half (dark grey roof on the satellite)
-    { name: 'front west', pts: [A0, V[2], add(V[2], N, -DEPTH), add(A0, N, -DEPTH)], h: 15.6, wall: BRICK, roof: flat(ROOF_G), win: brickWin(4) },
+    // west end wing (3 storeys). South face is an even pier grid; the other walls stay simple windows.
+    { name: 'west wing', pts: [V[0], V[1], A0, V[15]], h: 12.2, wall: BRICK, roof: flat(), win: brickWin(3, { bays: { face: N, every: 3.3, sill: STONE } }) },
+    // four-storey core, west of the tower: 2+2 bays, then an even pier rhythm out to the wing
+    { name: 'front west', pts: [A0, V[2], add(V[2], N, -DEPTH), add(A0, N, -DEPTH)], h: 15.6, wall: BRICK, roof: flat(ROOF_G),
+      win: brickWin(4, { bays: { face: N, groups: [2, 2], anchor: frontC, span: 18, sill: STONE } }) },
     // centre block, stepped forward 6 m: the entrance + tower
     { name: 'centre', pts: [V[3], V[4], add(V[5], N, -DEPTH), add(V[2], N, -DEPTH)], h: 16.6, wall: BRICK, roof: flat(), win: brickWin(4),
       doors: [{ edge: 0, t: 0.5, w: 3.2, h: 3.4, color: DOOR, frame: { w: 7.0, h: 5.6, color: STONE } }] },
     { name: 'tower', rect: { c: add(frontC, N, -2.6), L: 7.4, W: 6.4, a: -28 }, h: 26.5, wall: BRICK, roof: flat(ROOF_W, 0.6), win: null,
-      boxes: [   // light stone face down the tower front with a column of tall narrow windows
-        { c: add(frontC, N, 0.85), L: 3.6, W: 0.5, a: -28, y0: 3.6, y1: 27.0, color: STONE },
-        { c: add(frontC, N, -2.6), L: 5.6, W: 4.6, a: -28, y0: 26.5, y1: 28.4, color: BRICK },   // stepped crown
-        ...[0, 1, 2, 3, 4, 5].map(k => ({ c: add(frontC, N, 1.15), L: 1.1, W: 0.1, a: -28, y0: 6.2 + k * 3.6, y1: 8.6 + k * 3.6, color: GLASS })),
+      boxes: [   // stone shaft, six small openings (2 by 3) near the top, then a stepped cap and coping
+        { c: add(frontC, N, 0.85), L: 3.6, W: 0.5, a: -28, y0: 3.6, y1: 26.4, color: STONE },
+        ...[0, 1].flatMap(col => [0, 1, 2].map(row => ({
+          c: add(frontC, U, (col - 0.5) * 1.35, N, 1.15), L: 0.72, W: 0.08, a: -28,
+          y0: 20.4 + row * 1.65, y1: 21.05 + row * 1.65, color: GLASS,
+        }))),
+        { c: add(frontC, N, -2.6), L: 6.0, W: 5.0, a: -28, y0: 26.5, y1: 27.3, color: BRICK },
+        { c: add(frontC, N, -2.6), L: 7.0, W: 6.0, a: -28, y0: 27.3, y1: 28.1, color: BRICK },
+        { c: add(frontC, N, -2.6), L: 7.4, W: 6.4, a: -28, y0: 28.1, y1: 28.4, color: STONE },
       ] },
     { name: 'penthouse', rect: { c: add(frontC, N, -12), L: 7, W: 6, a: -28 }, h: 19.4, wall: BRICK, roof: flat(ROOF_W, 0.4), win: null },
     // south front range, east half
-    { name: 'front east', pts: [V[5], V[6], add(V[6], N, -DEPTH), add(V[5], N, -DEPTH)], h: 15.6, wall: BRICK, roof: flat(), win: brickWin(4) },
+    { name: 'front east', pts: [V[5], V[6], add(V[6], N, -DEPTH), add(V[5], N, -DEPTH)], h: 15.6, wall: BRICK, roof: flat(),
+      win: brickWin(4, { bays: { face: N, groups: [2, 2], anchor: frontC, span: 18, setback: true, sill: STONE } }) },
     // east wing: the painted wing with ribbon windows and the steel fire stair seen from the courtyard
-    { name: 'east wing', pts: [V[7], V[8], V[9], add(V[7], V[9], 1, V[8], -1)], h: 14.2, wall: CREAM, roof: flat(ROOF_G, 0.6, CREAM), win: ribbon(4),
+    { name: 'east wing', pts: [V[7], V[8], V[9], add(V[7], V[9], 1, V[8], -1)], h: 14.2, wall: CREAM, roof: flat(ROOF_G, 0.6, CREAM),
+      win: ribbon(4, { bays: { face: N, every: 3.2, sill: STONE, w: 1.3, h: 1.7 } }),
       boxes: [{ c: add(V[8], U, -1.3, N, 6), L: 2.4, W: 3.6, a: -28, y0: 0, y1: 13.6, color: [0.25, 0.25, 0.26], frame: true }] },
     // chapel (now chapel / performing-arts space): tall walls, steep dark gable roof behind the tower
     { name: 'chapel', pts: [V[12], V[11], V[10], V[13]], h: 9.5, wall: BRICK, roof: { type: 'gable', color: [0.33, 0.32, 0.33], pitch: 34, over: 0.4 },
