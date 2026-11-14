@@ -28,6 +28,8 @@ BUILDING = (205, 200, 192)
 world = json.loads((ASSETS / 'world.json').read_text())
 T = world['tile']
 ex0, ez0, ex1, ez1 = world['extent']
+if ex1 - ex0 > 30000:                 # the round map (36 km): coarser, or the picture gets huge (memory + browser)
+    DRAW_MPP, OUT_MPP = 4.0, 8.0
 W, H = int((ex1 - ex0) / DRAW_MPP), int((ez1 - ez0) / DRAW_MPP)
 img = Image.new('RGB', (W, H), (34, 40, 36))          # off the map (the map is a set of tiles, not a rectangle)
 tile_px = int(T / DRAW_MPP)
@@ -72,6 +74,16 @@ for kind in ('trail', 'gravel', 'asphalt'):
             if len(pts) > 1:
                 draw.line(pts, fill=pass_col, width=lw, joint='curve')
 
+rim = world.get('rim')
+if rim:                               # round map: shade everything beyond the rim, draw the rim as a circle
+    dx2 = (ex0 + (np.arange(W) + .5) * DRAW_MPP - rim['cx']) ** 2
+    dz2 = (ez0 + (np.arange(H) + .5) * DRAW_MPP - rim['cz']) ** 2
+    outside = dz2[:, None] + dx2[None, :] > rim['r'] ** 2          # bool H x W (no big index grids)
+    a = np.asarray(img).copy(); a[outside] = (a[outside] * 0.35 + np.array((34, 40, 36)) * 0.65).astype(np.uint8)
+    img = Image.fromarray(a); del a, outside
+    draw = ImageDraw.Draw(img)
+    cx, cz = px(rim['cx'], rim['cz']); rr = rim['r'] / DRAW_MPP
+    draw.ellipse([cx - rr, cz - rr, cx + rr, cz + rr], outline=(194, 243, 255), width=max(2, int(round(30 / DRAW_MPP))))
 out = img.resize((int(W * DRAW_MPP / OUT_MPP), int(H * DRAW_MPP / OUT_MPP)), Image.LANCZOS)
 dst = ASSETS / 'minimap.jpg'
 out.save(dst, quality=84, optimize=True)

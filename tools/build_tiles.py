@@ -28,6 +28,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import mapdata, align, roadnet, tilefmt
 from fetch_tiles import TILE, MARGIN, TX, TZ, TILE_SET, HSTEP, CX, CY, K, R
+import fetch_tiles
+RIM_R = 17200                                     # drivable radius of the round map (m)
 
 RAW = os.path.join(ROOT, 'data', 'raw')
 ASSETS = os.environ.get('YR_ASSETS', os.path.join(ROOT, 'game', 'assets'))   # YR_ASSETS=dir builds somewhere else, to swap in after
@@ -277,13 +279,31 @@ gwater = ndimage.binary_closing(gwater, iterations=1)
 log('water pixels', int(gwater.sum()), f'({gwater.sum() * WM * WM / 1e4:.1f} ha)')
 
 # ---------------------------------------------------------------- 4. keep roads/trails out of the water
-# distances only over the box around the water (the full 2 m grid is too big for 4 distance/index arrays)
-_wr, _wc = np.nonzero(gwater.any(1))[0], np.nonzero(gwater.any(0))[0]
-WR0, WR1 = (max(0, _wr[0] - 32), min(GWH, _wr[-1] + 33)) if len(_wr) else (0, 1)
-WC0, WC1 = (max(0, _wc[0] - 32), min(GWW, _wc[-1] + 33)) if len(_wc) else (0, 1)
-_gwc = gwater[WR0:WR1, WC0:WC1]
-_d_out, _i_out = ndimage.distance_transform_edt(~_gwc, return_indices=True)
-_d_in, _i_in = ndimage.distance_transform_edt(_gwc, return_indices=True)
+# For each water pixel and each land pixel within NEAR_PX of water: the nearest pixel of the other kind and the
+# distance to it. Computed chunk by chunk (overlapping), kept as a sorted table, so memory stays small on any map.
+NEAR_PX, CH, OV = 13, 2048, 32
+_keys, _q, _dist, _wet = [], [], [], []
+for r0 in range(0, GWH, CH):
+    for c0 in range(0, GWW, CH):
+        r1, c1 = min(GWH, r0 + CH), min(GWW, c0 + CH)
+        R0, C0, R1, C1 = max(0, r0 - OV), max(0, c0 - OV), min(GWH, r1 + OV), min(GWW, c1 + OV)
+        g = gwater[R0:R1, C0:C1]
+        if not g.any(): continue
+        d_out, i_out = ndimage.distance_transform_edt(~g, return_indices=True)
+        d_in, i_in = ndimage.distance_transform_edt(g, return_indices=True)
+        inner = np.zeros_like(g); inner[r0 - R0:r1 - R0, c0 - C0:c1 - C0] = True
+        sel = inner & (g | (d_out < NEAR_PX))
+        rr, cc = np.nonzero(sel); wet = g[rr, cc]
+        qr = np.where(wet, i_in[0][rr, cc], i_out[0][rr, cc]) + R0; qc = np.where(wet, i_in[1][rr, cc], i_out[1][rr, cc]) + C0
+        _keys.append((rr + R0).astype(np.int64) * GWW + (cc + C0)); _q.append(np.stack([qc, qr], 1).astype(np.float32))
+        _dist.append(np.where(wet, d_in[rr, cc], d_out[rr, cc]).astype(np.float32)); _wet.append(wet)
+        del d_out, i_out, d_in, i_in, inner, sel
+if _keys:
+    _keys = np.concatenate(_keys); _o = np.argsort(_keys); _keys = _keys[_o]
+    _q, _dist, _wet = np.concatenate(_q)[_o], np.concatenate(_dist)[_o], np.concatenate(_wet)[_o]
+else:
+    _keys, _q, _dist, _wet = np.zeros(0, np.int64), np.zeros((0, 2), np.float32), np.zeros(0, np.float32), np.zeros(0, bool)
+log('water shore table', len(_keys), 'pixels')
 MAX_NUDGE = 6.0
 def fix_path(path):
     """Trails grazing water are nudged onto the shore; trails that would cross it end at the water's edge.
@@ -295,17 +315,21 @@ def fix_path(path):
         n = max(1, int(np.hypot(*(b - a)) / 1.0)); dense += [a + (b - a) * t for t in np.linspace(0, 1, n + 1)[1:]]
     pts = np.array(dense); new = pts.copy(); cut = np.zeros(len(pts), bool)
     ends = pts[0].copy(), pts[-1].copy()
-    u = (pts - [GX0 + WC0 * WM, GZ0 + WR0 * WM]) / WM            # cell coords in the water box
-    inside = (u[:, 0] >= 0) & (u[:, 0] < WC1 - WC0) & (u[:, 1] >= 0) & (u[:, 1] < WR1 - WR0)
-    iu = np.clip(u[:, 0].astype(int), 0, WC1 - WC0 - 1); iv = np.clip(u[:, 1].astype(int), 0, WR1 - WR0 - 1)
-    for k in np.nonzero(inside & (_gwc[iv, iu] | (_d_out[iv, iu] < keep)))[0]:
-        a, b = iv[k], iu[k]
-        if _gwc[a, b]: q = np.array([_i_in[1][a, b], _i_in[0][a, b]], float); d = q - u[k]; need = (_d_in[a, b] + keep) * WM
-        else: q = np.array([_i_out[1][a, b], _i_out[0][a, b]], float); d = u[k] - q; need = (keep - _d_out[a, b]) * WM
+    u = (pts - [GX0, GZ0]) / WM                                    # cell coords on the global water grid
+    iu = np.clip(u[:, 0].astype(int), 0, GWW - 1); iv = np.clip(u[:, 1].astype(int), 0, GWH - 1)
+    key = iv.astype(np.int64) * GWW + iu
+    pos = np.clip(np.searchsorted(_keys, key), 0, max(0, len(_keys) - 1))
+    hit = (len(_keys) > 0) & (_keys[pos] == key) if len(_keys) else np.zeros(len(key), bool)
+    for k in np.nonzero(hit)[0]:
+        j = pos[k]; wet = _wet[j]
+        if not wet and _dist[j] >= keep: continue
+        q = _q[j].astype(float) + 0.0
+        if wet: d = q - u[k]; need = (_dist[j] + keep) * WM
+        else: d = u[k] - q; need = (keep - _dist[j]) * WM
         if need > MAX_NUDGE:
             if path['kind'] == 'trail': cut[k] = True
             continue
-        new[k] = (q + d / (np.hypot(*d) or 1.0) * keep) * WM + [GX0 + WC0 * WM, GZ0 + WR0 * WM]
+        new[k] = (q + d / (np.hypot(*d) or 1.0) * keep) * WM + [GX0, GZ0]
     if not cut[0]: new[0] = ends[0]                 # junction ends stay put (other roads meet there)
     if not cut[-1]: new[-1] = ends[1]
     out, run, flags = [], [], []
@@ -341,7 +365,7 @@ paths = edges
 deg = Counter([e['a'] for e in edges] + [e['b'] for e in edges])
 log('network: edges', len(edges), 'junctions', sum(1 for v in deg.values() if v >= 3),
     'dead ends', sum(1 for v in deg.values() if v == 1))
-del _d_out, _i_out, _d_in, _i_in
+del _keys, _q, _dist, _wet
 log('paths', len(paths))
 
 # per-road data written into tile.json: OSM class, lanes, sidewalk, oneway; flat paving for tiny service stubs;
@@ -628,6 +652,9 @@ for tx, tz in TILES:
 # ---------------------------------------------------------------- 7. world.json
 json.dump({'tile': TILE, 'hstep': HSTEP, 'hn': HN, 'hm': HM, 'surfN': TILE, 'tiles': world_tiles,
            'extent': [GX0, GZ0, GX1, GZ1], 'spawn': SPAWN_OLD.round(2).tolist(),
-           'ponds': [p['level'] for p in ponds_g], **({'packed': tilefmt.PACKED} if PACK else {})},
+           'ponds': [p['level'] for p in ponds_g], **({'packed': tilefmt.PACKED} if PACK else {}),
+           # round map: drivable circle (rim.js wall + rimring.js ring); scenery tiles reach 600 m beyond it
+           **({'rim': {'cx': fetch_tiles.MAP_CX, 'cz': fetch_tiles.MAP_CZ, 'r': RIM_R}}
+              if hasattr(fetch_tiles, 'MAP_CX') and not os.environ.get('YR_TILES') else {})},
           open(os.path.join(ASSETS, 'world.json'), 'w'), indent=1)
 log('done')

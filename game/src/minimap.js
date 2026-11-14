@@ -8,6 +8,10 @@ const LABELS = [
   { name: 'Sheridan', x: 3800, z: 1400 },
   { name: 'Bellevue', x: 11860, z: -2110 },
   { name: 'McMinnville', x: 19100, z: -11000 },
+  { name: 'Amity', x: 18620, z: -560 },
+  { name: 'Ballston', x: 13430, z: 4790 },
+  { name: 'Perrydale', x: 13830, z: 7900 },
+  { name: 'Whiteson', x: 19090, z: -4680 },
 ];
 
 export const PIN_COLOR = '#ff2fd6';      // magenta: apart from the challenge colours (cyan / orange / yellow)
