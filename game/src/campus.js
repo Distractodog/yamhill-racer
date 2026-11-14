@@ -34,13 +34,36 @@ export const ENTRANCE = { at: frontC, N, U };
 const brickWin = (rows, extra = {}) => ({ rows, sh: 3.6, sill: 1.0, w: 1.4, h: 2.1, every: 3.3, color: GLASS, margin: 1.6, below: true, ...extra });
 const ribbon = (rows, extra = {}) => ({ rows, sh: 3.4, sill: 1.0, w: 2.7, h: 1.5, every: 3.1, color: GLASS_L, margin: 1.2, below: true, ...extra });
 const flat = (color = ROOF_W, parapet = 0.9, trim = STONE) => ({ type: 'flat', color, parapet, trim });
+const STEEL = [0.22, 0.22, 0.24], TREAD = [0.36, 0.37, 0.38];
+// Open steel stair: two stringers, a landing per storey, and treads between them. Tops stay under the eave.
+function fireStair(c) {
+  const boxes = [];
+  for (const u of [-1.05, 1.05]) for (const n of [-1.35, 1.35]) {
+    boxes.push({ c: add(c, U, u, N, n), L: 0.12, W: 0.12, a: -28, y0: 0, y1: 13.2, color: STEEL });
+  }
+  for (let f = 0; f < 3; f++) {
+    const yBase = 0.15 + f * 4.3, dir = f % 2 === 0 ? 1 : -1;
+    boxes.push({ c: add(c, N, -dir * 1.35), L: 2.3, W: 0.9, a: -28, y0: yBase, y1: yBase + 0.1, color: [0.70, 0.70, 0.68] });
+    for (let s = 0; s < 8; s++) {
+      const y = yBase + 0.15 + s * 0.48, n = dir * (-1.15 + s * 0.32);
+      boxes.push({ c: add(c, N, n), L: 2.15, W: 0.34, a: -28, y0: y, y1: y + 0.08, color: TREAD });
+    }
+  }
+  boxes.push({ c, L: 2.4, W: 2.8, a: -28, y0: 12.7, y1: 12.82, color: [0.70, 0.70, 0.68] });
+  return boxes;
+}
 
 const MAIN = {
   name: 'Main Building', osm: [[-548.4, 371.4]], floorAt: [frontC[0] + N[0] * 4, frontC[1] + N[1] * 4], dy: 0.3,
   phys: [V],
   parts: [
     // west end wing (3 storeys). South face is an even pier grid; the other walls stay simple windows.
-    { name: 'west wing', pts: [V[0], V[1], A0, V[15]], h: 12.2, wall: BRICK, roof: flat(), win: brickWin(3, { bays: { face: N, every: 3.3, sill: STONE } }) },
+    { name: 'west wing', pts: [V[0], V[1], A0, V[15]], h: 12.2, wall: BRICK, roof: flat([0.42, 0.38, 0.34]), win: brickWin(3, { bays: { face: N, every: 3.3, sill: STONE } }),
+      doors: [{ edge: 0, t: 0.62, w: 1.2, h: 2.2, color: DOOR }],
+      boxes: [   // weathered west roof: two vents and a hatch, all below the tower
+        { c: add(V[0], U, 8, N, -8), L: 1.3, W: 0.9, a: -28, y0: 12.2, y1: 13.0, color: [0.78, 0.79, 0.77] },
+        { c: add(V[0], U, 16, N, -5), L: 0.55, W: 0.55, a: -28, y0: 12.2, y1: 13.5, color: [0.55, 0.56, 0.55] },
+      ] },
     // four-storey core, west of the tower: 2+2 bays, then an even pier rhythm out to the wing
     { name: 'front west', pts: [A0, V[2], add(V[2], N, -DEPTH), add(A0, N, -DEPTH)], h: 15.6, wall: BRICK, roof: flat(ROOF_G),
       win: brickWin(4, { bays: { face: N, groups: [2, 2], anchor: frontC, span: 18, sill: STONE } }) },
@@ -65,10 +88,11 @@ const MAIN = {
     // east wing: the painted wing with ribbon windows and the steel fire stair seen from the courtyard
     { name: 'east wing', pts: [V[7], V[8], V[9], add(V[7], V[9], 1, V[8], -1)], h: 14.2, wall: CREAM, roof: flat(ROOF_G, 0.6, CREAM),
       win: ribbon(4, { bays: { face: N, every: 3.2, sill: STONE, w: 1.3, h: 1.7 } }),
-      boxes: [{ c: add(V[8], U, -1.3, N, 6), L: 2.4, W: 3.6, a: -28, y0: 0, y1: 13.6, color: [0.25, 0.25, 0.26], frame: true }] },
+      boxes: fireStair(add(V[8], U, -1.3, N, 6)) },
     // chapel (now chapel / performing-arts space): tall walls, steep dark gable roof behind the tower
     { name: 'chapel', pts: [V[12], V[11], V[10], V[13]], h: 9.5, wall: BRICK, roof: { type: 'gable', color: [0.33, 0.32, 0.33], pitch: 34, over: 0.4 },
-      win: { rows: 1, sh: 9, sill: 2.4, w: 1.6, h: 5.2, every: 4.2, color: GLASS, margin: 2.5, below: true } },
+      win: { rows: 1, sh: 9, sill: 1.7, w: 1.55, h: 6.4, every: 4.6, color: GLASS, margin: 2.2, pointed: true, face: U, face2: [-N[0], -N[1]], lancet: N },
+      boxes: [{ c: add([-553.05, 358.95], N, -14), L: 0.7, W: 0.7, a: -28, y0: 14.4, y1: 15.5, color: [0.46, 0.46, 0.47] }] },
 
   ],
 };
@@ -111,7 +135,13 @@ export const CAMPUS = [
   // Its own floor/physics height avoids inheriting the main building's much higher floor and tower roof.
   { name: 'Back kitchen', osm: [], floorAt: add(V[12], U, 24, N, 1), dy: 0.2,
     parts: [{ name: 'kitchen', pts: [add(V[12], U, 0), add(V[12], U, 48), add(V[12], U, 48, N, -11), add(V[12], U, 0, N, -11)],
-      h: 3.6, wall: CREAM, roof: flat(ROOF_W, 0.6, CREAM), win: { ...ribbon(1), sh: 3.0, sill: 0.7, basementRows: 1 } }] },
+      h: 3.6, wall: CREAM, roof: flat(ROOF_W, 0.6, [0.72, 0.38, 0.22]), win: { ...ribbon(1), sh: 3.0, sill: 0.7, basementRows: 1 },
+      doors: [{ edge: 3, t: 0.45, w: 1.4, h: 2.3, color: [0.55, 0.40, 0.26] }],
+      boxes: [   // white rooftop units stay under the parapet; the dock is a low pad on the service side
+        { c: add(V[12], U, 16, N, -5), L: 1.7, W: 1.1, a: -28, y0: 3.6, y1: 4.15, color: [0.93, 0.93, 0.91] },
+        { c: add(V[12], U, 26, N, -4), L: 1.4, W: 1.0, a: -28, y0: 3.6, y1: 4.05, color: [0.90, 0.90, 0.88] },
+        { c: add(V[12], U, -1.6, N, -5), L: 3.4, W: 2.2, a: -28, y0: 0, y1: 1.05, color: [0.72, 0.72, 0.70] },
+      ] }] },
   { name: 'Gym', osm: [[-510.5, 177.8]], floorAt: [-510.5, 205], dy: 0.2,
     parts: [{ rect: R([-510.5, 177.8], 48.5, 28.7, 90), h: 10.5, wall: [0.85, 0.80, 0.67], roof: flat([0.90, 0.90, 0.89], 0.6, [0.62, 0.55, 0.45]),
       win: { rows: 1, sh: 10, sill: 7.0, w: 3.2, h: 1.6, every: 6.0, color: GLASS_L, margin: 3 },
