@@ -9,7 +9,9 @@
   canvas { display: block; }
   #hud { position: fixed; left: 16px; bottom: 14px; color: #fff; text-shadow: 0 1px 3px #000a; pointer-events: none; }
   #speed { font-size: 46px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
-  #speed small { font-size: 16px; font-weight: 600; margin-left: 4px; }
+  #speed-unit { font: 600 16px system-ui, sans-serif; margin-left: 4px; padding: 1px 5px; color: inherit; text-shadow: inherit;
+    background: none; border: 1px solid #fff4; border-radius: 6px; cursor: pointer; pointer-events: auto; vertical-align: 2px; }
+  #speed-unit:hover { background: #fff2; border-color: #fff8; }
   #info { font-size: 13px; opacity: .9; margin-top: 4px; }
   #menu-bar { position: fixed; top: 14px; left: 16px; display: flex; gap: 8px; z-index: 22; }
   .menu-button { border: 1px solid #ffffff35; border-radius: 10px; padding: 9px 13px; background: #142016e8;
@@ -75,7 +77,7 @@
 </head>
 <body>
 <div id="loading">Loading map…</div>
-<div id="hud"><div id="speed">0<small>km/h</small></div><div id="info"></div></div>
+<div id="hud"><div id="speed"><span id="speed-num">0</span><button id="speed-unit" type="button" tabindex="-1" title="Switch km/h / mph (U)">km/h</button></div><div id="info"></div></div>
 <nav id="menu-bar" aria-label="Game options">
   <button id="garage-button" class="menu-button" disabled>Garage</button>
   <button id="atmosphere-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Atmosphere</button>
@@ -93,8 +95,9 @@
       <dt>V</dt><dd>Switch vehicle: car, dirt bike or jet</dd>
       <dt>J</dt><dd>Races: pick one and press Enter, wait for 3-2-1-GO, then go through every checkpoint</dd>
       <dt>M</dt><dd>Map: zoom from the valley down to streets; click to place a pin</dd>
-      <dt>G</dt><dd>Glider (car or dirt bike): open it in the air, or above 90 km/h (bike 70)</dd>
+      <dt>G</dt><dd>Glider (car or dirt bike): open it in the air, or above <span data-kmh="90">90 km/h</span> (bike <span data-kmh="70">70 km/h</span>)</dd>
       <dt>R</dt><dd>Back to a safe spot if you're stuck</dd>
+      <dt>U</dt><dd>Speed in km/h or mph (or click the unit next to the speed)</dd>
     </dl>
     <p>Customize vehicles in <strong>Garage</strong>. Change weather in <strong>Atmosphere</strong>.</p>
     <p>Jet and other controls: <button id="welcome-help" type="button">How to play</button></p>
@@ -123,17 +126,17 @@
     <dt><kbd>A D / ← →</kbd></dt><dd>Steer</dd><dt><kbd>Space</kbd></dt><dd>Handbrake / bike rear-brake slide</dd>
     <dt><kbd>Shift</kbd></dt><dd>Bike wheelie; lean back in the air</dd><dt><kbd>W S / ↑ ↓</kbd></dt><dd>Bike air lean: release and press again after take-off</dd></dl>
     <h3>Glider (car or dirt bike)</h3>
-    <dl><dt><kbd>G</kbd></dt><dd>Open / fold glider. From the ground, reach 90 km/h first (dirt bike: 70).</dd>
+    <dl><dt><kbd>G</kbd></dt><dd>Open / fold glider. From the ground, reach <span data-kmh="90">90 km/h</span> first (dirt bike: <span data-kmh="70">70 km/h</span>).</dd>
     <dt><kbd>W / ↑ · S / ↓</kbd></dt><dd>Nose down · nose up</dd><dt><kbd>A D / ← →</kbd></dt><dd>Bank left / right</dd></dl>
     <h3>Jet</h3>
     <dl><dt><kbd>W / S</kbd></dt><dd>Increase / decrease throttle</dd><dt><kbd>↑ / ↓</kbd></dt><dd>Nose down / nose up</dd>
     <dt><kbd>← / →</kbd></dt><dd>Roll left / right</dd><dt><kbd>A / D</kbd></dt><dd>Rudder / ground steering</dd>
-    <dt><kbd>Space</kbd></dt><dd>Wheel brakes</dd></dl><p>On the ground, accelerate past 230 km/h and hold ↓ to lift the nose.</p>
+    <dt><kbd>Space</kbd></dt><dd>Wheel brakes</dd></dl><p>On the ground, accelerate past <span data-kmh="230">230 km/h</span> and hold ↓ to lift the nose.</p>
     <h3>Every vehicle</h3>
     <dl><dt><kbd>V</kbd></dt><dd>Vehicle picker: 1 car, 2 dirt bike, 3 jet; or ↑ / ↓ then Enter</dd>
     <dt><kbd>J</kbd></dt><dd>Race list: ↑ / ↓ to choose, Enter to start</dd><dt><kbd>R</kbd></dt><dd>Reset to a safe spot</dd>
     <dt><kbd>F</kbd></dt><dd>Flip upright / level the jet</dd><dt><kbd>H</kbd></dt><dd>Return to your spawn</dd>
-    <dt><kbd>C</kbd></dt><dd>Cycle cameras</dd><dt><kbd>T</kbd></dt><dd>Open / close tuning in Settings</dd>
+    <dt><kbd>C</kbd></dt><dd>Cycle cameras</dd><dt><kbd>U</kbd></dt><dd>Units: km/h and metres, or mph and feet/miles (click the unit by the speed too)</dd><dt><kbd>T</kbd></dt><dd>Open / close tuning in Settings</dd>
     <dt><kbd>Backspace</kbd></dt><dd>Restart the current race</dd><dt><kbd>Enter</kbd></dt><dd>Retry after finishing a race</dd>
     <dt><kbd>Esc</kbd></dt><dd>Close a menu or map; otherwise leave the race</dd></dl>
     <h3>Your garage</h3>

@@ -7,6 +7,7 @@ import { makeTrack } from './track.js';
 import { createGhost } from './ghost.js';
 import { createRewards } from './rewards.js';
 import { checkpointStart, drivingWrongWay } from './raceguidance.js';
+import { fmtDist, fmtHeight } from './units.js';
 
 const BEST_KEY = 'yr-best-1';
 const POST_H = 7, COUNTDOWN = 3;
@@ -321,8 +322,8 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     if (state === 'placing') sub = 'Getting to the start…';
     else if (state === 'running' || state === 'countdown') {
       const g = ch.gates[next], dist = g ? Math.hypot(g.x - car.pos.x, g.z - car.pos.z) : 0;
-      sub = `${next === n ? 'Finish' : `${g?.y !== undefined ? 'Ring' : 'Checkpoint'} ${next}/${n - 1}`} · ${dist < 1000 ? Math.round(dist) + ' m' : (dist / 1000).toFixed(1) + ' km'}`;
-      if (g?.y !== undefined) { const dy = g.y - car.pos.y; sub += ` · ${Math.abs(dy) < 8 ? 'level' : (dy > 0 ? '↑ ' : '↓ ') + Math.round(Math.abs(dy)) + ' m'}`; }
+      sub = `${next === n ? 'Finish' : `${g?.y !== undefined ? 'Ring' : 'Checkpoint'} ${next}/${n - 1}`} · ${fmtDist(dist)}`;
+      if (g?.y !== undefined) { const dy = g.y - car.pos.y; sub += ` · ${Math.abs(dy) < 8 ? 'level' : (dy > 0 ? '↑ ' : '↓ ') + fmtHeight(Math.abs(dy))}`; }
       if (returning) sub = 'Returning to checkpoint…';
       else if (wrongWayTime >= 1) sub += ' · WRONG WAY · turn around';
       const b = best[ch.id]; if (b) sub += ` · best ${fmtTime(b.time)}`;
@@ -336,7 +337,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     menu.innerHTML = `<h2>Races</h2><div class="reward-collection">${rewards.list().map(r => `<span class="reward-chip${r.unlocked ? ' unlocked' : ''}" title="${r.description}">${r.unlocked ? '✓' : r.completed + '/' + r.total} ${r.name}</span>`).join('')}</div>` + list.map((c, i) => {
       const v = c.vehicle || 'car', head = v !== lastV ? `<div class="ch-group">${VICON[v]} ${VNAME[v]}</div>` : ''; lastV = v;
       return head + `<button class="ch-item${i === sel ? ' sel' : ''}" data-i="${i}"><b>${VICON[v]} ${c.name}</b>
-        <span class="ch-meta">${(c.length / 1000).toFixed(1)} km · best ${fmtTime(best[c.id]?.time)}</span>
+        <span class="ch-meta">${fmtDist(c.length)} · best ${fmtTime(best[c.id]?.time)}</span>
         <span class="ch-desc">${c.desc}</span></button>`; }).join('') +
       `<div class="ch-hint">↑/↓ + Enter or click to start · J or Esc to close${state !== 'idle' ? ' · Backspace restarts a run' : ''}</div>`;
     menu.querySelectorAll('.ch-item').forEach(b => b.addEventListener('click', () => start(+b.dataset.i)));

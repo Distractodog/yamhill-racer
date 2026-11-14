@@ -21,6 +21,7 @@ import { JET } from './jet.js';
 import { createSpawn } from './spawn.js';
 import { createSettings } from './settings.js';
 import { makeRim } from './rim.js';
+import { toggleUnits, onUnits, speedUnit, speedValue, fmtKmh } from './units.js';
 
 const sessionSpawn = createSpawn();
 const settings = createSettings();
@@ -162,6 +163,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyF') flipUpright();
   if (e.code === 'KeyH' && !e.repeat) goHome();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
+  if (e.code === 'KeyU' && !e.repeat) toggleUnits();
   if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.glide) vehicles.current.glide.toggle(); else vehicles.current.say?.('The jet has its own wings', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
 });
@@ -315,6 +317,14 @@ const vmsgEl = Object.assign(document.createElement('div'), { id: 'veh-msg' }); 
 const vlineEl = Object.assign(document.createElement('div'), { id: 'veh-line' });
 vlineEl.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px;font-variant-numeric:tabular-nums;';
 speedEl.before(vlineEl);
+// speed number + unit label (km/h ⇄ mph). The label is clickable; U does the same. Display only.
+const speedNumEl = document.getElementById('speed-num'), speedUnitEl = document.getElementById('speed-unit');
+speedUnitEl.addEventListener('click', e => { e.stopPropagation(); toggleUnits(); speedUnitEl.blur(); });
+const showUnits = () => {
+  speedUnitEl.textContent = speedUnit();
+  document.querySelectorAll('[data-kmh]').forEach(el => { el.textContent = fmtKmh(+el.dataset.kmh); });
+};
+onUnits(showUnits); showUnits();
 // Debug readout (F8, or open the game with ?debug): what this browser actually sends the game, so a player can
 // screenshot it when a control doesn't work on their machine.
 const BUILD = '2026-11-14 cosmetics and street map';
@@ -385,8 +395,8 @@ function frame(now) {
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
-  const kmh = Math.round(car.vel.length() * 3.6);
-  speedEl.innerHTML = `${kmh}<small>km/h</small>`;
+  const spd = speedValue(car.vel.length());
+  if (spd !== speedNumEl._last) { speedNumEl.textContent = spd; speedNumEl._last = spd; }
   const v = vehicles.current;
   const info = `${v.kind === 'car' ? 'Car' : v.name}${car.drifting ? ' · DRIFT' : ''}`;
   if (info !== infoEl._last) { infoEl.innerHTML = info; infoEl._last = info; }

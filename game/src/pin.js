@@ -5,6 +5,7 @@
 // Reaching the pin (within ARRIVE m) shows "You made it" and clears it.
 import * as THREE from 'three';
 import { PIN_COLOR } from './minimap.js';
+import { fmtDist } from './units.js';
 
 const RIBBON_LEN = 150, RIBBON_STEP = 3, RIBBON_W = 2.2, RIBBON_START = 3, RIBBON_LIFT = 0.3;
 const BEACON_RANGE = 2500, ARRIVE = 25;
@@ -66,7 +67,7 @@ export function createPinGuide({ scene, world, car, minimap, challenges }) {
 
   let lastY = null, doneT = 0;
   const fw = new THREE.Vector3();
-  const fmt = d => d < 1000 ? `${Math.round(d / 10) * 10} m` : d < 10000 ? `${(d / 1000).toFixed(2)} km` : `${(d / 1000).toFixed(1)} km`;
+  const fmt = d => fmtDist(d, { round: 10, fine: true });
 
   function update(dt) {
     const pin = minimap.pin, cx = car.renderPos.x, cz = car.renderPos.z;

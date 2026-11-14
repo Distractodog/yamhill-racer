@@ -1,6 +1,7 @@
 import { createRoadGraph, routeProgress } from './navigation.js';
+import { fmtDist } from './units.js';
 
-const fmt = m => m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`;
+const fmt = m => fmtDist(m, { round: 10 });
 export function createDirections({ minimap, car, world }) {
   let graph=null, loading=null, active=null, selecting=false, timer=0, request=0;
   const message=text=>minimap.setDirectionsStatus(text);

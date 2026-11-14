@@ -9,6 +9,7 @@
 // Physics only reads the world through heightAt / normalAt / waterLevelAt / treesNear / buildingsNear, like the car.
 import * as THREE from 'three';
 import { normalizeGliderColors } from './glidercolors.js';
+import { fmtKmh } from './units.js';
 
 export const GLIDER = {
   liftK: 0.0386,     // lift (m/s²) = liftK × speed² × CL – at 97 km/h a CL of 0.85 carries the car
@@ -86,7 +87,7 @@ export class Glider {
       c.vel.addScaledVector(_up, this.P.hop); c.pos.y += 0.25;
       this.deploy(); return;
     }
-    this.say(`Glider needs air, or ${this.P.minGroundKmh}+ km/h to hop off the ground`);
+    this.say(`Glider needs air, or ${fmtKmh(this.P.minGroundKmh)}+ to hop off the ground`);
   }
 
   deploy() {
