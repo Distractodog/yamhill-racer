@@ -73,10 +73,94 @@ function box(m, b, floor) {
   walls(m, pts, floor + b.y0, floor + b.y1, b.color); cap(m, pts, floor + b.y1, shade(b.color, 1.05));
 }
 
-function windowsOn(m, pts, part, floor, ground, top) {
+// Vertical bays on one face: brick piers, inset brick between the floors, light sills.
+// `far` keeps the plain window grid. Other faces of the same part are unchanged.
+function frontEdge(es, face) {
+  let best = null, dot = 0.72;
+  for (const e of es) {
+    const d = e.ox * face[0] + e.oz * face[1];
+    if (d > dot) { dot = d; best = e; }
+  }
+  return best;
+}
+function groupedBays(span, winW, groups) {
+  const n = groups.reduce((a, b) => a + b, 0);
+  const wideAt = new Set();
+  let acc = 0;
+  for (let g = 0; g < groups.length - 1; g++) { acc += groups[g]; wideAt.add(acc); }
+  const gaps = n + 1, minN = 0.42, minW = 0.95;
+  const extra = Math.max(0, span - n * winW - (gaps - wideAt.size) * minN - wideAt.size * minW);
+  const weight = (gaps - wideAt.size) + wideAt.size * 2.1;
+  const narrow = minN + extra / weight, wide = minW + extra / weight * 2.1;
+  const centers = [];
+  let x = 0;
+  for (let i = 0; i < n; i++) {
+    x += wideAt.has(i) ? wide : narrow;
+    centers.push({ s: x + winW / 2, setback: i >= groups[0] });
+    x += winW;
+  }
+  return { centers, end: x + (wideAt.has(n) ? wide : narrow) };
+}
+function evenBays(from, to, every, winW) {
+  const centers = [];
+  const n = Math.max(0, Math.floor((to - from) / every));
+  if (n < 1) return centers;
+  const span = (n - 1) * every, s0 = from + Math.max(0, (to - from - span) / 2);
+  for (let i = 0; i < n; i++) {
+    const s = s0 + i * every;
+    if (s > winW * 0.5 && s < to - winW * 0.4) centers.push({ s, setback: false });
+  }
+  return centers;
+}
+function baysOn(m, edge, part, floor, ground, top) {
+  const w = part.win, bay = w.bays, winW = bay.w || Math.min(w.w, 1.55), winH = bay.h || w.h;
+  const towerStart = !bay.anchor || Math.hypot(edge.p[0] - bay.anchor[0], edge.p[1] - bay.anchor[1])
+    <= Math.hypot(edge.q[0] - bay.anchor[0], edge.q[1] - bay.anchor[1]);
+  const along = s => towerStart ? s : edge.L - s;
+  let spots;
+  if (bay.groups) {
+    const head = groupedBays(Math.min(edge.L - 0.4, bay.span || edge.L), winW, bay.groups);
+    spots = head.centers;
+    if (head.end < edge.L - 2) spots = spots.concat(evenBays(head.end, edge.L, bay.every || 3.5, winW));
+  } else spots = evenBays(0.4, edge.L - 0.2, bay.every || w.every, winW);
+  const at = (s, y, off) => {
+    const u = along(s);
+    return [edge.p[0] + edge.ux * u + edge.ox * off, y, edge.p[1] + edge.uz * u + edge.oz * off];
+  };
+  const face = [edge.ox, 0, edge.oz];
+  const pierOf = (a, b, off) => {
+    if (b - a < 0.18) return;
+    m.quad(at(a, floor, off), at(b, floor, off), at(b, top, off), at(a, top, off), part.wall, face);
+  };
+  const ordered = spots.map(s => s.s).sort((a, b) => a - b);
+  if (!ordered.length) return;
+  const back = new Set(spots.filter(s => s.setback).map(s => s.s));
+  const proud = s => bay.setback && back.has(s) ? 0.06 : 0.16;
+  pierOf(0.05, ordered[0] - winW / 2, proud(ordered[0]));
+  for (let i = 0; i < ordered.length - 1; i++) pierOf(ordered[i] + winW / 2, ordered[i + 1] - winW / 2, Math.min(proud(ordered[i]), proud(ordered[i + 1])));
+  pierOf(ordered[ordered.length - 1] + winW / 2, edge.L - 0.05, proud(ordered[ordered.length - 1]));
+  const sill = bay.sill || part.wall;
+  for (const spot of spots) {
+    const s = spot.s, off = spot.setback && bay.setback ? 0.05 : 0.045;
+    const gnd = ground(at(s, 0, 1.2)[0], at(s, 0, 1.2)[2]);
+    for (let r = 0; r < w.rows; r++) {
+      const yb = floor + r * w.sh + w.sill, yt = yb + winH;
+      if (yt > top - 0.35 || yb < gnd + 0.3) continue;
+      m.quad(at(s - winW / 2, yb, off), at(s + winW / 2, yb, off), at(s + winW / 2, yt, off), at(s - winW / 2, yt, off), w.color, face);
+      m.quad(at(s - winW / 2 - 0.08, yb - 0.14, off + 0.05), at(s + winW / 2 + 0.08, yb - 0.14, off + 0.05),
+        at(s + winW / 2 + 0.08, yb, off + 0.05), at(s - winW / 2 - 0.08, yb, off + 0.05), sill, face);
+      const yNext = r + 1 < w.rows ? floor + (r + 1) * w.sh + w.sill : top - 0.15;
+      if (yNext - yt > 0.2) m.quad(at(s - winW / 2, yt, 0.02), at(s + winW / 2, yt, 0.02), at(s + winW / 2, yNext, 0.02), at(s - winW / 2, yNext, 0.02), shade(part.wall, 0.86), face);
+    }
+  }
+}
+
+function windowsOn(m, pts, part, floor, ground, top, far) {
   const w = part.win; if (!w) return;
+  const es = edges(pts), front = !far && w.bays ? frontEdge(es, w.bays.face) : null;
   const o = 0.05;
-  for (const e of edges(pts)) {
+  for (const e of es) {
+    if (e === front) continue;
     const n = Math.floor((e.L - 2 * w.margin) / w.every) + 1; if (n < 1 || e.L < w.w + 2 * w.margin) continue;
     const span = (n - 1) * w.every, s0 = (e.L - span) / 2;
     for (let i = 0; i < n; i++) {
@@ -92,6 +176,7 @@ function windowsOn(m, pts, part, floor, ground, top) {
       }
     }
   }
+  if (front) baysOn(m, front, part, floor, ground, top);
 }
 
 function doorsOn(m, pts, part, floor) {
@@ -162,8 +247,9 @@ function porch(m, pts, P, floor, ground) {
   }
 }
 
-// b: a campus.js building with b.floor set (applyCampus); ground(x, z) = terrain height
-export function buildCampusGeometry(b, ground) {
+// b: a campus.js building with b.floor set (applyCampus); ground(x, z) = terrain height.
+// far = the plain window grid, used past ~250 m.
+export function buildCampusGeometry(b, ground, far = false) {
   const m = new Mesh();
   for (const part of b.parts) {
     const pts = partPts(part), floor = b.floor + (part.dy || 0);
@@ -172,11 +258,27 @@ export function buildCampusGeometry(b, ground) {
     if (part.wallTop) {       // two-tone walls (lower storey / upper storey)
       walls(m, pts, bottom, floor + part.wallTop.y, part.wall); walls(m, pts, floor + part.wallTop.y, top, part.wallTop.color);
     } else walls(m, pts, bottom, top, part.wall);
-    windowsOn(m, pts, part, floor, ground, top);
+    windowsOn(m, pts, part, floor, ground, top, far);
     doorsOn(m, pts, part, floor);
     roof(m, pts, part, top);
     if (part.porch) porch(m, pts, part.porch, floor, ground);
     for (const bx of part.boxes || []) box(m, bx, floor);
   }
   return m.geometry();
+}
+
+// Detailed front and the plain far copy, for a building whose windows name a bay face.
+// Other buildings are pushed onto `geos` and merged by the caller.
+export function placeCampus(group, lods, geos, building, ground, mat) {
+  const detailed = building.parts.some(p => p.win && p.win.bays);
+  if (!detailed) { geos.push(buildCampusGeometry(building, ground)); return; }
+  const near = new THREE.Mesh(buildCampusGeometry(building, ground, false), mat);
+  const far = new THREE.Mesh(buildCampusGeometry(building, ground, true), mat);
+  near.name = 'campus-near'; far.name = 'campus-far';
+  near.castShadow = near.receiveShadow = far.receiveShadow = true;
+  near.visible = far.visible = false;
+  let cx = 0, cz = 0, n = 0;
+  for (const part of building.parts) for (const p of partPts(part)) { cx += p[0]; cz += p[1]; n++; }
+  group.add(near, far);
+  lods.push({ near, far, cx: cx / n, cz: cz / n });
 }

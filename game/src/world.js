@@ -7,7 +7,7 @@ import { readTileData, fetchReader, groundFile } from './tilepack.js';
 import { roadLOD, roadBatches, buildJunctions } from './roads.js';
 import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
 import { installPerf } from './perf.js';
-import { buildCampusGeometry } from './campusmodel.js';
+import { placeCampus } from './campusmodel.js';
 import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
 import { addProps, propGeometries, showProps } from './propsmodel.js';
 
@@ -63,7 +63,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   // builds one tile's meshes, yielding between pieces so the frame budget can pause it
   function* buildTile(td, img) {
-    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], treeMats: null, tgrid: null };
+    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], treeMats: null, tgrid: null };
     out.textures = []; out.materials = [];
     const quarterMats = [];
     for (const bmp of img) {
@@ -206,7 +206,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     let planned = 0;
     for (const b of td.buildings) {
       if (b.campusPart) {      // hand-made campus building (campus.js), drawn once from its first footprint
-        if (b.campus) { cGeos.push(buildCampusGeometry(b.campus, td.terrainAt)); yield 'buildings'; }
+        if (b.campus) { placeCampus(g, out.campusLods, cGeos, b.campus, td.terrainAt, campusMat); yield 'buildings'; }
         continue;
       }
       if (!b.pts || b.pts.length < 3) continue;
@@ -343,6 +343,10 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         b.near.castShadow = d < townRange.shadow;
       }
       showProps(v.propLods, cam);
+      for (const c of v.campusLods) {
+        const near = Math.hypot(c.cx - cam.x, c.cz - cam.z) < 250;
+        c.near.visible = near; c.far.visible = !near;
+      }
     }
     notePerf();
   }
