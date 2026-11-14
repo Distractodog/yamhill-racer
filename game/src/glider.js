@@ -8,6 +8,7 @@
 //   * touch down upright and not too fast downward → back on your wheels; anything else is a crash and a tumble
 // Physics only reads the world through heightAt / normalAt / waterLevelAt / treesNear / buildingsNear, like the car.
 import * as THREE from 'three';
+import { normalizeGliderColors } from './glidercolors.js';
 
 export const GLIDER = {
   liftK: 0.0386,     // lift (m/s²) = liftK × speed² × CL – at 97 km/h a CL of 0.85 carries the car
@@ -271,9 +272,10 @@ export function buildGliderModel(o = {}) {
   const H = o.H ?? 2.0;                            // wing height above the vehicle's centre
   const SPAN = o.span ?? 4.7, NZ = o.nose ?? 1.7, TZ = o.tail ?? -1.25, TIPZ = o.tip ?? -1.35, f = SPAN / 4.7;
   const nose = [0, H + 0.05, NZ], tail = [0, H + 0.12, TZ];
-  const pos = [], col = [];
-  const C = [new THREE.Color(0xf4c430), new THREE.Color(0xe8402f), new THREE.Color(0xfaf6ea)];   // yellow / red / white panels
-  const tri = (a, b, c, k) => { pos.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) col.push(C[k].r, C[k].g, C[k].b); };
+  const pos = [], col = [], panels = [];
+  const palette = normalizeGliderColors(o.colors);
+  const C = [palette.stripe, palette.wing, palette.accent].map(c => new THREE.Color(c));
+  const tri = (a, b, c, k) => { pos.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) { col.push(C[k].r, C[k].g, C[k].b); panels.push(k); } };
   const lerp = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
   for (const s of [1, -1]) {
     const tip = [s * SPAN, H - 0.12, TIPZ];
@@ -291,10 +293,11 @@ export function buildGliderModel(o = {}) {
   const sail = new THREE.BufferGeometry();
   sail.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   sail.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  sail.userData.gliderPanels = panels;
   sail.computeVertexNormals();
   const g = new THREE.Group(); g.name = 'glider';
   const wing = new THREE.Mesh(sail, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true }));
-  wing.castShadow = true; g.add(wing);
+  wing.name = 'glider-sail'; wing.castShadow = true; g.add(wing);
   const tube = new THREE.MeshLambertMaterial({ color: 0x2b2e35 });
   const rod = (a, b, r = 0.035) => {
     const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), L = A.distanceTo(B);
@@ -313,6 +316,7 @@ export function buildGliderModel(o = {}) {
   const fin = new THREE.BufferGeometry();
   fin.setAttribute('position', new THREE.Float32BufferAttribute([0, H + 0.12, TZ, 0, H + 0.12, TZ + 0.65 * f, 0, H + 0.12 + 0.63 * f, TZ - 0.1 * f], 3));
   fin.computeVertexNormals();
-  g.add(new THREE.Mesh(fin, new THREE.MeshLambertMaterial({ color: 0xe8402f, side: THREE.DoubleSide })));
+  const tailFin = new THREE.Mesh(fin, new THREE.MeshLambertMaterial({ color: palette.wing, side: THREE.DoubleSide }));
+  tailFin.name = 'glider-fin'; g.add(tailFin);
   return g;
 }

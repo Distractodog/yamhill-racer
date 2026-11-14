@@ -14,6 +14,7 @@ import { createMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
 import { Glider, BIKE_GLIDER } from './glider.js';
+import { addGliderColorSettings } from './glidercolors.js';
 import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
@@ -111,6 +112,7 @@ const garage = createGarage({ cosmetics, vehicles, rewards: challenges.rewards,
 const garageButton = document.getElementById('garage-button');
 
 const gui = new GUI({ title: 'Vehicle tuning', container: document.getElementById('tuning-controls') });
+addGliderColorSettings(gui, { car: glider, bike: bikeGlider });
 const fc = gui.addFolder('Car');
 const RANGES = {
   accel: [5, 60, 0.5], topSpeed: [100, 1500, 10], brakeDecel: [10, 100, 1],

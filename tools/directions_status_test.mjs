@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {createDirections} from '../game/src/directions.js';
+const network={nodes:[[0,0,0],[100,0,0],[100,100,0],[0,100,0]],edges:[[0,1,10],[1,2,10],[2,3,10],[3,0,10]]};
+globalThis.fetch=async()=>({ok:true,json:async()=>network});
+let status=null,points=null,onPin,clear;
+const minimap={setDirectionsStatus:s=>status=s,setDirections:p=>points=p,setDirectionMode(){},onPin:f=>onPin=f,setPin(){onPin();},setDirectionHandlers(a,b,c){clear=c;}};
+const car={grounded:false,pos:{x:20,z:0,y:1}};
+const world={loadedAt:()=>true,surfaceAt:()=>3};
+const nav=createDirections({minimap,car,world});
+await nav.begin();assert.equal(status,'Start on a road');
+car.grounded=true;await nav.begin();nav.choose(100,80,0);assert.ok(points);assert.equal(status,'160 m to destination');
+car.pos.x=100;car.pos.z=40;nav.update(1);assert.equal(status,'40 m to destination');assert.doesNotMatch(status,/turn|left|right/i);
+car.pos.x=0;car.pos.z=80;nav.update(1);assert.equal(status,'140 m to destination');assert.ok(nav.active,'rerouting stays active');
+car.pos.x=100;car.pos.z=80;nav.update(1);assert.equal(status,'Arrived · 0 m');assert.equal(points,null);
+clear();assert.equal(status,null);
+console.log('Directions: map-only distance, progress, reroute, arrival, and clearing passed without DOM HUD');

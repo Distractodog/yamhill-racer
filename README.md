@@ -60,11 +60,21 @@ serve `game/` with any static web server.
 ### Road directions
 
 While on a road, open the map (M), click ↱ Directions, then click a road destination.
-The green line follows connected asphalt/gravel roads. Turn prompts and remaining distance
-stay visible while driving; leaving the route recalculates when you return to a road.
-Use the × on the directions prompt to clear the route. Ordinary map pins still work.
+The green line follows connected asphalt/gravel roads. Remaining distance stays inside the minimap while driving; leaving the route recalculates when you return to a road.
+Use the × on the minimap distance badge to clear the route. Ordinary map pins still work.
 
 After rebuilding tile roads, run `python3 tools/build_navigation.py` to refresh
 `game/assets/navigation.json`. Verify with `node tools/navigation_test.mjs`.
 Roof support and terrain-aligned track paint have regression checks in
 `tools/roof_landing_test.mjs` and `tools/terrainpaint_test.mjs`.
+
+### Clear maps and glider colors
+
+The overview map uses higher-quality compression. Close views load 1 m/pixel detail
+images only for visible tiles; the full map can zoom to 32×. `tools/build_minimap.py`
+rebuilds the overview and `minimap-detail/` images from existing tiles without changing
+terrain. Run `node tools/minimap_detail_test.mjs` to verify loading/cache behavior.
+
+Settings → Glider colors changes the wing/tail, center stripe, and accent panels for
+the car and dirt bike separately. Make wing one color removes contrasting stripes;
+Reset glider colors restores the red/white default. Palettes are saved locally.

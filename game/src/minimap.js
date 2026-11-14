@@ -1,4 +1,5 @@
 import { createMapDetail, mapDetailLevel } from './mapdetail.js';
+import { createMapDetail as createMapImagery } from './minimapdetail.js';
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
 // The full map zooms (scroll / pinch / + −, around the pointer) and pans (drag). A click drops a pin
 // (click it again, 📍 or P to clear); pin.js guides you to it.
@@ -22,6 +23,7 @@ export async function createMinimap(base = './assets/') {
   const img = new Image();
   img.src = base + 'minimap.jpg';
   await img.decode();
+  const imagery = createMapImagery(meta, base);
   const [ex0, ez0] = meta.extent, mpp = meta.mpp;
   const detail = createMapDetail(base);
   const mapBase = document.createElement('canvas'), mapCtx = mapBase.getContext('2d');
@@ -50,8 +52,15 @@ export async function createMinimap(base = './assets/') {
     '<div class="fm-status" aria-live="polite"></div><div class="fm-scale"></div><div class="fm-zoom"><button data-z="in" title="Zoom in (+)">+</button><button data-z="out" title="Zoom out (−)">−</button>' +
     '<button data-z="fit" title="Whole map (0)">⤢</button><button data-z="car" title="Centre on car">◎</button>' +
     '<button data-z="directions" title="Road directions" aria-label="Road directions">↱</button><button data-z="unpin" title="Remove the pin (P)">📍</button><button data-z="close" title="Close (M)">✕</button></div>';
+  const routeBadge = '<div class="mm-route" hidden><span></span><button type="button" aria-label="Clear directions" title="Clear directions">✕</button></div>';
+  corner.insertAdjacentHTML('beforeend', routeBadge);
+  full.insertAdjacentHTML('beforeend', routeBadge);
   const css = document.createElement('style');
-  css.textContent = `#fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
+  css.textContent = `#minimap .mm-route, #fullmap .mm-route { position:absolute; bottom:8px; left:8px; right:8px; display:flex; align-items:center; justify-content:space-between; gap:6px; padding:5px 7px; border-radius:7px; background:#10251fee; color:#fff; font:600 12px/1.3 system-ui; }
+    #fullmap .mm-route { left:calc(3vw + 12px); right:auto; bottom:calc(3vh + 12px); max-width:min(420px,70vw); font-size:14px; }
+    #minimap .mm-route[hidden], #fullmap .mm-route[hidden] { display:none; }
+    #minimap .mm-route button, #fullmap .mm-route button { position:static; flex:0 0 20px; width:20px; height:20px; border:0; border-radius:4px; background:transparent; color:#fff; font:16px/1 system-ui; cursor:pointer; padding:0; }
+    #fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
     #fullmap canvas.drag { cursor: grabbing; }
     #fullmap .fm-status { position:absolute; left:calc(3vw + 12px); bottom:calc(3vh + 12px); color:#f2f5e9; background:#14291ed9; border-radius:8px; padding:6px 10px; font:12px system-ui,sans-serif; pointer-events:none; }
     #fullmap .fm-scale { position:absolute; right:calc(3vw + 16px); bottom:calc(3vh + 16px); border:solid #fff; border-width:0 2px 2px; height:18px; color:white; font:11px system-ui,sans-serif; text-align:center; text-shadow:0 1px 3px #000; pointer-events:none; }
@@ -72,7 +81,7 @@ export async function createMinimap(base = './assets/') {
   const zoomIn = full.querySelector('[data-z="in"]'), zoomOut = full.querySelector('[data-z="out"]');
   const unpinButton = full.querySelector('[data-z="unpin"]'), statusEl = full.querySelector('.fm-status'), scaleEl = full.querySelector('.fm-scale');
 
-  let directionMode = false, directionBegin = null, directionChoose = null, directions = null;
+  let directionMode = false, directionBegin = null, directionChoose = null, directionClear = null, directions = null;
   let open = false, viewM = 600, spawnPicker = null;
   const normalHint = full.querySelector(".fm-hint").textContent;
   // full map view: zoom 1 = whole map fits; (vx, vy) = image pixel at the centre of the canvas
@@ -84,6 +93,7 @@ export async function createMinimap(base = './assets/') {
     if (!open) detail.update([0,0,0,0],0);
     if (open) { zoom = 1; vx = img.width / 2; vy = img.height / 2; }       // always opens on the whole map
   };
+  for (const panel of [corner, full]) panel.querySelector('.mm-route button').addEventListener('click', e => { e.stopPropagation(); directionClear?.(); });
   corner.addEventListener('click', () => toggle(true));
   full.addEventListener('click', e => { if (e.target === full) toggle(false); });   // the dark border closes it
 
@@ -263,6 +273,10 @@ export async function createMinimap(base = './assets/') {
       cctx.imageSmoothingQuality = 'high';
       const cox = W / 2 - px * s, coy = H / 2 - py * s;
       cctx.drawImage(img, cox, coy, img.width * s, img.height * s);
+      cctx.save();
+      if (rim) { const [rx, ry, rr] = rimAt(cox, coy, s); cctx.beginPath(); cctx.arc(rx, ry, rr, 0, Math.PI * 2); cctx.clip(); }
+      imagery.draw(cctx, cox, coy, s);
+      cctx.restore();
       strokeRim(cctx, cox, coy, s, d);
       const cmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [W / 2 + (a - px) * s, H / 2 + (b - py) * s]; };
       drawOverlay(cctx, cmap, d);
@@ -286,12 +300,13 @@ export async function createMinimap(base = './assets/') {
       const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
       const ppm=s/mpp,bounds=[ex0+(vx-W/2/s)*mpp,ez0+(vy-H/2/s)*mpp,ex0+(vx+W/2/s)*mpp,ez0+(vy+H/2/s)*mpp];
       detail.update(bounds,ppm/d);
-      const baseKey=[W,H,vx,vy,zoom,d,detail.revision].join(':');
+      const baseKey=[W,H,vx,vy,zoom,d,detail.revision,imagery.revision].join(':');
       if(baseKey!==mapBaseKey){
         mapBase.width=W;mapBase.height=H;mapBaseKey=baseKey;
         mapCtx.fillStyle='#141816';mapCtx.fillRect(0,0,W,H);mapCtx.save();
         if(rim){const[rx,ry,rr]=rimAt(ox,oy,s);mapCtx.beginPath();mapCtx.arc(rx,ry,rr,0,Math.PI*2);mapCtx.clip();}
         mapCtx.imageSmoothingQuality='high';mapCtx.drawImage(img,ox,oy,img.width*s,img.height*s);
+        imagery.draw(mapCtx,ox,oy,s);
         detail.draw(mapCtx,{bounds,ppm,d,map:fmap});
         if(mapDetailLevel(ppm/d)<3)for(const l of LABELS){const[lx,ly]=fmap(l.x,l.z);if(lx>-120&&ly>-30&&lx<W+120&&ly<H+30)label(mapCtx,l.name,lx,ly,(zoom>25?12:15)*d);}
         mapCtx.restore();
@@ -332,7 +347,14 @@ export async function createMinimap(base = './assets/') {
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
   return { update, toggle, get detailStats() { return detail.stats; }, get zoom() { return zoom; },
-    setDirectionHandlers(begin, choose) { directionBegin=begin; directionChoose=choose; },
+    setDirectionHandlers(begin, choose, clear) { directionBegin=begin; directionChoose=choose; directionClear=clear; },
+    setDirectionsStatus(text) {
+      for (const panel of [corner, full]) {
+        const badge=panel.querySelector('.mm-route'); badge.hidden=!text;
+        if (panel === full) statusEl.hidden=!!text;
+        badge.querySelector('span').textContent=text || '';
+      }
+    },
     setDirections(points) { directions=points; },
     setDirectionMode(value) {
       directionMode=value;
