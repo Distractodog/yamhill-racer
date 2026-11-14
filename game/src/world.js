@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileData } from './data.js';
 import { readTileData, fetchReader, groundFile } from './tilepack.js';
-import { buildRoads, roadBatches, buildJunctions } from './roads.js';
+import { roadLOD, roadBatches, buildJunctions } from './roads.js';
 import { buildCampusGeometry } from './campusmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
@@ -144,7 +144,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       out.chunks.push({ levels, cx: td.x0 + (j0 + j1) / 2 * HS, cz: td.z0 + (i0 + i1) / 2 * HS, lv: -1 });
     }
     // road / trail strips
-    for (const batch of roadBatches(td.renderRoads)) { g.add(buildRoads(td, stripMat, batch)); yield 'roads'; }
+    for (const batch of roadBatches(td.renderRoads)) { g.add(roadLOD(td, stripMat, batch)); yield 'roads'; }   // near + far versions
     for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
     // ponds: a flat quad per height cell inside a pond
     const wpos = [];

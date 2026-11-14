@@ -18,7 +18,7 @@ Per tile, game/assets/tiles/<tx>_<tz>/:
 game/assets/world.json: tile size, list of tiles, spawn, height grid info.
 """
 import json, math, os, sys, time
-from collections import Counter
+from collections import Counter, defaultdict
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 from scipy import ndimage
@@ -39,9 +39,15 @@ T0 = time.time()
 def log(*a): print(f'[{time.time() - T0:5.0f}s]', *a, flush=True)
 
 TILES = [(tx, tz) for tx, tz in TILE_SET if os.path.exists(os.path.join(RAW, 'tiles', f'{tx}_{tz}', 'chm.npy'))]
+# YR_TILES=9_-6,2_1 builds only those tiles, on a height grid around just them (quick, low-memory test builds;
+# heights near a test tile's edge can differ slightly from a full build)
+if os.environ.get('YR_TILES'):
+    TILES = [tuple(map(int, t.split('_'))) for t in os.environ['YR_TILES'].split(',')]
 TILE_KEYS = set(TILES)
-GX0, GX1 = TX.start * TILE - TILE / 2, (TX.stop - 1) * TILE + TILE / 2     # global extent
-GZ0, GZ1 = TZ.start * TILE - TILE / 2, (TZ.stop - 1) * TILE + TILE / 2
+_tx = [t[0] for t in TILES] if os.environ.get('YR_TILES') else [TX.start, TX.stop - 1]
+_tz = [t[1] for t in TILES] if os.environ.get('YR_TILES') else [TZ.start, TZ.stop - 1]
+GX0, GX1 = min(_tx) * TILE - TILE / 2, max(_tx) * TILE + TILE / 2     # global extent
+GZ0, GZ1 = min(_tz) * TILE - TILE / 2, max(_tz) * TILE + TILE / 2
 HN = int(TILE / HSTEP) + 1                       # 501 vertices per tile side
 HM = 8                                            # height margin vertices kept around each tile (32 m)
 SAT_N = TILE + 2 * MARGIN                         # raw satellite / chm pixels per tile (1 m)
@@ -112,7 +118,10 @@ def keep_in_map(pts, pad=120.0):
 # ---------------------------------------------------------------- 1. OpenStreetMap: roads, buildings, water
 osm = json.load(open(os.path.join(RAW, 'osm_region.json')))['elements']
 ROAD_W = {'motorway': 18, 'trunk': 17, 'primary': 16, 'secondary': 15, 'tertiary': 14, 'unclassified': 13,
-          'residential': 13, 'service': 12, 'track': 12, 'living_street': 12}
+          'residential': 10, 'service': 12, 'track': 12, 'living_street': 10}
+# service roads by their OSM `service` tag (untagged service roads, e.g. the campus drives, keep 12 m)
+SERVICE_W = {'alley': 5, 'driveway': 5, 'parking_aisle': 6, 'drive-through': 5}
+FLAT_DRIVEWAY = 30.0                 # driveways shorter than this and all parking aisles: flat paving (flat: true)
 PAVED = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street'}
 road_paths, buildings, water_polys = [], [], []
 for e in osm:
@@ -125,8 +134,16 @@ for e in osm:
         h = h.replace('_link', '')
         if h not in ROAD_W: continue
         paved = h in PAVED or t.get('surface') in ('asphalt', 'paved', 'concrete')
+        svc = t.get('service') if h == 'service' else None
+        try: lanes = int(t.get('lanes', 0)) or None
+        except ValueError: lanes = None
+        attr = {'cls': h + (':' + svc if svc in SERVICE_W else ''), 'lanes': lanes,
+                'sidewalk': t.get('sidewalk') if t.get('sidewalk') in ('both', 'left', 'right', 'yes', 'separate') else None,
+                'oneway': t.get('oneway') in ('yes', '1', '-1') or t.get('junction') == 'roundabout'}
+        w = SERVICE_W.get(svc, ROAD_W[h])
         for run in keep_in_map(pts):
-            road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': ROAD_W[h], 'pts': run, 'bridge': t.get('bridge') == 'yes'})
+            road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': w, 'pts': run, 'bridge': t.get('bridge') == 'yes',
+                               'attr': attr})
     elif 'building' in t:
         if not in_map(pts[:, 0].mean(), pts[:, 1].mean(), 80)[0]: continue
         lv = t.get('building:levels')
@@ -136,6 +153,20 @@ for e in osm:
     elif t.get('natural') == 'water' and e['type'] == 'way':
         if in_map(pts[:, 0], pts[:, 1], 100).any(): water_polys.append(pts)
 log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys))
+# town ground (fetch_tiles.py fetch_landuse): green = parks / lawns / pitches / cemeteries, grey = parking + lots
+GREEN_LU = {'grass', 'recreation_ground', 'cemetery', 'village_green', 'park', 'pitch', 'playground', 'garden',
+            'golf_course', 'sports_centre'}
+lu_green, lu_grey, lu_lots = [], [], []      # lots: industrial / commercial zones (grey only where bare or paved)
+_lu = os.path.join(RAW, 'osm_landuse.json')
+for e in (json.load(open(_lu))['elements'] if os.path.exists(_lu) else []):
+    t = e.get('tags', {}); kind = t.get('landuse') or t.get('leisure') or t.get('amenity')
+    rings = [e['geometry']] if e.get('geometry') else [m['geometry'] for m in e.get('members', []) if m.get('role') == 'outer' and m.get('geometry')]
+    for g in rings:
+        if len(g) < 3: continue
+        wx, wz = lonlat_to_world(np.array([q['lon'] for q in g]), np.array([q['lat'] for q in g]))
+        if not in_map(wx, wz, 50).any(): continue
+        (lu_green if kind in GREEN_LU else lu_grey if kind == 'parking' else lu_lots).append(np.stack([wx, wz], 1))
+log('land use polygons: green', len(lu_green), 'parking', len(lu_grey), 'lots', len(lu_lots))
 
 # ---------------------------------------------------------------- 2. campus: trails + ponds from Ethan's map
 # These come from the original single-map pipeline (old 2048 px satellite frame, same world origin).
@@ -305,7 +336,7 @@ for e in edges:
         if not keep_a: nodes.append(piece['pts'][0].copy())
         b = e['b'] if keep_b else len(nodes)
         if not keep_b: nodes.append(piece['pts'][-1].copy())
-        fixed.append({'a': a, 'b': b, 'pts': piece['pts'], 'kind': e['kind'], 'w': e['w']})
+        fixed.append({'a': a, 'b': b, 'pts': piece['pts'], 'kind': e['kind'], 'w': e['w'], 'attr': e.get('attr', {})})
 nodes, edges = roadnet.compact(nodes, fixed)
 paths = edges
 deg = Counter([e['a'] for e in edges] + [e['b'] for e in edges])
@@ -313,6 +344,55 @@ log('network: edges', len(edges), 'junctions', sum(1 for v in deg.values() if v 
     'dead ends', sum(1 for v in deg.values() if v == 1))
 del _d_out, _i_out, _d_in, _i_in
 log('paths', len(paths))
+
+# per-road data written into tile.json: OSM class, lanes, sidewalk, oneway; flat paving for tiny service stubs;
+# median for split carriageways (two one-way roads of the same class side by side, opposite directions)
+from scipy.spatial import cKDTree as _KD
+_samp, _owner = [], []
+for i, p in enumerate(paths):
+    a = p.get('attr', {})
+    if not a.get('oneway'): continue
+    q = roadnet.at_s(p['pts'], np.arange(0, roadnet.arclen(p['pts'])[-1], 10.0))
+    tg = np.gradient(q, axis=0) if len(q) > 1 else np.zeros_like(q)
+    for k in range(len(q)): _samp.append((q[k, 0], q[k, 1], tg[k, 0], tg[k, 1])); _owner.append(i)
+_samp, _owner = np.array(_samp).reshape(-1, 4), np.array(_owner, int)
+_kd = _KD(_samp[:, :2]) if len(_samp) else None
+for i, p in enumerate(paths):
+    a = p.get('attr', {}); cls = a.get('cls', p['kind'])          # Ethan's campus trails: cls 'trail'
+    L = float(roadnet.arclen(p['pts'])[-1])
+    meta = {'cls': cls}
+    if a.get('lanes'): meta['lanes'] = a['lanes']
+    if a.get('sidewalk'): meta['sidewalk'] = a['sidewalk']
+    if a.get('oneway'): meta['oneway'] = True
+    if cls == 'service:parking_aisle' or (cls == 'service:driveway' and L < FLAT_DRIVEWAY): meta['flat'] = True
+    if a.get('oneway') and _kd is not None:
+        mine = np.nonzero(_owner == i)[0]; hits = 0
+        for k in mine:
+            for j in _kd.query_ball_point(_samp[k, :2], 30.0):
+                o = _owner[j]
+                if o != i and paths[o].get('attr', {}).get('cls') == cls and \
+                   np.dot(_samp[k, 2:], _samp[j, 2:]) / (np.hypot(*_samp[k, 2:]) * np.hypot(*_samp[j, 2:]) + 1e-9) < -0.7:
+                    hits += 1; break
+        if len(mine) and hits / len(mine) >= 0.6: meta['median'] = True
+    p['meta'] = meta
+# stop lines + crosswalks (drawn by roads.js): the ends of a town street where it meets a bigger road
+_RANK = {'motorway': 5, 'trunk': 5, 'primary': 4, 'secondary': 4, 'tertiary': 3, 'unclassified': 2,
+         'residential': 1, 'living_street': 1}
+_rank = lambda c: _RANK.get(c.split(':')[0], 0.5 if c.startswith('service') else 0)
+_at = defaultdict(list)
+for i, p in enumerate(paths): _at[p['a']].append(i); _at[p['b']].append(i)
+for i, p in enumerate(paths):
+    m = p['meta']; c = m['cls']
+    town = 'sidewalk' in m or c.split(':')[0] in ('residential', 'living_street', 'service')
+    if not town or 'flat' in m or c == 'trail' or c == 'service': continue      # campus drives / stubs: no paint
+    for end, node in (('stopA', p['a']), ('stopB', p['b'])):
+        if len(_at[node]) >= 3 and any(_rank(paths[o]['meta']['cls']) > _rank(c) for o in _at[node] if o != i):
+            p[end] = True
+_cc = Counter(p['meta']['cls'] for p in paths)
+log('road classes:', dict(_cc.most_common()))
+log('stop lines at', sum(p.get('stopA', False) + p.get('stopB', False) for p in paths), 'street ends')
+log('flat paving:', sum('flat' in p['meta'] for p in paths), '· median (split carriageway):',
+    sum('median' in p['meta'] for p in paths), '· with sidewalk tag:', sum('sidewalk' in p['meta'] for p in paths))
 
 # ---------------------------------------------------------------- 5. global heights (4 m), smoothed, carved
 gh = np.full((GHH, GHW), np.nan, np.float32)
@@ -382,6 +462,8 @@ del _ghs, _gx, _gz
 REF = np.array([(92, 112, 62), (112, 116, 76), (168, 150, 104), (112, 94, 74)], np.float32)
 OPEN = np.array([(118, 172, 70), (146, 166, 82), (212, 186, 112), (156, 116, 80)], np.float32)
 SURF_COL = {1: (64, 96, 50), 5: (104, 92, 66), 6: (196, 196, 190), 7: (200, 86, 66)}
+LAWN, LOT = np.array((124, 166, 74), np.float32), np.array((148, 149, 145), np.float32)   # town lawns / paved lots
+TOWN_DENSITY = 0.06                   # share of ground under buildings (smoothed over ~60 m) that counts as town
 TEXN = 2048
 
 
@@ -469,6 +551,27 @@ for tx, tz in TILES:
     land = ndimage.median_filter(land, size=(9, 9, 1))
     s2 = np.asarray(Image.fromarray(surf).resize((TEXN, TEXN), Image.NEAREST))
     col = land
+    # ---- towns: dry yellow lawns -> green, grey paved lots -> grey; OSM parks green and parking grey anywhere
+    def lu_mask(polys):
+        im = Image.new('L', (TEXN, TEXN), 0); d = ImageDraw.Draw(im); k = TEXN / TILE
+        for q in polys:
+            if q[:, 0].max() < rx0 or q[:, 0].min() > rx1 or q[:, 1].max() < rz0 or q[:, 1].min() > rz1: continue
+            d.polygon([((x - rx0) * k, (z - rz0) * k) for x, z in q], fill=255)
+        return np.asarray(im) > 0
+    bd = ndimage.gaussian_filter(bld_m[core][::4, ::4].astype(np.float32), 15)             # 4 m cells, ~60 m
+    town = np.asarray(Image.fromarray((bd > TOWN_DENSITY).astype(np.uint8) * 255).resize((TEXN, TEXN), Image.BILINEAR)) > 127
+    lots = lu_mask(lu_lots)
+    if town.any() or lots.any():
+        sharp = np.asarray(Image.fromarray(sat.astype(np.uint8)).filter(ImageFilter.GaussianBlur(3))).astype(np.float32)[core]
+        sharp = np.asarray(Image.fromarray(sharp.astype(np.uint8)).resize((TEXN, TEXN), Image.BILINEAR)).astype(np.float32)
+        mx, mn = sharp.max(2), sharp.min(2)
+        paved = (mx - mn < 0.13 * mx) & (sharp.mean(2) > 105)
+        paved = ndimage.binary_closing(ndimage.binary_opening(paved, iterations=4), iterations=2)      # no small specks
+        col[town & (land == OPEN[2]).all(2)] = LAWN
+        col[(town | lots) & paved] = LOT
+        del sharp, mx, mn, paved
+    col[lu_mask(lu_green)] = LAWN
+    col[lu_mask(lu_grey)] = LOT
     for c, rgb in SURF_COL.items(): col[s2 == c] = np.array(rgb, np.float32)
     tone = ndimage.gaussian_filter(rng.standard_normal((TEXN // 8, TEXN // 8)).astype(np.float32), 4)
     col *= 1 + ndimage.zoom(tone / (tone.std() + 1e-6), 8, order=1)[:TEXN, :TEXN, None] * 0.05
@@ -496,13 +599,17 @@ for tx, tz in TILES:
 
     # ---- strips: exact pieces for drawing, padded pieces for physics (a strip's width can reach over the edge)
     render, phys = [], []
-    piece = lambda p, pc: {'kind': p['kind'], 'w': p['w'], 'pts': np.round(pc[:, :2], 2).tolist(),
+    piece = lambda p, pc: {'kind': p['kind'], 'w': p['w'], **p['meta'], 'pts': np.round(pc[:, :2], 2).tolist(),
                            'yc': [[round(float(y), 3), round(float(c), 4)] for y, c in pc[:, 2:4]]}
     for p in paths:
         o = p['out']
         if roadnet.arclen(o)[-1] < 0.5: continue                     # fully swallowed by its junctions
         if o[:, 0].max() < rx0 - 60 or o[:, 0].min() > rx1 + 60 or o[:, 1].max() < rz0 - 60 or o[:, 1].min() > rz1 + 60: continue
-        for pc in clip_polyline(o, tile_rect(tx, tz)): render.append(piece(p, pc))
+        for pc in clip_polyline(o, tile_rect(tx, tz)):
+            q = piece(p, pc)                                     # stop line at an end that is the road's real end
+            st = [bool(p.get('stopA')) and np.allclose(pc[0, :2], o[0, :2]), bool(p.get('stopB')) and np.allclose(pc[-1, :2], o[-1, :2])]
+            if any(st): q['stop'] = st
+            render.append(q)
         for pc in clip_polyline(o, tile_rect(tx, tz, pad=p['w'])): phys.append(piece(p, pc))
     pr = tile_rect(tx, tz, pad=40)
     tj = [jn for jn in juncs if rx0 <= jn['c'][0] < rx1 and rz0 <= jn['c'][1] < rz1]
