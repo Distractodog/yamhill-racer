@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
 import { makeTrack } from './track.js';
+import { createGhost } from './ghost.js';
 
 const BEST_KEY = 'yr-best-1';
 const POST_H = 7, COUNTDOWN = 3;
@@ -134,6 +135,7 @@ function makeRamp(world, r) {
 // ---------------------------------------------------------------- manager
 export async function createChallenges({ scene, world, car, minimap, vehicles = null, base = './assets/' }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
+  const ghost = createGhost({ scene });
   // the map's fixed ramps (always there, not part of any challenge)
   const fixedList = await fetch(base + 'ramps.json').then(r => r.ok ? r.json() : []).catch(() => []);
   const fixedRamps = fixedList.map(r => ({ r, grp: null }));
@@ -214,6 +216,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   }
 
   async function start(i) {
+    ghost.stop();
     ch = list[i]; sel = i; result = null;
     closeMenu(); done.style.display = 'none';
     vehicles?.switchTo(ch.vehicle || 'car');
@@ -235,6 +238,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   }
 
   function quit() {
+    ghost.stop();
     placeToken++; state = 'idle'; ch = null; clearArches();
     if (vehicles) vehicles.jet.respawn = null;
     hud.style.display = 'none'; count.style.display = 'none'; done.style.display = 'none'; split.style.opacity = 0;
@@ -245,6 +249,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     state = 'finished';
     const prev = best[ch.id];
     const isBest = !prev || t < prev.time;
+    ghost.finish(t, car, isBest);
     if (isBest) { best[ch.id] = { time: t, splits: splits.slice(), date: new Date().toLocaleDateString('en-CA') }; saveBest(); }
     result = { time: t, prev: prev?.time, isBest };
     blip(880, 0.12); setTimeout(() => blip(1320, 0.3), 130);
@@ -372,10 +377,11 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       }
       if (state === 'countdown') {
         const before = Math.ceil(cd); cd -= dt; const now = Math.ceil(cd);
-        if (cd <= 0) { state = 'running'; t = 0; count.textContent = 'GO!'; blip(880, 0.35); setTimeout(() => { if (count.textContent === 'GO!') count.style.display = 'none'; }, 700); }
+        if (cd <= 0) { state = 'running'; t = 0; ghost.start(ch, car); count.textContent = 'GO!'; blip(880, 0.35); setTimeout(() => { if (count.textContent === 'GO!') count.style.display = 'none'; }, 700); }
         else if (now !== before) { count.textContent = String(now); blip(440, 0.15); }
       } else if (state === 'running') {
         t += dt;
+        ghost.update(t, car);
         // a teleport (R reset) is not a crossing: only count normal movement
         if (curPos.distanceTo(lastPos) < 40 && crossed(ch.gates[next])) passGate();
       }
