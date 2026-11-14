@@ -1,8 +1,12 @@
 """Run with a Python environment containing numpy and shapely >= 2."""
+import ast
+import builtins
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from footprints import default_height, load_geojson, merge
@@ -62,6 +66,65 @@ class FootprintsTest(unittest.TestCase):
         self.assertEqual(len(skipped), 1)
         self.assertEqual(result[0]['h'], 12)
         np.testing.assert_array_equal(result[0]['pts'][2], [10,-10])
+
+
+class BakerHookTest(unittest.TestCase):
+    """Execute the actual optional hook without starting a terrain bake."""
+    @classmethod
+    def setUpClass(cls):
+        path = Path(__file__).with_name('build_tiles.py')
+        tree = ast.parse(path.read_text(), filename=str(path))
+        hooks = [node for node in tree.body if isinstance(node, ast.If)
+                 and any(isinstance(n, ast.Import) and any(a.name == 'footprints' for a in n.names)
+                         for n in ast.walk(node))]
+        if len(hooks) != 1:
+            raise AssertionError('Expected exactly one optional footprint hook')
+        hook = hooks[0]
+        collection = next(node for node in tree.body if isinstance(node, ast.For)
+                          and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                                  and isinstance(n.func.value, ast.Name) and n.func.value.id == 'buildings'
+                                  and n.func.attr == 'append' for n in ast.walk(node)))
+        if hook.lineno <= collection.end_lineno:
+            raise AssertionError('Footprints must merge after collecting OSM buildings')
+        cls.code = compile(ast.Module(body=[hook], type_ignores=[]), str(path), 'exec')
+
+    def run_hook(self, directory, buildings):
+        state = dict(os=os, RAW=str(directory), buildings=buildings,
+                     lonlat_to_world=lambda lon, lat: (lon * 10, -lat * 10))
+        exec(self.code, state)
+        return state['buildings']
+
+    def test_absent_file_preserves_list_without_import(self):
+        original = [box(0, 0, h=12)]
+        real_import = builtins.__import__
+        def guarded_import(name, *args, **kwargs):
+            if name == 'footprints' or name.startswith('shapely'):
+                raise AssertionError('Absent data must not load optional dependencies')
+            return real_import(name, *args, **kwargs)
+        with tempfile.TemporaryDirectory() as td, patch('builtins.__import__', guarded_import):
+            self.assertIs(self.run_hook(td, original), original)
+
+    def test_present_file_projects_and_merges_preserving_osm(self):
+        original = box(0, -10, h=12)
+        def feature(offset):
+            ring = [[offset,0],[offset+1,0],[offset+1,1],[offset,1],[offset,0]]
+            return {'type':'Feature', 'properties':{'height':9},
+                    'geometry':{'type':'Polygon','coordinates':[ring]}}
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, 'footprints.geojson').write_text(json.dumps({
+                'type':'FeatureCollection', 'features':[feature(0), feature(3)]}))
+            result = self.run_hook(td, [original])
+        self.assertEqual(len(result), 2)
+        self.assertIs(result[0], original)
+        self.assertEqual(result[0]['h'], 12)
+        self.assertEqual(result[1]['h'], 9)
+        np.testing.assert_array_equal(result[1]['pts'][2], [40, -10])
+
+    def test_invalid_existing_file_is_not_silently_ignored(self):
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, 'footprints.geojson').write_text('{broken')
+            with self.assertRaises(json.JSONDecodeError):
+                self.run_hook(td, [])
 
 
 if __name__ == '__main__':

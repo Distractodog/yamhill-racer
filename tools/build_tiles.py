@@ -152,6 +152,9 @@ for e in osm:
         buildings.append({'pts': pts[:-1], 'h': round(hgt, 1)})
     elif t.get('natural') == 'water' and e['type'] == 'way':
         if in_map(pts[:, 0], pts[:, 1], 100).any(): water_polys.append(pts)
+if os.path.isfile(os.path.join(RAW, 'footprints.geojson')):
+    import footprints
+    buildings = footprints.merge(buildings, footprints.load_geojson(os.path.join(RAW, 'footprints.geojson'), lonlat_to_world))
 log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys))
 # town ground (fetch_tiles.py fetch_landuse): green = parks / lawns / pitches / cemeteries, grey = parking + lots
 GREEN_LU = {'grass', 'recreation_ground', 'cemetery', 'village_green', 'park', 'pitch', 'playground', 'garden',

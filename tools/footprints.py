@@ -2,7 +2,8 @@
 
 Requires numpy and shapely >= 2. Coordinates passed to merge are world metres.
 load_geojson accepts the baker's lonlat_to_world callback, without importing the
-baker (which would start a full build). The baker integration waits for TW-3g.
+baker (which would start a full build). The baker optionally loads
+data/raw/footprints.geojson after collecting OSM buildings.
 """
 import json
 import math
