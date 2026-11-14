@@ -10,6 +10,8 @@ import { installPerf } from './perf.js';
 import { createTileScenery } from './scenery.js';
 import { buildCampusGateGeometry } from './campusgate.js';
 import { placeCampus } from './campusmodel.js';
+import { TRACK } from './campustrack.js';
+import { buildTrackMeshes } from './campustrackmodel.js';
 import { placeLandmarks } from './landmarksmodel.js';
 import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
 import { addProps, propGeometries, showProps } from './propsmodel.js';
@@ -262,6 +264,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       const cm = new THREE.Mesh(mergeGeometries(cGeos), campusMat); cm.name = 'campus'; cm.castShadow = cm.receiveShadow = true; g.add(cm);
       cGeos.forEach(x => x.dispose());
     }
+    const [tcx, tcz] = TRACK.c;      // the running track north of the gym (campustrack.js)
+    if (tcx >= td.x0 && tcx < td.x0 + T && tcz >= td.z0 && tcz < td.z0 + T) { g.add(...buildTrackMeshes(td.terrainAt)); yield 'track'; }
     if (lGeos.length) {
       const lm = new THREE.Mesh(mergeGeometries(lGeos), campusMat); lm.name = 'landmarks'; lm.castShadow = lm.receiveShadow = true; g.add(lm);
       lGeos.forEach(x => x.dispose());

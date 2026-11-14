@@ -276,7 +276,9 @@ for i, c in _missing:
 log('campus ponds from satellite', len(_found), 'moved with neighbour', len(_missing))
 _cy, _cx = np.nonzero(campus_water)
 campus_water_pts = np.stack(old_sat_to_world(_cx + .5, _cy + .5), 1)          # world coords of water pixels (1.74 m)
-TRACK_C = np.array(old_sat_to_world(*align.map_to_sat(np.array([700]), np.array([1108]))[0]))
+# running track north of the gym, measured on the satellite (same numbers as game/src/campustrack.js, which also levels
+# the ground under it and draws it): oval centre, long axis (unit, pointing south), half straight, inner/outer radius
+TRACK_C, TRACK_AX, TRACK_S, TRACK_R, TRACK_RO = np.array([-558.2, 44.7]), np.array([0.2133, 0.9770]), 44.55, 35.0, 42.32
 SPAWN_OLD = np.array(old_sat_to_world(*align.map_to_sat(np.array([700]), np.array([1430]))[0]))
 del osat, olum, ochm, odem, _dem2, _slope, _lum5, _open, _sd, _smooth_dark
 
@@ -578,9 +580,10 @@ for tx, tz in TILES:
     surf[wet_core] = 5
     surf[bld_m[core]] = 6
     yy, xx = np.mgrid[0:TILE, 0:TILE]
-    ex = ((rx0 + xx + .5 - TRACK_C[0]) / 40) ** 2 + ((rz0 + yy + .5 - TRACK_C[1]) / 88) ** 2
-    surf[(ex < 1.0) & (ex > 0.62) & (surf <= 1)] = 7
-    del yy, xx, ex
+    dx, dz = rx0 + xx + .5 - TRACK_C[0], rz0 + yy + .5 - TRACK_C[1]
+    tr = np.hypot(np.maximum(0, np.abs(dx * TRACK_AX[0] + dz * TRACK_AX[1]) - TRACK_S), dx * TRACK_AX[1] - dz * TRACK_AX[0])
+    surf[(tr <= TRACK_RO) & (tr > TRACK_R) & (surf <= 1)] = 7
+    del yy, xx, dx, dz, tr
     tilefmt.write_bytes(out, 'surface.bin', surf.tobytes(), PACK)
 
     # ---- ground colours (2048^2 over the core)

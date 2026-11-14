@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { sidewalkSides, KERB } from './roads.js';
 import { applyCampus } from './campus.js';
+import { applyTrack } from './campustrack.js';
 import { applyLandmarks } from './landmarks.js';
 
 // road / trail strips and junction pieces: surface class per kind. Heights come baked from the build
@@ -160,10 +161,11 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
       for (const t of l) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]), trees[t * 4 + 2], trees[t * 4 + 3]);   // x, z, trunk r, height, broadleaf?
     }
   }
-  const td = { tx, tz, x0, z0, gx0, gz0, NN, H, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
+  const td = { tx, tz, x0, z0, gx0, gz0, NN, hs: HS, H, surf, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
     sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
     pondId, pondLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
     heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
+  applyTrack(td);                           // running track north of the gym: level ground + surface (campustrack.js)
   td.buildings = applyCampus(td);           // Delphian campus: hand-made models replace the OSM blocks (campus.js)
   td.buildings = applyLandmarks(td);        // landmarks.js replaces the OSM block under each landmark
   return td;
