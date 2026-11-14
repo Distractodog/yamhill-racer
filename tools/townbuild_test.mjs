@@ -1,3 +1,4 @@
+import { decodeGeometry } from '../game/src/geometrycodec_v3.js';
 // node tools/townbuild_test.mjs
 // Classifies real footprints from three town tiles and checks the building rules.
 import assert from 'node:assert/strict';
@@ -14,7 +15,7 @@ const TILES = [
 
 function load(name) {
   const raw = gunzipSync(readFileSync(new URL(`../game/assets/tiles/${name}/tile.json.gz`, import.meta.url)));
-  return JSON.parse(raw.toString());
+  return decodeGeometry(JSON.parse(raw.toString()));
 }
 function distToEdge(p, a, b) {
   const abx = b[0] - a[0], abz = b[1] - a[1];

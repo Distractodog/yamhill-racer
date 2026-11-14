@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 import tilefmt                                      # reads packed or plain tile files
+from campusmap_v3 import paint_track
 ASSETS = Path(os.environ.get('YR_ASSETS', ROOT / 'game' / 'assets'))
 DRAW_MPP, OUT_MPP = 2.0, 5.0
 ROAD = {  # (fill colour, outline colour, width in metres on the map; a bit wider than real so they read)
@@ -73,6 +74,8 @@ for kind in ('trail', 'gravel', 'asphalt'):
         for pts in lines:
             if len(pts) > 1:
                 draw.line(pts, fill=pass_col, width=lw, joint='curve')
+
+paint_track(img, ex0, ez0, DRAW_MPP)
 
 rim = world.get('rim')
 if rim:                               # round map: shade everything beyond the rim, draw the rim as a circle

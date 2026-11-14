@@ -1,9 +1,10 @@
-"""Packs a built assets folder (see tools/tilefmt.py for the formats): tiles get ~3-5x smaller, arrays byte-identical.
+"""Packs a built assets folder (see tools/tilefmt.py for the formats): writes v3 with bounded height/tree/geometry error and unchanged raster bytes.
 
   .venv/bin/python tools/pack_tiles.py game/assets ../yr-assets-packed
 
-Copies everything else in the assets folder unchanged and adds "packed": 2 to world.json. Works one tile at a time and
-one file at a time, so memory stays small (~50 MB) whatever the number of tiles. Prints sizes before and after.
+Copies everything else in the assets folder unchanged and adds "packed": 3 to world.json. Works one tile at a time and
+one file at a time, so memory stays small (~50 MB) whatever the number of tiles. Prints sizes before and after. Ground imagery becomes full-resolution ground.webp.
+Heights stay within 1 cm; tree positions within 2 cm; see verify_pack.py for physics checks.
 """
 import json, os, shutil, sys, time
 from PIL import Image

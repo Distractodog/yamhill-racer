@@ -49,11 +49,11 @@ class VerifyPackTest(unittest.TestCase):
     def test_unsupported_format_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for version in (None, 0, 3):
+            for version in (None, 0, 4):
                 (root / 'world.json').write_text(json.dumps({'packed': version, 'tiles': []}))
                 result = self.run_cli(root, root)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('supported packed version 1 or 2', result.stderr)
+                self.assertIn('supported packed version 1, 2 or 3', result.stderr)
 
     @staticmethod
     def run_cli(src, dst):

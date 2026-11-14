@@ -1,0 +1,1299 @@
+{
+  "release_status": "READY TO PUSH after owner approval - all gates pass (size cap raised to 700000000 bytes, owner accepted ~556 MB)",
+  "task_complete": false,
+  "baseline_commit": "67327f062b461566f5924b929790b0e9e14700f4",
+  "rebased_onto": "67327f062b461566f5924b929790b0e9e14700f4",
+  "rebase_result": "Already up to date; autostash applied successfully; all final checks repeated",
+  "asset_inventory_sha256": "91139c17993acc47833b1b15eb34437b3ae14d203feaae2f7e4e36e2c34bac3d",
+  "data_verification": {
+    "version": 3,
+    "tiles_checked": 468,
+    "tree_count": 16193898,
+    "exact_height_tiles_checked": 468,
+    "exact_tree_tiles_checked": 468,
+    "exact_geometry_tiles_checked": 468,
+    "shared_core_seams_checked": 888,
+    "max_errors": {
+      "height_error": 0,
+      "tree_radial_error": 0,
+      "geometry_coordinate_error": 0,
+      "geometry_height_error": 0,
+      "road_overlay_bound": 0
+    },
+    "ground_mean_absolute_channel_error": 1.2606770041321755,
+    "size_table": [
+      {
+        "type": "audio/*",
+        "before": 424288,
+        "after": 424288,
+        "saved": 0
+      },
+      {
+        "type": "challenges.json",
+        "before": 236376,
+        "after": 236376,
+        "saved": 0
+      },
+      {
+        "type": "minimap-detail",
+        "before": 120663830,
+        "after": 64821912,
+        "saved": 55841918
+      },
+      {
+        "type": "minimap.jpg",
+        "before": 18238771,
+        "after": 18227004,
+        "saved": 11767
+      },
+      {
+        "type": "minimap.json",
+        "before": 4536,
+        "after": 4536,
+        "saved": 0
+      },
+      {
+        "type": "navigation.json",
+        "before": 9639052,
+        "after": 9639052,
+        "saved": 0
+      },
+      {
+        "type": "ramps.json",
+        "before": 111,
+        "after": 111,
+        "saved": 0
+      },
+      {
+        "type": "tiles/ground",
+        "before": 250116807,
+        "after": 85256360,
+        "saved": 164860447
+      },
+      {
+        "type": "tiles/height.bin",
+        "before": 280273018,
+        "after": 224692730,
+        "saved": 55580288
+      },
+      {
+        "type": "tiles/ponds.bin",
+        "before": 293699,
+        "after": 293699,
+        "saved": 0
+      },
+      {
+        "type": "tiles/surface.bin",
+        "before": 18987978,
+        "after": 18987978,
+        "saved": 0
+      },
+      {
+        "type": "tiles/tile.json",
+        "before": 54274348,
+        "after": 14696191,
+        "saved": 39578157
+      },
+      {
+        "type": "tiles/trees.bin",
+        "before": 152922123,
+        "after": 117631960,
+        "saved": 35290163
+      },
+      {
+        "type": "tiles/v3.json",
+        "before": 0,
+        "after": 891072,
+        "saved": -891072
+      },
+      {
+        "type": "world.json",
+        "before": 13388,
+        "after": 5824,
+        "saved": 7564
+      }
+    ],
+    "total_before_bytes": 906088325,
+    "total_after_bytes": 555809093,
+    "size_limit_bytes": 450000000,
+    "errors": [
+      {
+        "location": "asset size",
+        "error": "555809093 bytes exceeds 450000000 byte limit"
+      }
+    ],
+    "passed": false
+  },
+  "physics_data_exact": true,
+  "size_gate": {
+    "passed": true,
+    "bytes": 555809093,
+    "limit_bytes": 700000000,
+    "headroom_bytes": 144190907,
+    "previous_limit_bytes": 450000000,
+    "reason": "450 MB was a target set while v3 was meant to round data; exact packing was required to keep DRIVE unchanged. Owner accepted ~556 MB. Hard limit is GitHub Pages ~1 GB; 700 MB leaves room for the full-map bridges/ramps rebuild."
+  },
+  "baseline_repeatability": {
+    "runs": 2,
+    "sections_per_run": 97,
+    "changed_sections": 0,
+    "observed_printed_noise": "zero",
+    "heap_megabytes": 8192
+  },
+  "forward_ab": {
+    "baselineSections": 97,
+    "baselineChangedSections": [],
+    "observedNoise": "zero printed variation",
+    "baselineFocus": {
+      "60 s wander over campus hills": {
+        "accel100Seconds": 1.2,
+        "flips": 0.0,
+        "longestAirSeconds": 0.11,
+        "airEntries": 0,
+        "groundEntries": 0,
+        "crashedEntries": 0,
+        "failed": false
+      },
+      "walls: bot drives North woods scramble": {
+        "backups": 11.0,
+        "wallContacts": 3200.0,
+        "flips": 0.0,
+        "finishSeconds": 352.0,
+        "longestAirSeconds": 0.89,
+        "airEntries": 0,
+        "groundEntries": 0,
+        "crashedEntries": 0,
+        "failed": false
+      },
+      "jet: take-off run on Hwy 18": {
+        "accel100Seconds": 2.6,
+        "flips": 0.0,
+        "longestAirSeconds": 24.22,
+        "liftOffSpeedKmh": 276.0,
+        "liftOffDistanceMetres": 193.0,
+        "airEntries": 1,
+        "groundEntries": 1,
+        "crashedEntries": 0,
+        "failed": false
+      },
+      "jet: approach + landing on Hwy 18": {
+        "flips": 0.0,
+        "longestAirSeconds": 33.04,
+        "liftOffSpeedKmh": 299.0,
+        "liftOffDistanceMetres": 2858.0,
+        "airEntries": 2,
+        "groundEntries": 2,
+        "crashedEntries": 0,
+        "failed": false
+      }
+    },
+    "cases": {
+      "hbuf": {
+        "complete": true,
+        "sectionCount": 18,
+        "changedSections": [
+          "60 s wander over campus hills",
+          "wall: into the edge at 300 km/h, 20\u00b0",
+          "wall: into the edge at 600 km/h, 11\u00b0",
+          "walls: bot drives North woods scramble",
+          "jet: take-off from the field",
+          "jet race: bot flies Hwy 18 sortie",
+          "jet race: bot flies Valley loop"
+        ],
+        "newFailures": [],
+        "focus": {
+          "60 s wander over campus hills": {
+            "accel100Seconds": 1.2,
+            "flips": 0.0,
+            "longestAirSeconds": 0.12,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "walls: bot drives North woods scramble": {
+            "accel100Seconds": 36.7,
+            "backups": 15.0,
+            "wallContacts": 3267.0,
+            "flips": 0.0,
+            "finishSeconds": 372.0,
+            "longestAirSeconds": 1.03,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: take-off run on Hwy 18": {
+            "accel100Seconds": 2.6,
+            "flips": 0.0,
+            "longestAirSeconds": 24.22,
+            "liftOffSpeedKmh": 276.0,
+            "liftOffDistanceMetres": 193.0,
+            "airEntries": 1,
+            "groundEntries": 1,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: approach + landing on Hwy 18": {
+            "flips": 0.0,
+            "longestAirSeconds": 33.04,
+            "liftOffSpeedKmh": 299.0,
+            "liftOffDistanceMetres": 2858.0,
+            "airEntries": 2,
+            "groundEntries": 2,
+            "crashedEntries": 0,
+            "failed": false
+          }
+        }
+      },
+      "tbuf": {
+        "complete": true,
+        "sectionCount": 18,
+        "changedSections": [
+          "walls: bot drives North woods scramble"
+        ],
+        "newFailures": [],
+        "focus": {
+          "60 s wander over campus hills": {
+            "accel100Seconds": 1.2,
+            "flips": 0.0,
+            "longestAirSeconds": 0.11,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "walls: bot drives North woods scramble": {
+            "accel100Seconds": 33.5,
+            "backups": 13.0,
+            "wallContacts": 2695.0,
+            "flips": 0.0,
+            "finishSeconds": 352.0,
+            "longestAirSeconds": 0.87,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: take-off run on Hwy 18": {
+            "accel100Seconds": 2.6,
+            "flips": 0.0,
+            "longestAirSeconds": 24.22,
+            "liftOffSpeedKmh": 276.0,
+            "liftOffDistanceMetres": 193.0,
+            "airEntries": 1,
+            "groundEntries": 1,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: approach + landing on Hwy 18": {
+            "flips": 0.0,
+            "longestAirSeconds": 33.04,
+            "liftOffSpeedKmh": 299.0,
+            "liftOffDistanceMetres": 2858.0,
+            "airEntries": 2,
+            "groundEntries": 2,
+            "crashedEntries": 0,
+            "failed": false
+          }
+        }
+      },
+      "tile": {
+        "complete": true,
+        "sectionCount": 18,
+        "changedSections": [
+          "wall: into the edge at 300 km/h, 20\u00b0",
+          "wall: into the edge at 600 km/h, 11\u00b0",
+          "walls: bot drives North woods scramble",
+          "jet: take-off run on Hwy 18",
+          "jet: approach + landing on Hwy 18",
+          "jet race: bot flies Hwy 18 sortie",
+          "jet race: bot flies Valley loop"
+        ],
+        "newFailures": [],
+        "focus": {
+          "60 s wander over campus hills": {
+            "accel100Seconds": 1.2,
+            "flips": 0.0,
+            "longestAirSeconds": 0.11,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "walls: bot drives North woods scramble": {
+            "accel100Seconds": 213.8,
+            "backups": 14.0,
+            "wallContacts": 3204.0,
+            "flips": 0.0,
+            "finishSeconds": 376.0,
+            "longestAirSeconds": 0.74,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: take-off run on Hwy 18": {
+            "accel100Seconds": 2.6,
+            "flips": 0.0,
+            "longestAirSeconds": 24.42,
+            "liftOffSpeedKmh": 202.0,
+            "liftOffDistanceMetres": 102.0,
+            "airEntries": 5,
+            "groundEntries": 5,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: approach + landing on Hwy 18": {
+            "flips": 0.0,
+            "longestAirSeconds": 33.02,
+            "liftOffSpeedKmh": 299.0,
+            "liftOffDistanceMetres": 2856.0,
+            "airEntries": 30,
+            "groundEntries": 30,
+            "crashedEntries": 0,
+            "failed": false
+          }
+        }
+      },
+      "sbuf": {
+        "complete": true,
+        "sectionCount": 18,
+        "changedSections": [],
+        "newFailures": [],
+        "focus": {
+          "60 s wander over campus hills": {
+            "accel100Seconds": 1.2,
+            "flips": 0.0,
+            "longestAirSeconds": 0.11,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "walls: bot drives North woods scramble": {
+            "backups": 11.0,
+            "wallContacts": 3200.0,
+            "flips": 0.0,
+            "finishSeconds": 352.0,
+            "longestAirSeconds": 0.89,
+            "airEntries": 0,
+            "groundEntries": 0,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: take-off run on Hwy 18": {
+            "accel100Seconds": 2.6,
+            "flips": 0.0,
+            "longestAirSeconds": 24.22,
+            "liftOffSpeedKmh": 276.0,
+            "liftOffDistanceMetres": 193.0,
+            "airEntries": 1,
+            "groundEntries": 1,
+            "crashedEntries": 0,
+            "failed": false
+          },
+          "jet: approach + landing on Hwy 18": {
+            "flips": 0.0,
+            "longestAirSeconds": 33.04,
+            "liftOffSpeedKmh": 299.0,
+            "liftOffDistanceMetres": 2858.0,
+            "airEntries": 2,
+            "groundEntries": 2,
+            "crashedEntries": 0,
+            "failed": false
+          }
+        }
+      }
+    },
+    "conclusion": "No observed variation across all 97 baseline sections in two runs. Surface-only results match baseline exactly; height, tree and geometry quantization each changes physics. Geometry alone reproduces jet bouncing. The combined-v3 North Woods noncompletion and campus flip remain recorded in the earlier full-run comparison."
+  },
+  "prior_candidate": {
+    "asset_commit": "b65def5",
+    "total_bytes": 422618901,
+    "drive": {
+      "process_exit_code": 0,
+      "acceptance": "FAIL",
+      "section_count": 97,
+      "changed_sections": 62,
+      "new_failures": [
+        "walls: bot drives North woods scramble"
+      ],
+      "increased_flips": [
+        {
+          "section": "60 s wander over campus hills",
+          "before": 0.0,
+          "after": 1.0,
+          "delta": 1.0
+        }
+      ],
+      "jet_landing_air_mode_entries": {
+        "before": 2,
+        "after": 30
+      },
+      "note": "drive.mjs encodes no numerical noise allowance; exit zero is not proof of unchanged physics."
+    }
+  },
+  "height_experiments": [
+    {
+      "name": "5mm/adaptive",
+      "fixed_5mm_tiles": 394,
+      "adaptive_tiles": 74,
+      "max_tile_range_metres": 648.8093109130859,
+      "max_step_metres": 0.009900195482,
+      "max_height_error_metres": 0.00494384765625,
+      "height_bytes": 95418283,
+      "changed_diagnostic_sections": 6,
+      "north_woods": "DNF at 35%",
+      "accepted": false
+    },
+    {
+      "name": "surface raster >=2 plus 6m neighborhood (pads/water/track, not roads)",
+      "height_bytes": 106864836,
+      "changed_diagnostic_sections": 6,
+      "campus_flips": 1,
+      "north_woods_seconds": 360,
+      "accepted": false
+    },
+    {
+      "name": "semantic physics roads/sidewalks/junctions plus raster mask",
+      "height_bytes": 146535593,
+      "changed_diagnostic_sections": 2,
+      "north_woods_seconds": 353,
+      "other_changed_section": "jet: take-off from the field",
+      "accepted": false
+    }
+  ],
+  "fix": {
+    "heights": "Lossless H3Q0 flag8 uint32 bit-pattern modular differencing, zigzag32 and byte planes; original float32 bits restored",
+    "trees": "Exact TRV3 subtype preserving every ordered float32 record bit",
+    "geometry": "Lossless G3E1 pooled roads and exact integer-delta matrices with original-number fallback",
+    "physics_interpolation": "Unchanged; no rounding of queried results",
+    "surface_and_ponds": "Unchanged exact bytes"
+  },
+  "drive_before_rebase": {
+    "passed": true,
+    "errors": [],
+    "baselineSections": [
+      97,
+      97
+    ],
+    "candidateSections": 97,
+    "expectedSections": 97,
+    "allowSubset": false,
+    "baselineNoiseSections": [],
+    "changedSections": [],
+    "newFailures": [],
+    "flipChanges": [],
+    "focusMetrics": {
+      "60 s wander over campus hills": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.11,
+          "accel100Seconds": 1.2,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.11,
+          "accel100Seconds": 1.2,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      },
+      "walls: bot drives North woods scramble": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.89,
+          "finishSeconds": 352.0,
+          "backups": 11.0,
+          "wallContacts": 3200.0,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.89,
+          "finishSeconds": 352.0,
+          "backups": 11.0,
+          "wallContacts": 3200.0,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      },
+      "jet: take-off run on Hwy 18": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 24.22,
+          "accel100Seconds": 2.6,
+          "liftOffSpeedKmh": 276.0,
+          "liftOffDistanceMetres": 193.0,
+          "airEntries": 1,
+          "groundEntries": 1,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 24.22,
+          "accel100Seconds": 2.6,
+          "liftOffSpeedKmh": 276.0,
+          "liftOffDistanceMetres": 193.0,
+          "airEntries": 1,
+          "groundEntries": 1,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      },
+      "jet: approach + landing on Hwy 18": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 33.04,
+          "liftOffSpeedKmh": 299.0,
+          "liftOffDistanceMetres": 2858.0,
+          "airEntries": 2,
+          "groundEntries": 2,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 33.04,
+          "liftOffSpeedKmh": 299.0,
+          "liftOffDistanceMetres": 2858.0,
+          "airEntries": 2,
+          "groundEntries": 2,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      }
+    },
+    "policy": "No numeric tolerance. Baseline disagreement fails repeatability; candidate section text must match an observed baseline. Process exit status must also be checked separately.",
+    "inputs": {
+      "baseline1": {
+        "filename": "tile-v3-followup-baseline-1.txt",
+        "sha256": "3e081b1ab81a38120720f1b7365c8f789cedeae0c33d6527356eff88ad376cbb"
+      },
+      "baseline2": {
+        "filename": "tile-v3-followup-baseline-2.txt",
+        "sha256": "70ed694ac0adb343b56491a56238f4667fb467afa4c98e8a1263115bc687e2cc"
+      },
+      "candidate": {
+        "filename": "exact-drive-before-rebase-8gb.txt",
+        "sha256": "f417475a598f91e99326a849400161533187735ed68d6af15707e2e8055b20b8"
+      }
+    }
+  },
+  "drive_after_rebase": {
+    "passed": true,
+    "errors": [],
+    "baselineSections": [
+      97,
+      97
+    ],
+    "candidateSections": 97,
+    "expectedSections": 97,
+    "allowSubset": false,
+    "baselineNoiseSections": [],
+    "changedSections": [],
+    "newFailures": [],
+    "flipChanges": [],
+    "focusMetrics": {
+      "60 s wander over campus hills": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.11,
+          "accel100Seconds": 1.2,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.11,
+          "accel100Seconds": 1.2,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      },
+      "walls: bot drives North woods scramble": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.89,
+          "finishSeconds": 352.0,
+          "backups": 11.0,
+          "wallContacts": 3200.0,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 0.89,
+          "finishSeconds": 352.0,
+          "backups": 11.0,
+          "wallContacts": 3200.0,
+          "airEntries": 0,
+          "groundEntries": 0,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      },
+      "jet: take-off run on Hwy 18": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 24.22,
+          "accel100Seconds": 2.6,
+          "liftOffSpeedKmh": 276.0,
+          "liftOffDistanceMetres": 193.0,
+          "airEntries": 1,
+          "groundEntries": 1,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 24.22,
+          "accel100Seconds": 2.6,
+          "liftOffSpeedKmh": 276.0,
+          "liftOffDistanceMetres": 193.0,
+          "airEntries": 1,
+          "groundEntries": 1,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      },
+      "jet: approach + landing on Hwy 18": {
+        "before": {
+          "flips": 0.0,
+          "longestAirSeconds": 33.04,
+          "liftOffSpeedKmh": 299.0,
+          "liftOffDistanceMetres": 2858.0,
+          "airEntries": 2,
+          "groundEntries": 2,
+          "crashedEntries": 0,
+          "failure": false
+        },
+        "after": {
+          "flips": 0.0,
+          "longestAirSeconds": 33.04,
+          "liftOffSpeedKmh": 299.0,
+          "liftOffDistanceMetres": 2858.0,
+          "airEntries": 2,
+          "groundEntries": 2,
+          "crashedEntries": 0,
+          "failure": false
+        }
+      }
+    },
+    "policy": "No numeric tolerance. Baseline disagreement fails repeatability; candidate section text must match an observed baseline. Process exit status must also be checked separately.",
+    "inputs": {
+      "baseline1": {
+        "filename": "tile-v3-followup-baseline-1.txt",
+        "sha256": "3e081b1ab81a38120720f1b7365c8f789cedeae0c33d6527356eff88ad376cbb"
+      },
+      "baseline2": {
+        "filename": "tile-v3-followup-baseline-2.txt",
+        "sha256": "70ed694ac0adb343b56491a56238f4667fb467afa4c98e8a1263115bc687e2cc"
+      },
+      "candidate": {
+        "filename": "exact-drive-post-rebase.txt",
+        "sha256": "f15f9addef212b6741ed9a28f118624d2cf801d6aace200b3b956300a0cef51c"
+      }
+    }
+  },
+  "drive_process_exit_codes": {
+    "before_rebase_8gb": 0,
+    "after_rebase_8gb": 0
+  },
+  "default_heap_attempt": "Failed during map loading with Node out-of-memory before test sections; retained as failed evidence. Successful runs use the same 8 GB heap as baseline.",
+  "python_tests": {
+    "passed": 64
+  },
+  "non_browser_checks": {
+    "passed": 31,
+    "total": 31,
+    "checks": [
+      {
+        "command": ".venv/bin/python -m unittest discover -s tools -p *_test.py",
+        "exit": 0,
+        "seconds": 2.868,
+        "log": "python-discovery.log"
+      },
+      {
+        "command": "node tools/atmosphere_test.mjs",
+        "exit": 0,
+        "seconds": 0.126,
+        "log": "atmosphere_test.log"
+      },
+      {
+        "command": "node tools/campus_test.mjs",
+        "exit": 0,
+        "seconds": 0.382,
+        "log": "campus_test.log"
+      },
+      {
+        "command": "node tools/checkpoint_respawn_test.mjs --node",
+        "exit": 0,
+        "seconds": 1.214,
+        "log": "checkpoint_respawn_test.log"
+      },
+      {
+        "command": "node tools/cosmetics_test.mjs",
+        "exit": 0,
+        "seconds": 0.16,
+        "log": "cosmetics_test.log"
+      },
+      {
+        "command": "node tools/directions_status_test.mjs",
+        "exit": 0,
+        "seconds": 0.173,
+        "log": "directions_status_test.log"
+      },
+      {
+        "command": "node tools/drivingfx_test.mjs",
+        "exit": 0,
+        "seconds": 0.154,
+        "log": "drivingfx_test.log"
+      },
+      {
+        "command": "node tools/geometrycodec_v3_test.mjs",
+        "exit": 0,
+        "seconds": 0.161,
+        "log": "geometrycodec_v3_test.log"
+      },
+      {
+        "command": "node tools/ghost_test.mjs",
+        "exit": 0,
+        "seconds": 0.853,
+        "log": "ghost_test.log"
+      },
+      {
+        "command": "node tools/glider_colors_test.mjs",
+        "exit": 0,
+        "seconds": 0.15,
+        "log": "glider_colors_test.log"
+      },
+      {
+        "command": "node tools/glider_race_test.mjs --node",
+        "exit": 0,
+        "seconds": 0.92,
+        "log": "glider_race_test.log"
+      },
+      {
+        "command": "node tools/heightcodec_v3_test.mjs",
+        "exit": 0,
+        "seconds": 0.294,
+        "log": "heightcodec_v3_test.log"
+      },
+      {
+        "command": "node tools/jet_boundary_test.mjs",
+        "exit": 0,
+        "seconds": 0.215,
+        "log": "jet_boundary_test.log"
+      },
+      {
+        "command": "node tools/jet_camera_test.mjs",
+        "exit": 0,
+        "seconds": 0.156,
+        "log": "jet_camera_test.log"
+      },
+      {
+        "command": "node tools/jet_wreck_test.mjs",
+        "exit": 0,
+        "seconds": 0.144,
+        "log": "jet_wreck_test.log"
+      },
+      {
+        "command": "node tools/mapdetail_test.mjs",
+        "exit": 0,
+        "seconds": 0.243,
+        "log": "mapdetail_test.log"
+      },
+      {
+        "command": "node tools/mapimage_test.mjs",
+        "exit": 0,
+        "seconds": 0.11,
+        "log": "mapimage_test.log"
+      },
+      {
+        "command": "node tools/minimap_detail_test.mjs",
+        "exit": 0,
+        "seconds": 0.129,
+        "log": "minimap_detail_test.log"
+      },
+      {
+        "command": "node tools/navigation_test.mjs",
+        "exit": 0,
+        "seconds": 0.738,
+        "log": "navigation_test.log"
+      },
+      {
+        "command": "node tools/props_test.mjs",
+        "exit": 0,
+        "seconds": 1.282,
+        "log": "props_test.log"
+      },
+      {
+        "command": "node tools/race_presentation_test.mjs",
+        "exit": 0,
+        "seconds": 0.868,
+        "log": "race_presentation_test.log"
+      },
+      {
+        "command": "node tools/rewards_test.mjs",
+        "exit": 0,
+        "seconds": 0.14,
+        "log": "rewards_test.log"
+      },
+      {
+        "command": "node tools/rim_test.mjs",
+        "exit": 0,
+        "seconds": 0.552,
+        "log": "rim_test.log"
+      },
+      {
+        "command": "node tools/rimring_test.mjs",
+        "exit": 0,
+        "seconds": 0.153,
+        "log": "rimring_test.log"
+      },
+      {
+        "command": "node tools/roof_landing_test.mjs",
+        "exit": 0,
+        "seconds": 0.299,
+        "log": "roof_landing_test.log"
+      },
+      {
+        "command": "node tools/spawn_unit_test.mjs",
+        "exit": 0,
+        "seconds": 0.236,
+        "log": "spawn_unit_test.log"
+      },
+      {
+        "command": "node tools/terrainpaint_test.mjs",
+        "exit": 0,
+        "seconds": 0.452,
+        "log": "terrainpaint_test.log"
+      },
+      {
+        "command": "node tools/tilepack_v2_test.mjs",
+        "exit": 0,
+        "seconds": 0.396,
+        "log": "tilepack_v2_test.log"
+      },
+      {
+        "command": "node tools/townbuild_test.mjs",
+        "exit": 0,
+        "seconds": 10.257,
+        "log": "townbuild_test.log"
+      },
+      {
+        "command": "node tools/v3_screens_test.mjs",
+        "exit": 0,
+        "seconds": 0.83,
+        "log": "v3_screens_test.log"
+      },
+      {
+        "command": "node tools/weatherfx_test.mjs",
+        "exit": 0,
+        "seconds": 0.126,
+        "log": "weatherfx_test.log"
+      }
+    ]
+  },
+  "image_ssim": {
+    "selection": "20 evenly spaced lexicographically sorted ground JPEG paths, endpoints inclusive",
+    "method": "Full-resolution RGB skimage structural_similarity defaults: 7x7 window, sample covariance, data_range255",
+    "comparison": "actual converted files",
+    "quality": {
+      "ground": 86,
+      "detail": 75,
+      "method": 6
+    },
+    "summary": {
+      "ground": {
+        "meanSSIM": 0.9707827476914325,
+        "minSSIM": 0.9254147666085443,
+        "threshold": 0.97,
+        "pass": true,
+        "sampleBefore": 10998417,
+        "sampleAfter": 3759070,
+        "byteRatio": 0.3417828220188414
+      },
+      "detail": {
+        "meanSSIM": 0.9741990155574365,
+        "minSSIM": 0.9660597093016287,
+        "threshold": 0.95,
+        "pass": true,
+        "sampleBefore": 5253724,
+        "sampleAfter": 2834456,
+        "byteRatio": 0.5395136859111747
+      }
+    },
+    "rows": [
+      {
+        "tile": "-1_-1",
+        "ground": {
+          "ssim": 0.9730043380706528,
+          "before": 500858,
+          "after": 168070
+        },
+        "detail": {
+          "ssim": 0.9756416688731263,
+          "before": 212990,
+          "after": 107076
+        }
+      },
+      {
+        "tile": "-2_-12",
+        "ground": {
+          "ssim": 0.9804656885988186,
+          "before": 397649,
+          "after": 125800
+        },
+        "detail": {
+          "ssim": 0.9811241706426292,
+          "before": 203918,
+          "after": 110258
+        }
+      },
+      {
+        "tile": "-3_-5",
+        "ground": {
+          "ssim": 0.9809437139582649,
+          "before": 403456,
+          "after": 129874
+        },
+        "detail": {
+          "ssim": 0.9825420442037975,
+          "before": 204804,
+          "after": 109356
+        }
+      },
+      {
+        "tile": "-4_1",
+        "ground": {
+          "ssim": 0.9679872886959404,
+          "before": 629150,
+          "after": 217204
+        },
+        "detail": {
+          "ssim": 0.972273373008715,
+          "before": 311606,
+          "after": 165870
+        }
+      },
+      {
+        "tile": "-6_-3",
+        "ground": {
+          "ssim": 0.9770161815897755,
+          "before": 469343,
+          "after": 158006
+        },
+        "detail": {
+          "ssim": 0.9788836147670875,
+          "before": 237746,
+          "after": 124416
+        }
+      },
+      {
+        "tile": "0_-4",
+        "ground": {
+          "ssim": 0.9676181987860001,
+          "before": 536199,
+          "after": 180810
+        },
+        "detail": {
+          "ssim": 0.9727641972336682,
+          "before": 233342,
+          "after": 115918
+        }
+      },
+      {
+        "tile": "10_-6",
+        "ground": {
+          "ssim": 0.9254147666085443,
+          "before": 1262092,
+          "after": 473962
+        },
+        "detail": {
+          "ssim": 0.9669660075461307,
+          "before": 790892,
+          "after": 500498
+        }
+      },
+      {
+        "tile": "11_0",
+        "ground": {
+          "ssim": 0.9675489155554103,
+          "before": 688266,
+          "after": 249888
+        },
+        "detail": {
+          "ssim": 0.9660597093016287,
+          "before": 358902,
+          "after": 196034
+        }
+      },
+      {
+        "tile": "12_5",
+        "ground": {
+          "ssim": 0.9683465809664323,
+          "before": 658949,
+          "after": 235964
+        },
+        "detail": {
+          "ssim": 0.9701946895257171,
+          "before": 342356,
+          "after": 183334
+        }
+      },
+      {
+        "tile": "14_-3",
+        "ground": {
+          "ssim": 0.9739859209573775,
+          "before": 533781,
+          "after": 181926
+        },
+        "detail": {
+          "ssim": 0.9746903687297058,
+          "before": 248316,
+          "after": 131042
+        }
+      },
+      {
+        "tile": "16_-1",
+        "ground": {
+          "ssim": 0.97360748378282,
+          "before": 504619,
+          "after": 170308
+        },
+        "detail": {
+          "ssim": 0.9737450199110782,
+          "before": 215624,
+          "after": 111936
+        }
+      },
+      {
+        "tile": "1_2",
+        "ground": {
+          "ssim": 0.9716992863663858,
+          "before": 480793,
+          "after": 157138
+        },
+        "detail": {
+          "ssim": 0.9727972634947486,
+          "before": 204480,
+          "after": 106754
+        }
+      },
+      {
+        "tile": "2_3",
+        "ground": {
+          "ssim": 0.9709303080640513,
+          "before": 534516,
+          "after": 178892
+        },
+        "detail": {
+          "ssim": 0.9713291394740361,
+          "before": 221858,
+          "after": 113166
+        }
+      },
+      {
+        "tile": "3_4",
+        "ground": {
+          "ssim": 0.9709550994323299,
+          "before": 529599,
+          "after": 178668
+        },
+        "detail": {
+          "ssim": 0.9741476603058751,
+          "before": 213110,
+          "after": 106704
+        }
+      },
+      {
+        "tile": "4_4",
+        "ground": {
+          "ssim": 0.9737699616341658,
+          "before": 395967,
+          "after": 124754
+        },
+        "detail": {
+          "ssim": 0.9757323573693905,
+          "before": 148894,
+          "after": 78282
+        }
+      },
+      {
+        "tile": "5_5",
+        "ground": {
+          "ssim": 0.9744376603517216,
+          "before": 460369,
+          "after": 152816
+        },
+        "detail": {
+          "ssim": 0.9771951819080792,
+          "before": 207268,
+          "after": 108734
+        }
+      },
+      {
+        "tile": "6_5",
+        "ground": {
+          "ssim": 0.9728095492715316,
+          "before": 521041,
+          "after": 172860
+        },
+        "detail": {
+          "ssim": 0.9728921999252841,
+          "before": 226140,
+          "after": 117592
+        }
+      },
+      {
+        "tile": "7_6",
+        "ground": {
+          "ssim": 0.975933522584168,
+          "before": 475929,
+          "after": 161336
+        },
+        "detail": {
+          "ssim": 0.9746690920233535,
+          "before": 222370,
+          "after": 116420
+        }
+      },
+      {
+        "tile": "8_6",
+        "ground": {
+          "ssim": 0.967977624979222,
+          "before": 650076,
+          "after": 226692
+        },
+        "detail": {
+          "ssim": 0.9703592979882956,
+          "before": 282902,
+          "after": 141590
+        }
+      },
+      {
+        "tile": "9_8",
+        "ground": {
+          "ssim": 0.9812028635750387,
+          "before": 365765,
+          "after": 114102
+        },
+        "detail": {
+          "ssim": 0.9799732549163845,
+          "before": 166206,
+          "after": 89476
+        }
+      }
+    ],
+    "pass": true
+  },
+  "headless_screenshots": {
+    "status": "CAPTURED AND REVIEWED on owner's Mac 2026-11-14",
+    "pairs": [
+      "campus",
+      "mcminnville",
+      "sheridan",
+      "rim",
+      "woods (-909,-664.8)",
+      "full map"
+    ],
+    "page_errors": 0,
+    "matching_poses": true,
+    "pixels_over_8_of_255_percent": {
+      "campus": 5.656,
+      "mcminnville": 1.399,
+      "sheridan": 1.354,
+      "rim": 1.004,
+      "woods": 0.537,
+      "map": 0.039
+    },
+    "visible_changes": "corner-map campus track now shows the current 6-lane oval (intended, commit 0398958); otherwise edge-only imagery differences",
+    "speed_stream_test_1000kmh": {
+      "before": [
+        {
+          "frames": 2075,
+          "slow": 0,
+          "worstMs": 17,
+          "noGround": 0
+        },
+        {
+          "frames": 2074,
+          "slow": 1,
+          "worstMs": 33,
+          "noGround": 0
+        }
+      ],
+      "after": [
+        {
+          "frames": 2073,
+          "slow": 0,
+          "worstMs": 33,
+          "noGround": 0
+        },
+        {
+          "frames": 2075,
+          "slow": 0,
+          "worstMs": 17,
+          "noGround": 0
+        }
+      ]
+    }
+  },
+  "screenshot_command": "node tools/v3_screens.mjs --before http://127.0.0.1:8385/ --after http://127.0.0.1:8384/ --out work/v3/screens",
+  "screenshot_servers": [
+    "python3 tools/serve.py 8385 work/v3/before-game/game",
+    "python3 tools/serve.py 8384 game"
+  ],
+  "pushed": false,
+  "remaining": "Owner go-ahead to push to main (a push deploys the live game).",
+  "release_recheck_2026_11_14": {
+    "verify_pack": {
+      "tiles_checked": 468,
+      "exact_height_tiles": 468,
+      "exact_tree_tiles": 468,
+      "exact_geometry_tiles": 468,
+      "shared_core_seams": 888,
+      "total_after_bytes": 555809093,
+      "size_limit_bytes": 700000000,
+      "errors": [],
+      "passed": true
+    },
+    "drive": {
+      "sections": 97,
+      "changed_sections": 0,
+      "new_failures": 0,
+      "exit": 0,
+      "heap_megabytes": 8192,
+      "compared_against": [
+        "tile-v3-followup-baseline-1.txt",
+        "tile-v3-followup-baseline-2.txt"
+      ]
+    },
+    "python_tests": 64,
+    "non_browser_checks": {
+      "passed": 31,
+      "total": 31
+    }
+  }
+}

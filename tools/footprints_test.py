@@ -90,6 +90,7 @@ class BakerHookTest(unittest.TestCase):
 
     def run_hook(self, directory, buildings):
         state = dict(os=os, RAW=str(directory), buildings=buildings,
+                     road_paths=[], log=lambda *args: None,
                      lonlat_to_world=lambda lon, lat: (lon * 10, -lat * 10))
         exec(self.code, state)
         return state['buildings']

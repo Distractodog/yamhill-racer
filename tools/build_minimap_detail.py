@@ -4,6 +4,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 import tilefmt
+from imagecodec_v3 import encode_detail
+from campusmap_v3 import paint_track
 
 ROAD = {
     'asphalt': ((65, 70, 79), (245, 245, 235), 14),
@@ -11,38 +13,45 @@ ROAD = {
     'trail': ((218, 151, 83), (103, 65, 31), 8),
 }
 
+def bake_detail(world, assets, tx, tz):
+    size = world['tile']
+    folder = assets / 'tiles' / f'{tx}_{tz}'
+    tile = tilefmt.read_json(folder)
+    x0, z0 = tx*size-size/2, tz*size-size/2
+    def px(p): return p[0]-x0, p[1]-z0
+    ground = np.asarray(tilefmt.read_ground(folder).resize((size,size), Image.Resampling.LANCZOS)).copy()
+    surface = np.frombuffer(tilefmt.read_bytes(folder,'surface.bin'), np.uint8).reshape(size,size)
+    ground[surface == 5] = (86,150,205)
+    img = Image.fromarray(ground)
+    draw = ImageDraw.Draw(img)
+    for building in tile['buildings']:
+        draw.polygon([px(p) for p in building['pts']],fill=(210,206,198),outline=(105,101,95),width=1)
+    for kind in ('trail','gravel','asphalt'):
+        fill,edge,width = ROAD[kind]
+        paths = [[px(p) for p in road['pts']] for road in tile['paths'] if road['kind']==kind]
+        for junction in tile.get('junctions',[]):
+            if junction['kind'] != kind: continue
+            ring = junction['ring']
+            for i,p in enumerate(ring):
+                if p[3] == 0:
+                    q = ring[(i+1)%len(ring)]
+                    paths.append([px(junction['c']),px([(p[0]+q[0])/2,(p[1]+q[1])/2])])
+        for color,w in ((edge,width+4),(fill,width)):
+            for points in paths:
+                if len(points)>1: draw.line(points,fill=color,width=w,joint='curve')
+    paint_track(img, x0, z0, 1)
+    return img
+
+
 def bake_details(world, assets):
     size = world['tile']
     dst = assets / 'minimap-detail'
     dst.mkdir(exist_ok=True)
     total = 0
     for tx, tz in world['tiles']:
-        folder = assets / 'tiles' / f'{tx}_{tz}'
-        tile = tilefmt.read_json(folder)
-        x0, z0 = tx*size-size/2, tz*size-size/2
-        def px(p): return p[0]-x0, p[1]-z0
-        ground = np.asarray(tilefmt.read_ground(folder).resize((size,size), Image.Resampling.LANCZOS)).copy()
-        surface = np.frombuffer(tilefmt.read_bytes(folder,'surface.bin'), np.uint8).reshape(size,size)
-        ground[surface == 5] = (86,150,205)
-        img = Image.fromarray(ground)
-        draw = ImageDraw.Draw(img)
-        for building in tile['buildings']:
-            draw.polygon([px(p) for p in building['pts']],fill=(210,206,198),outline=(105,101,95),width=1)
-        for kind in ('trail','gravel','asphalt'):
-            fill,edge,width = ROAD[kind]
-            paths = [[px(p) for p in road['pts']] for road in tile['paths'] if road['kind']==kind]
-            for junction in tile.get('junctions',[]):
-                if junction['kind'] != kind: continue
-                ring = junction['ring']
-                for i,p in enumerate(ring):
-                    if p[3] == 0:
-                        q = ring[(i+1)%len(ring)]
-                        paths.append([px(junction['c']),px([(p[0]+q[0])/2,(p[1]+q[1])/2])])
-            for color,w in ((edge,width+4),(fill,width)):
-                for points in paths:
-                    if len(points)>1: draw.line(points,fill=color,width=w,joint='curve')
+        img = bake_detail(world, assets, tx, tz)
         path = dst / f'{tx}_{tz}.webp'
-        img.save(path,'WEBP',quality=88,method=4)
+        path.write_bytes(encode_detail(img))
         total += path.stat().st_size
     print(f'Detailed minimap: {len(world["tiles"])} tiles, {total/1e6:.1f} MB, 1 m/pixel',flush=True)
     return {'tile':size,'mpp':1,'path':'minimap-detail/','tiles':world['tiles']}
