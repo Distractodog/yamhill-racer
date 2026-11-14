@@ -160,6 +160,7 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
     }
   }
   const td = { tx, tz, x0, z0, gx0, gz0, NN, H, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
+    sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
     pondId, pondLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
     heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
   td.buildings = applyCampus(td);           // Delphian campus: hand-made models replace the OSM blocks (campus.js)
