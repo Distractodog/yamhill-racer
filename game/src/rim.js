@@ -35,7 +35,14 @@ export function makeRim(config) {
       p.x = cx + nx * limit; p.z = cz + nz * limit;
       // Remove only outward horizontal speed. Height, vertical speed, orientation and tangent speed are untouched.
       const outward = v.x * nx + v.z * nz;
-      if (outward > 0) { v.x -= outward * nx; v.z -= outward * nz; }
+      if (outward > 0) {
+        v.x -= outward * nx; v.z -= outward * nz;
+        // Ground jets rebuild vel from their signed taxi speed each step. Remove
+        // the blocked component there too, or the wall stores invisible speed.
+        if (vehicle.kind === 'jet' && vehicle.mode === 'ground') {
+          vehicle.v = (vehicle.v < 0 ? -1 : 1) * Math.hypot(v.x, v.z);
+        }
+      }
       return Math.max(0, outward);
     },
   };

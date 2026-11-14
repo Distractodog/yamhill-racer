@@ -54,6 +54,42 @@ for (const kind of ['car', 'bike', 'jet', 'car-glider', 'bike-glider']) {
     trials++;
   }
 }
+// The ground jet has a separate signed taxi speed: it must not retain hidden
+// outward speed that reappears on the next physics step or after steering away.
+for (const reverse of [false, true]) {
+  const taxi = create('jet'); taxi.reset(2991.7, 0, reverse ? -Math.PI / 2 : Math.PI / 2);
+  taxi.v = reverse ? -50 : 50; taxi.vel.set(50, 0, 0); taxi.throttle = reverse ? 0 : 1;
+  for (let i = 0; i < 240; i++) {
+    taxi.step(DT, { jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } });
+    const before = taxi.quat.toArray(); rim.constrain(taxi);
+    assert.deepEqual(taxi.quat.toArray(), before); assert.equal(taxi.mode, 'ground');
+    assert(Math.abs(taxi.v) <= Math.hypot(taxi.vel.x, taxi.vel.z) + 1e-8, 'taxi speed retains blocked energy');
+    assert(rim.contains(taxi.pos.x, taxi.pos.z));
+  }
+  assert(Math.abs(taxi.v) < 1e-6, 'head-on taxi impact should stop even with full forward throttle');
+  // Turn away after the impact: the old taxi speed must not reappear.
+  taxi.throttle = 0; taxi.yaw += Math.PI / 2; taxi.step(DT, { jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } });
+  assert(taxi.vel.length() < 1e-5, 'steering away restored pre-impact speed');
+}
+const slidingJet = create('jet'), slideYaw = Math.atan2(1, 10);
+slidingJet.reset(2991.7, 0, slideYaw); slidingJet.v = 50;
+slidingJet.vel.set(Math.sin(slideYaw) * 50, 0, Math.cos(slideYaw) * 50); slidingJet.throttle = 0;
+let taxiHits = 0;
+for (let i = 0; i < 360; i++) {
+  slidingJet.step(DT, { jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } });
+  const before = slidingJet.quat.toArray(), r = Math.hypot(slidingJet.pos.x, slidingJet.pos.z);
+  const tangentBefore = (slidingJet.vel.x * slidingJet.pos.z - slidingJet.vel.z * slidingJet.pos.x) / r;
+  const hit = rim.constrain(slidingJet); if (hit > 0) taxiHits++;
+  assert.deepEqual(slidingJet.quat.toArray(), before); assert.equal(slidingJet.mode, 'ground');
+  const afterRadius = Math.hypot(slidingJet.pos.x, slidingJet.pos.z);
+  const tangentAfter = (slidingJet.vel.x * slidingJet.pos.z - slidingJet.vel.z * slidingJet.pos.x) / afterRadius;
+  assert(Math.abs(tangentAfter - tangentBefore) < 1e-8, 'rim removed tangent velocity');
+  assert(rim.contains(slidingJet.pos.x, slidingJet.pos.z));
+  if (hit > 0) assert(Math.abs(slidingJet.v - Math.hypot(slidingJet.vel.x, slidingJet.vel.z)) < 1e-8);
+}
+assert(taxiHits > 0 && slidingJet.vel.length() > 1 && slidingJet.pos.z > 10, 'oblique jet must keep sliding');
+console.log(`PASS ground jets: forward/reverse head-on stops, no stored speed after turning, ${taxiHits} oblique contacts with slide and unchanged orientation`);
+
 // Production-size translated circle uses the same code, without enabling it in the map manifest.
 const production = makeRim({ cx: 9000, cz: -5000, r: 17200 }), translated = create('car');
 translated.pos.set(30000, 100, -5000); translated.vel.set(1000 / 3.6, 0, 30);
