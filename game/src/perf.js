@@ -25,25 +25,41 @@
 // Shadows already cover 75 m, inside the 100 m cap. Far road markings already drop past
 // about 350 m in roads.js. A further merge was not worth the extra triangles.
 
-const OFF = () => {};
+import { setTownStep, townRange } from './townmodel.js';
 
+// Always tracks frame time. The on-screen line is only there with ?perf.
 export function installPerf(renderer) {
-  if (typeof location === 'undefined' || !/[?&]perf\b/.test(location.search)) return OFF;
-  const el = document.createElement('pre');
-  el.id = 'perf';
-  el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:40;margin:0;padding:6px 8px;'
-    + 'background:rgba(0,0,0,.72);color:#e8f0e8;font:12px/1.4 ui-monospace,monospace;pointer-events:none;border-radius:6px;';
-  document.body.append(el);
-  let last = 0, left = 0, frames = 0, acc = 0;
+  const show = typeof location !== 'undefined' && /[?&]perf\b/.test(location.search);
+  let el = null;
+  if (show) {
+    el = document.createElement('pre');
+    el.id = 'perf';
+    el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:40;margin:0;padding:6px 8px;'
+      + 'background:rgba(0,0,0,.72);color:#e8f0e8;font:12px/1.4 ui-monospace,monospace;pointer-events:none;border-radius:6px;';
+    document.body.append(el);
+  }
+  let last = 0, left = 0, frames = 0, acc = 0, avg = 16.7, slowFor = 0, fastFor = 0;
   return function tick() {
     const now = performance.now();
     const dt = last ? (now - last) / 1000 : 0;
     last = now;
+    if (dt > 0 && dt < 0.5) {
+      const ms = dt * 1000;
+      avg += (ms - avg) * Math.min(1, dt / 0.5);
+      if (avg > 22) { slowFor += dt; fastFor = 0; }
+      else if (avg < 15) { fastFor += dt; slowFor = 0; }
+      else { slowFor = 0; fastFor = 0; }
+      if (townRange.step === 0 && slowFor >= 3) { setTownStep(1); slowFor = 0; }
+      else if (townRange.step > 0 && fastFor >= 10) { setTownStep(0); fastFor = 0; }
+    }
+    if (!el) return;
     frames++; acc += dt; left += dt;
     if (left < 0.5) return;
     left = 0;
     const info = renderer.info.render;
-    el.textContent = Math.round(frames / acc) + ' fps  ' + info.calls + ' calls  ' + info.triangles + ' tris';
+    const q = townRange.step === 0 ? 'full' : 'low';
+    el.textContent = Math.round(frames / acc) + ' fps  ' + info.calls + ' calls  ' + info.triangles
+      + ' tris  ' + q + '  near ' + townRange.near + ' m';
     frames = 0; acc = 0;
   };
 }
