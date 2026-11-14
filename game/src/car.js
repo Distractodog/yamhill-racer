@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
+import { buildingRoofAt, buildingRoofFloor } from './roofs.js';
 
 export const TUNING_DEFAULTS = {
   accel: 30,              // m/s² from standstill (was 17 before 2026-11-11)
@@ -348,9 +349,11 @@ export class Car extends Vehicle {
   }
 
   collideBuildings() {
-    const R = 1.5;
+    const R = 1.5, roofSupport = this.world.canReachRoof?.();
     for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) {
       if (!b.pts || this.pos.y > b.top + 1) continue;
+      const roof = roofSupport && this.pos.y > buildingRoofFloor(b, this.world) ? buildingRoofAt(b, this.pos.x, this.pos.z, this.world) : Infinity;
+      if (Number.isFinite(roof) && this.pos.y > roof + 0.05) continue;
       const pts = b.pts; let inside = false, bestD = Infinity, bx = 0, bz = 0;
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
         const [x1, z1] = pts[j], [x2, z2] = pts[i];

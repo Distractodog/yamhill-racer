@@ -113,7 +113,7 @@ export function applyLandmarks(td) {
     b.floor = td.terrainAt(b.floorAt[0], b.floorAt[1]) + (b.dy || 0);
     const top = b.floor + Math.max(...b.parts.map(partTop));
     const polys = b.parts.map(partPts);
-    polys.forEach((pts, i) => out.push({ pts, h: top - b.floor, top, landmark: i === 0 ? b : null, landmarkPart: true }));
+    polys.forEach((pts, i) => out.push({ pts, h: top - b.floor, top, roofBuilding: b, landmark: i === 0 ? b : null, landmarkPart: true }));
   }
   return out;
 }

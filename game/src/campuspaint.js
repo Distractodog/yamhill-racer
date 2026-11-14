@@ -3,6 +3,7 @@
 // still drives and the drive numbers stay put. No kerbs.
 import * as THREE from 'three';
 import { ENTRANCE } from './campus.js';
+import { terrainPaintQuad } from './terrainpaint.js';
 
 const RED = [0.62, 0.16, 0.14];
 const WHITE = [0.92, 0.92, 0.90];
@@ -25,38 +26,44 @@ const CX = -555.8, CZ = 48, AX = 39, AZ = 87;
 export function addCampusPaint(group, ground) {
   const P = [], C = [];
   const y = (x, z, lift = 0.1) => [x, ground(x, z) + lift, z];
+  const trackQuad = (a, b, c, d, col, lift = 0.16) => {
+    const k = lin(col);
+    terrainPaintQuad(a, b, c, d, ground, lift, (p, q, r) => {
+      P.push(...p, ...q, ...r); C.push(...k, ...k, ...k);
+    });
+  };
   const ring = (a0, b0, a1, b1, col, lift) => {
     const n = 72;
     for (let i = 0; i < n; i++) {
       const t0 = i / n * Math.PI * 2, t1 = (i + 1) / n * Math.PI * 2;
       const p = (a, b, t) => y(CX + Math.cos(t) * a, CZ + Math.sin(t) * b, lift);
-      quad(P, C, p(a0, b0, t0), p(a1, b1, t0), p(a1, b1, t1), p(a0, b0, t1), col);
+      trackQuad(p(a0, b0, t0), p(a1, b1, t0), p(a1, b1, t1), p(a0, b0, t1), col, lift);
     }
   };
   // red band over the class-7 ring (inner ellipse is 0.787 of the outer)
   ring(AX * 0.79, AZ * 0.79, AX, AZ, RED, 0.08);
   for (let k = 1; k <= 6; k++) {
     const t = 0.79 + 0.21 * k / 7;
-    ring(AX * t, AZ * t, AX * t + 0.45, AZ * t + 0.45, WHITE, 0.16);
+    ring(AX * t, AZ * t, AX * t + 0.10, AZ * t + 0.10, WHITE, 0.16);
   }
   // start line across the west straight, inner edge to outer edge
-  quad(P, C, y(CX - AX, CZ - 0.12, 0.12), y(CX - AX * 0.79, CZ - 0.12, 0.12), y(CX - AX * 0.79, CZ + 0.12, 0.12), y(CX - AX, CZ + 0.12, 0.12), WHITE);
+  trackQuad(y(CX - AX, CZ - 0.05, 0.12), y(CX - AX * 0.79, CZ - 0.05, 0.12), y(CX - AX * 0.79, CZ + 0.05, 0.12), y(CX - AX, CZ + 0.05, 0.12), WHITE);
   // infield: halfway line, centre circle, two goals
-  quad(P, C, y(CX - 20, CZ - 0.08, 0.1), y(CX + 20, CZ - 0.08, 0.1), y(CX + 20, CZ + 0.08, 0.1), y(CX - 20, CZ + 0.08, 0.1), WHITE);
+  trackQuad(y(CX - 20, CZ - 0.04, 0.1), y(CX + 20, CZ - 0.04, 0.1), y(CX + 20, CZ + 0.04, 0.1), y(CX - 20, CZ + 0.04, 0.1), WHITE);
   const n = 24;
   for (let i = 0; i < n; i++) {
     const t0 = i / n * Math.PI * 2, t1 = (i + 1) / n * Math.PI * 2;
     const p = (r, t) => y(CX + Math.cos(t) * r, CZ + Math.sin(t) * r, 0.1);
-    quad(P, C, p(9, t0), p(9.25, t0), p(9.25, t1), p(9, t1), WHITE);
+    trackQuad(p(9, t0), p(9.08, t0), p(9.08, t1), p(9, t1), WHITE);
   }
   for (const s of [-1, 1]) {
     const z = CZ + s * 32;
-    quad(P, C, y(CX - 3.6, z - 0.1), y(CX + 3.6, z - 0.1), y(CX + 3.6, z + 0.1), y(CX - 3.6, z + 0.1), WHITE);
-    quad(P, C, y(CX - 3.6, z), y(CX - 3.4, z), y(CX - 3.4, z + s * 2), y(CX - 3.6, z + s * 2), WHITE);
-    quad(P, C, y(CX + 3.4, z), y(CX + 3.6, z), y(CX + 3.6, z + s * 2), y(CX + 3.4, z + s * 2), WHITE);
+    trackQuad(y(CX - 3.6, z - 0.04), y(CX + 3.6, z - 0.04), y(CX + 3.6, z + 0.04), y(CX - 3.6, z + 0.04), WHITE);
+    trackQuad(y(CX - 3.6, z), y(CX - 3.52, z), y(CX - 3.52, z + s * 2), y(CX - 3.6, z + s * 2), WHITE);
+    trackQuad(y(CX + 3.52, z), y(CX + 3.6, z), y(CX + 3.6, z + s * 2), y(CX + 3.52, z + s * 2), WHITE);
   }
   // field-event pad just west of the oval
-  quad(P, C, y(CX - AX - 16, CZ - 12, 0.08), y(CX - AX - 4, CZ - 12, 0.08), y(CX - AX - 4, CZ + 12, 0.08), y(CX - AX - 16, CZ + 12, 0.08), RED);
+  trackQuad(y(CX - AX - 16, CZ - 12, 0.08), y(CX - AX - 4, CZ - 12, 0.08), y(CX - AX - 4, CZ + 12, 0.08), y(CX - AX - 16, CZ + 12, 0.08), RED, 0.08);
 
   // eight stall marks on the pad in front of the west wing
   const { N, U } = ENTRANCE;

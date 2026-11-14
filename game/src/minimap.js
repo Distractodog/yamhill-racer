@@ -42,10 +42,10 @@ export async function createMinimap(base = './assets/') {
   corner.innerHTML = '<canvas></canvas><button aria-label="Open full map">⤢</button><span class="mm-n">N</span>';
   const full = document.createElement('div');
   full.id = 'fullmap';
-  full.innerHTML = '<canvas></canvas><div class="fm-hint">Click to drop a pin · scroll or + − to zoom · drag to move · M or Esc to close</div>' +
+  full.innerHTML = '<canvas></canvas><div class="fm-hint">↱ for road directions · click to drop a pin · scroll or + − to zoom · drag to move · M or Esc to close</div>' +
     '<div class="fm-zoom"><button data-z="in" title="Zoom in (+)">+</button><button data-z="out" title="Zoom out (−)">−</button>' +
     '<button data-z="fit" title="Whole map (0)">⤢</button><button data-z="car" title="Centre on car">◎</button>' +
-    '<button data-z="unpin" title="Remove the pin (P)">📍</button><button data-z="close" title="Close (M)">✕</button></div>';
+    '<button data-z="directions" title="Road directions" aria-label="Road directions">↱</button><button data-z="unpin" title="Remove the pin (P)">📍</button><button data-z="close" title="Close (M)">✕</button></div>';
   const css = document.createElement('style');
   css.textContent = `#fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
     #fullmap canvas.drag { cursor: grabbing; }
@@ -64,6 +64,7 @@ export async function createMinimap(base = './assets/') {
   const cc = corner.querySelector('canvas'), fc = full.querySelector('canvas');
   const cctx = cc.getContext('2d'), fctx = fc.getContext('2d');
 
+  let directionMode = false, directionBegin = null, directionChoose = null, directions = null;
   let open = false, viewM = 600, spawnPicker = null;
   const normalHint = full.querySelector(".fm-hint").textContent;
   // full map view: zoom 1 = whole map fits; (vx, vy) = image pixel at the centre of the canvas
@@ -126,6 +127,7 @@ export async function createMinimap(base = './assets/') {
       spawnPicker(ex0 + ix * mpp, ez0 + iy * mpp);
       return;
     }
+    if (directionMode) { directionChoose?.(ex0 + ix * mpp, ez0 + iy * mpp, 6 * d * mpp / s); return; }
     if (pin) {                                     // clicked on the pin (its head sits ~19 px above the point): remove it
       const [qx, qy] = toPx(pin.x, pin.z);
       if (Math.hypot((qx - ix) * s, (qy - iy) * s - 13 * d) < 16 * d) { setPin(null); return; }
@@ -136,7 +138,8 @@ export async function createMinimap(base = './assets/') {
   fc.addEventListener('pointercancel', endDrag);
   const ZOOM_STEP = 1.6;
   function zoomCmd(z) {
-    if (z === 'in') zoomAt(ZOOM_STEP);
+    if (z === 'directions' && !spawnPicker) directionBegin?.();
+    else if (z === 'in') zoomAt(ZOOM_STEP);
     else if (z === 'out') zoomAt(1 / ZOOM_STEP);
     else if (z === 'fit') { zoom = 1; clampView(); }
     else if (z === 'car') { zoom = Math.max(zoom, 6); [vx, vy] = carPx; clampView(); }
@@ -176,7 +179,7 @@ export async function createMinimap(base = './assets/') {
   }
   // car → pin as a faint dashed line (map(x, z) → canvas px)
   function drawPinLine(ctx, map, cx, cy, d) {
-    if (!pin) return;
+    if (!pin || directions) return;
     const [a, b] = map(pin.x, pin.z);
     ctx.save(); ctx.setLineDash([6 * d, 6 * d]); ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(a, b);
@@ -207,6 +210,17 @@ export async function createMinimap(base = './assets/') {
     ctx.restore();
   }
 
+  function drawDirections(ctx, map, d) {
+    if (!directions?.length) return;
+    ctx.save(); ctx.lineJoin = ctx.lineCap = 'round'; ctx.beginPath();
+    directions.forEach(([x,z],i) => { const p=map(x,z); i ? ctx.lineTo(...p) : ctx.moveTo(...p); });
+    ctx.strokeStyle='#10251f'; ctx.lineWidth=7*d; ctx.stroke();
+    ctx.strokeStyle='#83ff78'; ctx.lineWidth=4*d; ctx.stroke();
+    const end=map(...directions[directions.length-1]);
+    ctx.beginPath(); ctx.arc(...end,7*d,0,Math.PI*2); ctx.fillStyle='#83ff78'; ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2*d; ctx.stroke(); ctx.restore();
+  }
+
   // x, z: car position (m); heading: radians on the map, 0 = north (up), clockwise; speed in m/s
   function update(x, z, heading, speed, dt) {
     const [px, py] = toPx(x, z);
@@ -221,6 +235,7 @@ export async function createMinimap(base = './assets/') {
       strokeRim(cctx, cox, coy, s, d);
       const cmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [W / 2 + (a - px) * s, H / 2 + (b - py) * s]; };
       drawOverlay(cctx, cmap, d);
+      drawDirections(cctx, cmap, d);
       if (pin) {                                   // pin on the corner map; held at the edge when it's further away
         let [a, b] = cmap(pin.x, pin.z); const m = 12 * d, inside = a > m && a < W - m && b > m * 2 && b < H - m;
         if (!inside) {
@@ -244,6 +259,7 @@ export async function createMinimap(base = './assets/') {
       for (const l of LABELS) { const [lx, ly] = toPx(l.x, l.z); label(fctx, l.name, ox + lx * s, oy + ly * s, 15 * d); }
       const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
       drawOverlay(fctx, fmap, d);
+      drawDirections(fctx, fmap, d);
       drawPinLine(fctx, fmap, ox + px * s, oy + py * s, d);
       full.querySelector('[data-z="unpin"]').disabled = !pin;
       // pulsing ring so you can spot yourself on the big map
@@ -268,11 +284,18 @@ export async function createMinimap(base = './assets/') {
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
   return { update, toggle,
+    setDirectionHandlers(begin, choose) { directionBegin=begin; directionChoose=choose; },
+    setDirections(points) { directions=points; },
+    setDirectionMode(value) {
+      directionMode=value;
+      full.querySelector('[data-z="directions"]').setAttribute('aria-pressed', String(value));
+      if (!spawnPicker) full.querySelector('.fm-hint').textContent=value ? 'Click a road to get directions · scroll to zoom · drag to move' : normalHint;
+    },
     pickSpawn(callback, message = 'Where do you want to start? Click a point on the map · scroll to zoom · drag to move') {
       spawnPicker = callback;
       full.classList.toggle('spawn-picker', !!callback);
       full.querySelector('.fm-hint').textContent = callback ? message : normalHint;
-      for (const command of ['close', 'unpin', 'car']) full.querySelector(`[data-z="${command}"]`).hidden = !!callback;
+      for (const command of ['close', 'unpin', 'car', 'directions']) full.querySelector(`[data-z="${command}"]`).hidden = !!callback;
       if (callback && !open) toggle(true);
     }, setOverlay: o => { overlay = o; }, get open() { return open; },
     get pin() { return pin; }, setPin, onPin: f => pinListeners.push(f) };

@@ -36,3 +36,15 @@ serve `game/` with any static web server.
 - Tree heights: Meta & World Resources Institute, *High Resolution Canopy Height Maps* (CC BY 4.0).
 - Engine sound: real BMW 120d recordings by GiocoSound on [Freesound](https://freesound.org/people/GiocoSound/packs/22622/) (CC0).
 - Rendering: [three.js](https://threejs.org) (MIT).
+
+### Road directions
+
+While on a road, open the map (M), click ↱ Directions, then click a road destination.
+The green line follows connected asphalt/gravel roads. Turn prompts and remaining distance
+stay visible while driving; leaving the route recalculates when you return to a road.
+Use the × on the directions prompt to clear the route. Ordinary map pins still work.
+
+After rebuilding tile roads, run `python3 tools/build_navigation.py` to refresh
+`game/assets/navigation.json`. Verify with `node tools/navigation_test.mjs`.
+Roof support and terrain-aligned track paint have regression checks in
+`tools/roof_landing_test.mjs` and `tools/terrainpaint_test.mjs`.

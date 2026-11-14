@@ -5,12 +5,13 @@
 // normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt / loadedAt / extent for bookkeeping).
 // The car keeps its own (older) copies of the collision helpers so its handling is byte-for-byte unchanged.
 import * as THREE from 'three';
+import { createVehicleWorld, buildingRoofAt, buildingRoofFloor } from './roofs.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 
 export class Vehicle {
   constructor(world, kind) {
-    this.world = world; this.kind = kind;
+    this.world = createVehicleWorld(world, this); this.kind = kind;
     this.pos = new THREE.Vector3(); this.quat = new THREE.Quaternion();
     this.vel = new THREE.Vector3(); this.ang = new THREE.Vector3();
     this.prevPos = new THREE.Vector3(); this.prevQuat = new THREE.Quaternion();
@@ -73,11 +74,13 @@ export class Vehicle {
 
   // building footprints (polygons) as walls up to their roof; returns the hardest hit
   collideBuildings(R) {
+    const roofSupport = this.world.canReachRoof?.();
     let worst = 0;
     for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) {
       if (!b.pts) continue;
       const top = b.top ?? this.world.heightAt(b.pts[0][0], b.pts[0][1]) + (b.h || 6);   // top is set when the game meshes it
-      if (this.pos.y > top + 1) continue;
+      const roof = roofSupport && this.pos.y > buildingRoofFloor(b, this.world) ? buildingRoofAt(b, this.pos.x, this.pos.z, this.world) : Infinity;
+      if (this.pos.y > top + 1 || (Number.isFinite(roof) && this.pos.y > roof + 0.05)) continue;
       const pts = b.pts; let inside = false, bestD = Infinity, bx = 0, bz = 0;
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
         const [x1, z1] = pts[j], [x2, z2] = pts[i];

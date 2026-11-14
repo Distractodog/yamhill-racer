@@ -5,6 +5,7 @@ import { createRimRing } from './rimring.js';
 import { Car, TUNING_DEFAULTS } from './car.js';
 import { Effects } from './effects.js';
 import { CarAudio } from './audio.js';
+import { createDirections } from './directions.js';
 import { createMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
@@ -89,6 +90,7 @@ car.reset(...spawn);
 const effects = new Effects(scene);
 const audio = new CarAudio();
 const minimap = await createMinimap();
+const directions = createDirections({ minimap, car, world });
 const challenges = await createChallenges({ scene, world, car, minimap, vehicles });
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
@@ -352,6 +354,7 @@ function frame(now) {
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
   pinGuide.update(dt);
+  directions.update(dt);
   rimRing?.update(car.renderPos);
   renderer.render(scene, camera);
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
@@ -376,7 +379,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 // for debugging / automated test drives
-window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide };
+window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide, directions };
 window.game.glider = glider; window.game.bikeGlider = bikeGlider;
 window.game.vehicles = vehicles;
 // Every fresh load starts in the car; V still switches vehicles during play.

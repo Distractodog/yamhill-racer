@@ -155,7 +155,7 @@ export class Jet extends Vehicle {
     const vyNew = (ny - this.pos.y) / dt;
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
     // ground falling away faster than gravity can follow (crest / ramp lip): it's in the air
-    if (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50) {
+    if (ny < this.pos.y - 2 || (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50)) {
       this.toAir(); this.vel.set(Math.sin(this.yaw) * this.v, this.vy, Math.cos(this.yaw) * this.v); return;
     }
     this.vy = vyNew;
