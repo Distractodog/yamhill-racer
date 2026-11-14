@@ -15,7 +15,8 @@ import tilefmt
 
 def main(src, dst, only):
     world = json.load(open(os.path.join(dst, 'world.json')))
-    assert world.get('packed') == tilefmt.PACKED, 'world.json has no "packed" flag'
+    if world.get('packed') not in (1, 2):
+        sys.exit('world.json must specify supported packed version 1 or 2')
     tiles = [tuple(map(int, t.split(','))) for t in only] if only else [tuple(t) for t in world['tiles']]
     bad, means = 0, []
     for tx, tz in tiles:

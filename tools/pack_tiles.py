@@ -2,7 +2,7 @@
 
   .venv/bin/python tools/pack_tiles.py game/assets ../yr-assets-packed
 
-Copies everything else in the assets folder unchanged and adds "packed": 1 to world.json. Works one tile at a time and
+Copies everything else in the assets folder unchanged and adds "packed": 2 to world.json. Works one tile at a time and
 one file at a time, so memory stays small (~50 MB) whatever the number of tiles. Prints sizes before and after.
 """
 import json, os, shutil, sys, time

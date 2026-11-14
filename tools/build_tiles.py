@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import mapdata, align, roadnet, tilefmt
 from fetch_tiles import TILE, MARGIN, TX, TZ, TILE_SET, HSTEP, CX, CY, K, R
 import fetch_tiles
-RIM_R = 17200                                     # drivable radius of the round map (m)
+RIM_R = 22500                                     # drivable radius of the round map (m)
 
 RAW = os.path.join(ROOT, 'data', 'raw')
 ASSETS = os.environ.get('YR_ASSETS', os.path.join(ROOT, 'game', 'assets'))   # YR_ASSETS=dir builds somewhere else, to swap in after

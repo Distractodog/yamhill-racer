@@ -1,6 +1,7 @@
 // Packed tile files (tools/tilefmt.py), used by the game (world.js) and the Node tests.
 // world.json "packed": 1 → height.bin.gz (float32 bytes split into 4 planes, then gzip), surface.bin.gz, ponds.bin.gz,
-// tile.json.gz, trees.bin (raw), ground.jpg. Without the flag: the plain files (height.bin, …, ground.png).
+// tile.json.gz, trees.bin (raw), ground.jpg. Version 2 stores trees.bin.gz with the same 4-byte-plane shuffle.
+// Without the flag: the plain files (height.bin, …, ground.png).
 // GitHub Pages serves .gz as plain bytes (no Content-Encoding), so they are unpacked here with DecompressionStream
 // (built into browsers and Node 18+): it runs as a stream, in chunks, so a tile never stalls a frame for long.
 
@@ -26,8 +27,8 @@ export async function readTileData(read, packed) {
     const [hbuf, sbuf, tbuf, pbuf, tj] = await Promise.all(['height.bin', 'surface.bin', 'trees.bin', 'ponds.bin', 'tile.json'].map(read));
     return { hbuf, sbuf, tbuf, pbuf, tile: JSON.parse(new TextDecoder().decode(tj)) };
   }
-  const [h, s, tbuf, p, tj] = await Promise.all(['height.bin.gz', 'surface.bin.gz', 'trees.bin', 'ponds.bin.gz', 'tile.json.gz'].map(read));
-  const [hz, sbuf, pbuf, tjson] = await Promise.all([gunzip(h), gunzip(s), gunzip(p), gunzip(tj)]);
+  const [h, s, trees, p, tj] = await Promise.all(['height.bin.gz', 'surface.bin.gz', packed >= 2 ? 'trees.bin.gz' : 'trees.bin', 'ponds.bin.gz', 'tile.json.gz'].map(read));
+  const [hz, sbuf, tbuf, pbuf, tjson] = await Promise.all([gunzip(h), gunzip(s), packed >= 2 ? gunzip(trees).then(unshuffle4) : trees, gunzip(p), gunzip(tj)]);
   return { hbuf: unshuffle4(hz), sbuf, tbuf, pbuf, tile: JSON.parse(new TextDecoder().decode(tjson)) };
 }
 
