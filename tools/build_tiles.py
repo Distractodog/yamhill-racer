@@ -155,7 +155,19 @@ for e in osm:
         if in_map(pts[:, 0], pts[:, 1], 100).any(): water_polys.append(pts)
 if os.path.isfile(os.path.join(RAW, 'footprints.geojson')):
     import footprints
+    from shapely.geometry import LineString as _LS, Polygon as _PG
+    from shapely.strtree import STRtree as _STR
+    _n_osm = len(buildings)
     buildings = footprints.merge(buildings, footprints.load_geojson(os.path.join(RAW, 'footprints.geojson'), lonlat_to_world))
+    # imported footprints (not OSM) that sit on a road (ML outlines can be a few metres off) would block it: drop them
+    _roads = [_LS(r['pts']).buffer(r['w'] / 2 + 1.0, cap_style=2) for r in road_paths if len(r['pts']) > 1]
+    _rt = _STR(_roads); _kept = buildings[:_n_osm]; _dropped = 0
+    for b in buildings[_n_osm:]:
+        P = _PG(b['pts'])
+        if P.is_valid and sum(_roads[i].intersection(P).area for i in _rt.query(P, predicate='intersects')) > 2.0: _dropped += 1
+        else: _kept.append(b)
+    log('imported footprints:', len(buildings) - _n_osm, 'kept', len(buildings) - _n_osm - _dropped, '· dropped on roads', _dropped)
+    buildings = _kept
 log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys))
 # town ground (fetch_tiles.py fetch_landuse): green = parks / lawns / pitches / cemeteries, grey = parking + lots
 GREEN_LU = {'grass', 'recreation_ground', 'cemetery', 'village_green', 'park', 'pitch', 'playground', 'garden',
