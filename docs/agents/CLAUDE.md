@@ -96,6 +96,14 @@ format and loader, the road network, and the one big rebuild. Everything else wa
 ### TW-4r — review ChatGPT's footprint merge (S)
 - Read only `tools/footprints.py` and its 3-line hook in `build_tiles.py`; check dedupe logic (overlap thresholds), licence credit line, and heights. Report approve / changes needed. No other work.
 
+### BR — bridges and overpasses (planned 2026-11-14)
+The whole plan (BR-0 to BR-5) is in `docs/HANDOFF.md`; yours is the rebuild, after BR-1 to BR-3 are merged.
+
+### BR-5 — rebuild tiles + re-bake the minimap (L, mostly commands; Claude)
+- **Goal:** one rebuild with BR-1 + BR-2 together, then the minimap shows the rivers.
+- **Note:** the map is now **468 tiles / a 45 km circle**, so the build costs more than the last one (276 tiles took ~30 min and 5.2 GB peak). Build into `YR_ASSETS=<new dir>` in the background, then swap in; never half-written tiles in `game/assets/`. Then `build_minimap.py`, `challenge_routes.py` (arches), `pack_tiles`/`verify_pack` as RM-4 did.
+- **Done when:** [ ] build log: river/stream lines, pools, bridges counted, no errors; [ ] ROADCLIP ≤ 0.02 %; DRIVE (0 NaN, 0 DNF, bots finish), `bridge_test.mjs` (BR-3) pass; STREAM 0 frames without ground; [ ] the BR-0 screenshot list re-shot: every row "fine"; [ ] minimap shows the rivers; [ ] asset size reported (Pages limit ~1 GB); [ ] pushed only when the owner says so.
+
 ## Report back (send the owner this, filled in)
 ```
 Piece: <ID>   Branch: <name>   Commits: <short hashes>

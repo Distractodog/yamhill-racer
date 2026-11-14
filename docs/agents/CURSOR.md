@@ -132,6 +132,16 @@ Same files and checks as CD-1 (one at a time, in this order). Specifics:
 - **Done when:** [ ] full map shows the whole circle, rim line, outside dark; zoom/pan/pin/labels work (script clicks, 0 page errors); [ ] corner map follows the car and shows the rim near it; [ ] SHOT of both maps; picture file size reported; [ ] **(owner)** sharpness.
 - **Open question for owner:** sharper picture vs file size? **Default:** ≤ 5 m/px, ≤ 3 MB.
 
+### BR — bridges and overpasses (planned 2026-11-14)
+The whole plan (BR-0 to BR-5) is in `docs/HANDOFF.md`; yours is the meshes. Wait for BR-2's `bridge` strips (a test build is enough).
+
+### BR-4 — bridge meshes: concrete deck, railings, piers + Sheridan's green truss (M + M)
+- **Goal:** every bridge looks like one. Generic (creeks, overpasses): the road strip's side skirt becomes a ~1.2 m concrete deck edge + underside, a concrete parapet / railing on both sides, simple piers every ~25 m down to the ground or river bed. Sheridan Bridge (strip `bridge: 'truss'`): a mint/sage-green steel **Parker through-truss** (1939, 78.6 m, curved top chord, see `docs/research/landmarks-sheridan.md`): two truss sides outside the sidewalks with verticals and Pratt diagonals, an overhead lattice (struts + X bracing) high enough for a truck, portals at both ends, low-poly, merged into one mesh per tile.
+- **Create:** `game/src/bridges.js` (one merged vertex-coloured mesh per tile from `td.renderRoads` with `bridge`; colours converted sRGB → linear as in `campusmodel.js`). **Edit:** `world.js` one hook after the road blocks (+ a far/LOD rule), `roads.js` `columns()` only for the bridge skirt depth. **Leave alone:** physics, tile build.
+- **Can start before BR-5:** test on a `YR_TILES` scratch build from BR-2 (serve a scratch `game/` copy whose `assets/` points at it).
+- **Done when:** [ ] SHOT side + driver's views: Sheridan Bridge (3594, 1345), the S Bridge St overpass over Hwy 18 (3570, 2370), Hwy 18 over the South Yamhill (5149, 1810), one creek bridge; [ ] driving through the truss: nothing clips the car or camera (overhead clearance ≥ 6 m); [ ] BENCH at Sheridan within baseline, triangles added reported; [ ] PAGEERR clean; [ ] **(owner)** looks right, the green is right. Railings are visual only (no collision) unless the owner asks.
+
+
 ## Report back (send the owner this, filled in)
 ```
 Piece: <ID>   Branch: <name>   Commits: <short hashes>

@@ -38,6 +38,25 @@ The **round map** (RM-*) is approved but **on hold until you say "start"**. `PLA
 | 5 | CD-2… and merges | ghost car / respawn | TW-2b, TW-4r, **RM-4** (you run the build commands) | TW-5 facts if needed |
 Week 5+ then repeats: you playtest, then the next CD/TW-5 pieces.
 
+## BR — bridges and overpasses (planned 2026-11-14, not started)
+Owner, 2026-11-14: a full review of bridges **including overpasses**: "there are several spots where roads clip because
+there is an overpass not being made." Today the game has no bridges and no rivers: every road follows the bare-earth lidar,
+so a road over a river dips into the valley, and where two roads cross on different levels the build pulls them to one height
+or one clips through the other. Pieces in order (BR-1 → BR-2 share `build_tiles.py`: one at a time, merged before the next):
+
+| Piece | Size | Who | What |
+|---|---|---|---|
+| BR-0 | S–M | ChatGPT | audit: every OSM bridge/tunnel/layer way + road crossing without a junction + road over water, typed and screenshotted |
+| BR-1 | M | ChatGPT | rivers and streams as water (pools stepping down each line, banks carved) |
+| BR-2 | M–L | ChatGPT | bridge/overpass decks in the road build (no carve under, no harmonize pull-down, lower road keeps its height) |
+| BR-3 | M | ChatGPT | physics under a deck: queries take the vehicle's height so a car below isn't snapped up onto it |
+| BR-4 | M + M | Cursor | meshes: concrete deck, railings, piers; Sheridan Bridge's green Parker through-truss |
+| BR-5 | L (commands) | Claude | one rebuild (468 tiles) + minimap re-bake with rivers |
+
+Full piece text: BR-0 to BR-3 in [CHATGPT.md](agents/CHATGPT.md), BR-4 in [CURSOR.md](agents/CURSOR.md), BR-5 in [CLAUDE.md](agents/CLAUDE.md).
+BR-0 can start any time; BR-4 can start on a test build from BR-2. A first draft of BR-1/2/3 (unfinished) is on the owner's
+local branch `bridges` (not pushed).
+
 ## Rules that keep four agents from breaking each other
 1. **One git branch per piece**, named after its ID in lower case (`tw-1b`, `bug-1`, `rm-1a`), made from the current `main`.
    Agents commit only on their branch as `Distractodog` with the GitHub noreply email. **No agent pushes `main`.** A branch is pushed
