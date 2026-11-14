@@ -19,14 +19,25 @@ from PIL import Image
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, 'data', 'raw')
 TILE, MARGIN = 2000, 64
-# The map is a set of tiles, not a rectangle: the original 5 x 4 block (Willamina -> Sheridan, x -5000..5000,
-# z -3000..5000) plus a band ~6 km wide following Hwy 18 north-east through Bellevue into McMinnville.
+# Retain the original band as a regression check for the expanded round map.
 BASE = {(tx, tz) for tx in range(-2, 3) for tz in range(-1, 3)}
 HWY18 = {(3, 1), (4, 1), (5, 1), (3, 0), (4, 0), (5, 0), (6, 0), (5, -1), (6, -1), (7, -1), (5, -2), (6, -2), (7, -2),
          (6, -3), (7, -3), (8, -3), (7, -4), (8, -4), (9, -4), (10, -4), (8, -5), (9, -5), (10, -5), (11, -5),
          (10, -6)}
 MCMINNVILLE = {(8, -6), (9, -6), (11, -6), (9, -7), (10, -7), (11, -7)}   # rest of town (OSM building counts)
-TILE_SET = sorted(BASE | HWY18 | MCMINNVILLE, key=lambda t: (t[1], t[0]))
+OLD_TILE_SET = BASE | HWY18 | MCMINNVILLE
+MAP_CX, MAP_CZ, SCENERY_RADIUS = 9000, -5000, 17800
+# Select squares intersecting the scenery circle, not centres inside it. The
+# centre rule selects only 256 tiles and leaves gaps along the 17.2 km rim.
+TILE_SET = sorted({(tx, tz)
+    for tx in range(math.floor((MAP_CX - SCENERY_RADIUS - TILE / 2) / TILE),
+                    math.ceil((MAP_CX + SCENERY_RADIUS + TILE / 2) / TILE) + 1)
+    for tz in range(math.floor((MAP_CZ - SCENERY_RADIUS - TILE / 2) / TILE),
+                    math.ceil((MAP_CZ + SCENERY_RADIUS + TILE / 2) / TILE) + 1)
+    if math.hypot(max(0, abs(tx * TILE - MAP_CX) - TILE / 2),
+                  max(0, abs(tz * TILE - MAP_CZ) - TILE / 2)) <= SCENERY_RADIUS},
+    key=lambda t: (t[1], t[0]))
+assert len(TILE_SET) == 276 and OLD_TILE_SET <= set(TILE_SET)
 TX = range(min(t[0] for t in TILE_SET), max(t[0] for t in TILE_SET) + 1)   # bounding ranges (global grid extent)
 TZ = range(min(t[1] for t in TILE_SET), max(t[1] for t in TILE_SET) + 1)
 HSTEP = 4.0                # height grid spacing (m)
