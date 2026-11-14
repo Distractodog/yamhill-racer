@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileData } from './data.js';
+import { readTileData, fetchReader, groundFile } from './tilepack.js';
 import { buildRoads, roadBatches, buildJunctions } from './roads.js';
 import { buildCampusGeometry } from './campusmodel.js';
 
@@ -44,15 +45,13 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   async function fetchTile(tx, tz) {
     const dir = `${base}tiles/${tx}_${tz}/`;
-    const [hbuf, sbuf, tbuf, pbuf, tile, img] = await Promise.all([
-      fetch(dir + 'height.bin').then(r => r.arrayBuffer()), fetch(dir + 'surface.bin').then(r => r.arrayBuffer()),
-      fetch(dir + 'trees.bin').then(r => r.arrayBuffer()), fetch(dir + 'ponds.bin').then(r => r.arrayBuffer()),
-      fetch(dir + 'tile.json').then(r => r.json()),
+    const [data, img] = await Promise.all([
+      readTileData(fetchReader(dir), W.packed),         // packed (.gz) or plain files: tilepack.js
       // ground colours as four 1024^2 quarters (cropped off the main thread), so each uploads in its own slice
-      fetch(dir + 'ground.png').then(r => r.blob()).then(b => Promise.all([0, 1, 2, 3].map(q =>
+      fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => Promise.all([0, 1, 2, 3].map(q =>
         createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' })))),
     ]);
-    return { td: makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }), img };
+    return { td: makeTileData(W, tx, tz, data), img };
   }
 
   // builds one tile's meshes, yielding between pieces so the frame budget can pause it

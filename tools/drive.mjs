@@ -3,14 +3,14 @@ import fs from 'fs';
 import * as THREE from 'three';
 import { makeWorld, makeTileData } from '../game/src/data.js';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
-const A = 'game/assets/';
+import { readTileData } from '../game/src/tilepack.js';
+const A = (process.env.YR_ASSETS || 'game/assets').replace(/\/?$/, '/');     // YR_ASSETS=dir tests another assets folder
 const WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
 const W = makeWorld(WJ);
 const ab = f => { const b = fs.readFileSync(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
-for (const [tx, tz] of WJ.tiles) {
+for (const [tx, tz] of WJ.tiles) {            // one tile at a time (packed or plain files)
   const d = `${A}tiles/${tx}_${tz}/`;
-  W.add(makeTileData(WJ, tx, tz, { hbuf: ab(d + 'height.bin'), sbuf: ab(d + 'surface.bin'), tbuf: ab(d + 'trees.bin'),
-    pbuf: ab(d + 'ponds.bin'), tile: JSON.parse(fs.readFileSync(d + 'tile.json')) }));
+  W.add(makeTileData(WJ, tx, tz, await readTileData(async f => ab(d + f), WJ.packed)));
 }
 // ponds as {level, x0, z0, x1, z1} from the tiles' pond grids
 W.ponds = (() => {
