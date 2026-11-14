@@ -1,5 +1,5 @@
 // Meshes for town buildings planned by townbuild.js. One merged mesh per 200 m block,
-// with a simpler copy past 300 m. Walls, roofs, windows and doors come from the campus
+// with a simpler copy from 300 m to 900 m. Walls, roofs, windows and doors come from the campus
 // mesh builder; colours are converted to linear there. Campus buildings are not handled here.
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildCampusGeometry } from './campusmodel.js';
