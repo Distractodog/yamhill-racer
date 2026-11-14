@@ -1,22 +1,35 @@
-// Fake campus circle for visual/performance review; never changes the manifest or physics.
+// Full-size ring positioned with its east wall at campus x=600; no manifest/physics changes.
 // node tools/rimring_visual_test.mjs <output folder> [http://127.0.0.1:8173/]
 import puppeteer from 'puppeteer-core';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 const out = process.argv[2] || 'rimring-results', url = process.argv[3] || 'http://127.0.0.1:8173/';
 await mkdir(out, { recursive: true });
-const report = { fixture: { cx: 0, cz: 0, r: 600 }, phases: [], pageErrors: [], status: 'running', visualReview: 'NOT REVIEWED', performanceBudgetMs: .2 };
+const report = { fixture: { cx: -16600, cz: 0, r: 17200 }, phases: [], pageErrors: [], consoleErrors: [], status: 'running', visualReview: 'NOT REVIEWED', performanceBudgetMs: .2 };
 let browser, page;
 try {
  browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
   args: ['--window-size=1280,760', '--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
  page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760 });
  page.on('pageerror', e => { report.pageErrors.push(e.message); console.error('PAGE ERROR', e.message); });
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    const text = message.text(), location = message.location();
+    // Ignore only the browser's missing favicon request, never a shader/application error.
+    let favicon404 = false;
+    try { favicon404 = new URL(location.url).pathname === '/favicon.ico' && /^Failed to load resource:.*404/.test(text); } catch {}
+    if (favicon404) return;
+    report.consoleErrors.push({ text, url: location.url || '', line: location.lineNumber ?? null });
+    console.error('BROWSER CONSOLE ERROR', text);
+  });
+
  await page.evaluateOnNewDocument(() => localStorage.setItem('yr-welcome-hidden-1', '1'));
  await page.goto(url, { waitUntil: 'load' }); await page.waitForFunction(() => window.game, { timeout: 120000 });
  await page.evaluate(async rim => {
   const { createRimRing } = await import('./src/rimring.js');
+  game.renderer.debug.checkShaderErrors = true;
   const car = game.vehicles.current, ring = createRimRing({ scene: game.scene, rim });
+  if (ring.mesh.geometry.index.count / 3 !== 2048) throw Error('Performance fixture must use production-size ring geometry');
   window.ringFixture = { ring, car, originalStep: car.step, enabled: false, raf: 0, loading: 0 };
   const tick = () => { const f = ringFixture; if (f.enabled) f.ring.update(car.renderPos); else f.ring.mesh.visible = false; f.raf = requestAnimationFrame(tick); };
   tick();
@@ -48,7 +61,8 @@ try {
   row.meanFrameDeltaMs = mean(true) - mean(false); row.withinMeasuredBudget = row.meanFrameDeltaMs <= report.performanceBudgetMs;
   if ((distance === 300) === row.ringState.visible) throw Error('Unexpected ring visibility');
  }
- report.status = report.pageErrors.length ? 'failed' : 'captured-awaiting-visual-review';
+ report.performanceFailures = report.phases.filter(p => p.withinMeasuredBudget !== true).map(p => ({ distanceMetres: p.distanceMetres, meanFrameDeltaMs: p.meanFrameDeltaMs }));
+ report.status = report.pageErrors.length || report.consoleErrors.length || report.performanceFailures.length ? 'failed' : 'captured-awaiting-visual-review';
 } catch (e) { report.status = 'blocked-or-failed'; report.error = e.message; console.error(e.message); }
 finally {
  if (page && !page.isClosed()) await page.evaluate(() => { const f = window.ringFixture; if (f) { clearInterval(f.loading); cancelAnimationFrame(f.raf); f.car.step = f.originalStep; f.ring.dispose(); } }).catch(() => {});
