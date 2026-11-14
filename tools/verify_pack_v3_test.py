@@ -188,9 +188,9 @@ class VerifyV3Test(unittest.TestCase):
     def test_full_size_budget_gate(self):
         original=verify_pack.sizes
         def fake_sizes(root,exclude_baseline=False):
-            return {'fixture':450_000_001} if Path(root)==self.dst else original(root,exclude_baseline)
+            return {'fixture':verify_pack.SIZE_LIMIT_BYTES+1} if Path(root)==self.dst else original(root,exclude_baseline)
         with patch.object(verify_pack,'sizes',side_effect=fake_sizes):
-            self.fails('450000000 byte limit')
+            self.fails(f'{verify_pack.SIZE_LIMIT_BYTES} byte limit')
             with contextlib.redirect_stdout(io.StringIO()):partial=verify_pack.verify(self.src,self.dst,['0,0'])
             self.assertTrue(partial['passed']);self.assertIsNone(partial['size_limit_bytes'])
 

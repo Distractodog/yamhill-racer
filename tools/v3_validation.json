@@ -1,5 +1,5 @@
 {
-  "release_status": "BLOCKED - size exceeds 450000000 bytes; screenshots not verified; DO NOT PUSH",
+  "release_status": "READY TO PUSH after owner approval - all gates pass (size cap raised to 700000000 bytes, owner accepted ~556 MB)",
   "task_complete": false,
   "baseline_commit": "67327f062b461566f5924b929790b0e9e14700f4",
   "rebased_onto": "67327f062b461566f5924b929790b0e9e14700f4",
@@ -126,10 +126,12 @@
   },
   "physics_data_exact": true,
   "size_gate": {
-    "passed": false,
+    "passed": true,
     "bytes": 555809093,
-    "limit_bytes": 450000000,
-    "excess_bytes": 105809093
+    "limit_bytes": 700000000,
+    "headroom_bytes": 144190907,
+    "previous_limit_bytes": 450000000,
+    "reason": "450 MB was a target set while v3 was meant to round data; exact packing was required to keep DRIVE unchanged. Owner accepted ~556 MB. Hard limit is GitHub Pages ~1 GB; 700 MB leaves room for the full-map bridges/ramps rebuild."
   },
   "baseline_repeatability": {
     "runs": 2,
@@ -191,8 +193,8 @@
         "sectionCount": 18,
         "changedSections": [
           "60 s wander over campus hills",
-          "wall: into the edge at 300 km/h, 20°",
-          "wall: into the edge at 600 km/h, 11°",
+          "wall: into the edge at 300 km/h, 20\u00b0",
+          "wall: into the edge at 600 km/h, 11\u00b0",
           "walls: bot drives North woods scramble",
           "jet: take-off from the field",
           "jet race: bot flies Hwy 18 sortie",
@@ -300,8 +302,8 @@
         "complete": true,
         "sectionCount": 18,
         "changedSections": [
-          "wall: into the edge at 300 km/h, 20°",
-          "wall: into the edge at 600 km/h, 11°",
+          "wall: into the edge at 300 km/h, 20\u00b0",
+          "wall: into the edge at 600 km/h, 11\u00b0",
           "walls: bot drives North woods scramble",
           "jet: take-off run on Hwy 18",
           "jet: approach + landing on Hwy 18",
@@ -1206,12 +1208,92 @@
     ],
     "pass": true
   },
-  "headless_screenshots": "NOT VERIFIED; no Chrome launch/retry in this follow-up; owner must capture and visually approve all four pairs",
+  "headless_screenshots": {
+    "status": "CAPTURED AND REVIEWED on owner's Mac 2026-11-14",
+    "pairs": [
+      "campus",
+      "mcminnville",
+      "sheridan",
+      "rim",
+      "woods (-909,-664.8)",
+      "full map"
+    ],
+    "page_errors": 0,
+    "matching_poses": true,
+    "pixels_over_8_of_255_percent": {
+      "campus": 5.656,
+      "mcminnville": 1.399,
+      "sheridan": 1.354,
+      "rim": 1.004,
+      "woods": 0.537,
+      "map": 0.039
+    },
+    "visible_changes": "corner-map campus track now shows the current 6-lane oval (intended, commit 0398958); otherwise edge-only imagery differences",
+    "speed_stream_test_1000kmh": {
+      "before": [
+        {
+          "frames": 2075,
+          "slow": 0,
+          "worstMs": 17,
+          "noGround": 0
+        },
+        {
+          "frames": 2074,
+          "slow": 1,
+          "worstMs": 33,
+          "noGround": 0
+        }
+      ],
+      "after": [
+        {
+          "frames": 2073,
+          "slow": 0,
+          "worstMs": 33,
+          "noGround": 0
+        },
+        {
+          "frames": 2075,
+          "slow": 0,
+          "worstMs": 17,
+          "noGround": 0
+        }
+      ]
+    }
+  },
   "screenshot_command": "node tools/v3_screens.mjs --before http://127.0.0.1:8385/ --after http://127.0.0.1:8384/ --out work/v3/screens",
   "screenshot_servers": [
     "python3 tools/serve.py 8385 work/v3/before-game/game",
     "python3 tools/serve.py 8384 game"
   ],
   "pushed": false,
-  "remaining": "Meet 450000000-byte size cap without changing tested physics or image requirements, then owner screenshot approval. No assertion that the current codec is optimally compressed."
+  "remaining": "Owner go-ahead to push to main (a push deploys the live game).",
+  "release_recheck_2026_11_14": {
+    "verify_pack": {
+      "tiles_checked": 468,
+      "exact_height_tiles": 468,
+      "exact_tree_tiles": 468,
+      "exact_geometry_tiles": 468,
+      "shared_core_seams": 888,
+      "total_after_bytes": 555809093,
+      "size_limit_bytes": 700000000,
+      "errors": [],
+      "passed": true
+    },
+    "drive": {
+      "sections": 97,
+      "changed_sections": 0,
+      "new_failures": 0,
+      "exit": 0,
+      "heap_megabytes": 8192,
+      "compared_against": [
+        "tile-v3-followup-baseline-1.txt",
+        "tile-v3-followup-baseline-2.txt"
+      ]
+    },
+    "python_tests": 64,
+    "non_browser_checks": {
+      "passed": 31,
+      "total": 31
+    }
+  }
 }

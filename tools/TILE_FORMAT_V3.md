@@ -1,6 +1,6 @@
 # Tile format v3
 
-**Release blocked: do not push.** Driving is restored: the lossless candidate matches all 97 baseline DRIVE sections before and after rebasing onto `origin/main` (`67327f0`). Assets total **555,809,093 bytes**, exceeding the 450,000,000-byte limit by **105,809,093 bytes**. This is a physics fix, not a completed size reduction. Screenshot capture and visual approval also remain owner-run gates. See `v3_validation.json`; neither gate is waived.
+**Release status (2026-11-14): ready to push; awaiting the owner's go-ahead.** Driving is unchanged: the lossless candidate matches all 97 baseline DRIVE sections. Assets total **555,809,093 bytes** (906 MB before). The size cap is now **700,000,000 bytes**: 450 MB was a target set while v3 was meant to round data, and exact packing was chosen instead because any rounding changed how the cars drive. The owner accepted ~556 MB; the hard limit is GitHub Pages' ~1 GB published site, and 700 MB keeps room for the full-map bridges/ramps rebuild. Screenshots were captured on the owner's Mac and reviewed (see "Screenshot gate result" below). See `v3_validation.json`.
 
 `world.json` identifies the published format with numeric `"packed": 3`. The browser loader accepts v3 and returns the existing float32 terrain/tree arrays and JSON objects. Python tools retain plain/v1/v2 readers. No physics, interpolation, road-query or vehicle logic is changed.
 
@@ -49,7 +49,7 @@ NODE_OPTIONS=--max-old-space-size=8192 npm run drive > work/v3/followup/final-dr
 
 The repacker validates the entire immutable source, processes one tile at a time, and records per-file codec/source profiles. Explicit `--refresh` re-encodes changed selected codecs from v2; validated unselected imagery is copied unchanged. Matching profiles are skipped on resume. It stages and validates files, replaces individual files, removes known obsolete format files, and installs the receipt last. An interrupted install is repaired from the backup. Unknown target files fail rather than being silently deleted. Do not run concurrent conversions against the same destination.
 
-`verify_pack` independently requires exact decoded data for the new subtypes, checks every seam, reports all asset bytes and fails above 450,000,000 bytes. It does not waive the size gate when data checks pass.
+`verify_pack` independently requires exact decoded data for the new subtypes, checks every seam, reports all asset bytes and fails above `SIZE_LIMIT_BYTES` (700,000,000; the reason is written next to it in `verify_pack.py`). It does not waive the size gate when data checks pass.
 
 Use `tools/v3_ab.mjs` for forward component tests against archived `67327f0` game code and its immutable v2 assets. Its component names are `hbuf`, `tbuf`, `tile`, `sbuf`, or `baseline`; `--section all` runs 97 sections and `diagnostic` runs 18. Snapshot the candidate assets before modifying them. Use `tools/v3_drive_compare.py BASELINE1 BASELINE2 CANDIDATE --out REPORT` for the full comparison; diagnostics additionally require `--allow-subset --expected-count 18`. Baseline disagreement, incomplete coverage and candidate differences fail instead of inventing a tolerance.
 
@@ -68,7 +68,11 @@ Then run on the owner's Mac:
 node tools/v3_screens.mjs --before http://127.0.0.1:8385/ --after http://127.0.0.1:8384/ --out work/v3/screens
 ```
 
-This captures eight PNGs (before/after campus overhead, McMinnville Third Street, Sheridan and rim wall), matching camera/vehicle poses and JSON metadata. `--chrome PATH` overrides Chrome discovery. `--dry-run` validates the plan without launching a browser. Launch/page errors fail and are recorded. Inspect every pair; successful capture does not constitute visual approval. No headless Chrome was launched or retried during this follow-up. Do not push before the size, physics and screenshot gates all pass.
+This captures eight PNGs (before/after campus overhead, McMinnville Third Street, Sheridan and rim wall), matching camera/vehicle poses and JSON metadata. `--chrome PATH` overrides Chrome discovery. `--dry-run` validates the plan without launching a browser. Launch/page errors fail and are recorded. Inspect every pair; successful capture does not constitute visual approval. Do not push before the size, physics and screenshot gates all pass.
+
+### Screenshot gate result (2026-11-14, owner's Mac)
+
+`v3_screens.mjs` captured all four pairs with matching poses and zero page errors; a scratch copy with the same capture code added a North Woods trail spot (-909, -664.8) and the full map (M). All six pairs were inspected and look the same. Differences are small and limited to edges (fraction of pixels differing by more than 8/255: campus 5.7%, McMinnville 1.4%, Sheridan 1.4%, rim 1.0%, woods 0.5%, full map 0.04%), from the ground imagery re-encoding. The one visible change is intended: the corner map's campus track now shows the current 6-lane oval with a green infield. Speed (`stream_test` at 1000 km/h, two runs each): before 0/1 slow frames, after 0/0, both 0 frames with no ground. Evidence lives in `work/v3/release/` (local, not committed).
 
 ## Follow-up: measured physics repeatability and component isolation
 

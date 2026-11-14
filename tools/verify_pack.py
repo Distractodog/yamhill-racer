@@ -15,6 +15,12 @@ import struct
 import numpy as np
 import tilefmt
 
+# Size cap for a full v3 check of game/assets. It was 450 MB while v3 was meant to round heights/trees/roads; exact
+# (lossless) packing came out at ~556 MB because any rounding changed how the cars drive (2026-11-14). Ethan accepted
+# that: 450 MB was only a target. The hard limit is GitHub Pages' ~1 GB published site, and the coming full-map rebuild
+# for bridges and ramps needs room under it. 700 MB leaves ~144 MB for that rebuild and ~300 MB below the Pages limit.
+SIZE_LIMIT_BYTES = 700_000_000
+
 
 def require(condition, message):
     if not condition:
@@ -210,9 +216,9 @@ def verify(src, dst, only=()):
     for kind in sorted(before.keys()|after.keys()):
         a,b=before.get(kind,0),after.get(kind,0);table.append({'type':kind,'before':a,'after':b,'saved':a-b});print(f'{kind} | {a} | {b} | {a-b}')
     total_before,total_after=sum(before.values()),sum(after.values());print(f'TOTAL | {total_before} | {total_after} | {total_before-total_after}')
-    if version == 3 and not only and total_after > 450_000_000:
-        record('asset size',f'{total_after} bytes exceeds 450000000 byte limit')
-    report={'version':version,'tiles_checked':len(tiles),'tree_count':trees_count,'exact_height_tiles_checked':exact_heights,'exact_tree_tiles_checked':exact_trees,'exact_geometry_tiles_checked':exact_json,'shared_core_seams_checked':seams,'max_errors':maxima,'ground_mean_absolute_channel_error':float(np.mean(means)) if means else None,'size_table':table,'total_before_bytes':total_before,'total_after_bytes':total_after,'size_limit_bytes':450_000_000 if version == 3 and not only else None,'errors':errors,'passed':not errors}
+    if version == 3 and not only and total_after > SIZE_LIMIT_BYTES:
+        record('asset size',f'{total_after} bytes exceeds {SIZE_LIMIT_BYTES} byte limit')
+    report={'version':version,'tiles_checked':len(tiles),'tree_count':trees_count,'exact_height_tiles_checked':exact_heights,'exact_tree_tiles_checked':exact_trees,'exact_geometry_tiles_checked':exact_json,'shared_core_seams_checked':seams,'max_errors':maxima,'ground_mean_absolute_channel_error':float(np.mean(means)) if means else None,'size_table':table,'total_before_bytes':total_before,'total_after_bytes':total_after,'size_limit_bytes':SIZE_LIMIT_BYTES if version == 3 and not only else None,'errors':errors,'passed':not errors}
     print(f'{len(tiles)} tiles checked, {len(errors)} failures')
     return report
 
