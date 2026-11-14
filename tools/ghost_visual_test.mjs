@@ -5,15 +5,27 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 const out = process.argv[2] || 'ghost-results', url = process.argv[3] || 'http://127.0.0.1:8173/';
 await mkdir(out, { recursive: true });
-const report = { fixture: 'Synthetic stationary best-run poses for visual inspection, not race completion evidence', status: 'running', phases: [], pageErrors: [], visualReview: 'NOT REVIEWED' };
+const report = { fixture: 'Synthetic stationary best-run poses for visual inspection, not race completion evidence', status: 'running', phases: [], pageErrors: [], consoleErrors: [], visualReview: 'NOT REVIEWED' };
 let browser;
 try {
  browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
   args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
  const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760 });
  page.on('pageerror', e => { report.pageErrors.push(e.message); console.error('PAGE ERROR', e.message); });
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    const text = message.text(), location = message.location();
+    // Ignore only the browser's missing favicon request, never a shader/application error.
+    let favicon404 = false;
+    try { favicon404 = new URL(location.url).pathname === '/favicon.ico' && /^Failed to load resource:.*404/.test(text); } catch {}
+    if (favicon404) return;
+    report.consoleErrors.push({ text, url: location.url || '', line: location.lineNumber ?? null });
+    console.error('BROWSER CONSOLE ERROR', text);
+  });
+
  await page.evaluateOnNewDocument(() => localStorage.setItem('yr-welcome-hidden-1', '1'));
  await page.goto(url, { waitUntil: 'load' }); await page.waitForFunction(() => window.game, { timeout: 120000 });
+ await page.evaluate(() => { game.renderer.debug.checkShaderErrors = true; });
  const measure = () => page.evaluate(() => new Promise(done => {
   const frames = []; let start, last;
   const tick = now => { start ??= now; if (last !== undefined) frames.push(now - last); last = now;
@@ -41,7 +53,7 @@ try {
   await page.evaluate(() => game.challenges.quit());
   if (await page.evaluate(() => game.scene.children.some(o => o.name === 'race-ghost'))) throw Error('Ghost leaked after quit');
  }
- report.status = report.pageErrors.length ? 'failed' : 'captured-awaiting-visual-review';
+ report.status = report.pageErrors.length || report.consoleErrors.length ? 'failed' : 'captured-awaiting-visual-review';
 } catch (e) { report.status = 'blocked-or-failed'; report.error = e.message; console.error(e.message); }
 finally { await browser?.close(); await writeFile(join(out, 'ghost-visual-report.json'), JSON.stringify(report, null, 2)); }
 console.log(report.status); if (report.status !== 'captured-awaiting-visual-review') process.exitCode = 1;
