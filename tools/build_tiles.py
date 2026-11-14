@@ -39,9 +39,15 @@ T0 = time.time()
 def log(*a): print(f'[{time.time() - T0:5.0f}s]', *a, flush=True)
 
 TILES = [(tx, tz) for tx, tz in TILE_SET if os.path.exists(os.path.join(RAW, 'tiles', f'{tx}_{tz}', 'chm.npy'))]
+# YR_TILES=9_-6,2_1 builds only those tiles, on a height grid around just them (quick, low-memory test builds;
+# heights near a test tile's edge can differ slightly from a full build)
+if os.environ.get('YR_TILES'):
+    TILES = [tuple(map(int, t.split('_'))) for t in os.environ['YR_TILES'].split(',')]
 TILE_KEYS = set(TILES)
-GX0, GX1 = TX.start * TILE - TILE / 2, (TX.stop - 1) * TILE + TILE / 2     # global extent
-GZ0, GZ1 = TZ.start * TILE - TILE / 2, (TZ.stop - 1) * TILE + TILE / 2
+_tx = [t[0] for t in TILES] if os.environ.get('YR_TILES') else [TX.start, TX.stop - 1]
+_tz = [t[1] for t in TILES] if os.environ.get('YR_TILES') else [TZ.start, TZ.stop - 1]
+GX0, GX1 = min(_tx) * TILE - TILE / 2, max(_tx) * TILE + TILE / 2     # global extent
+GZ0, GZ1 = min(_tz) * TILE - TILE / 2, max(_tz) * TILE + TILE / 2
 HN = int(TILE / HSTEP) + 1                       # 501 vertices per tile side
 HM = 8                                            # height margin vertices kept around each tile (32 m)
 SAT_N = TILE + 2 * MARGIN                         # raw satellite / chm pixels per tile (1 m)
@@ -112,7 +118,10 @@ def keep_in_map(pts, pad=120.0):
 # ---------------------------------------------------------------- 1. OpenStreetMap: roads, buildings, water
 osm = json.load(open(os.path.join(RAW, 'osm_region.json')))['elements']
 ROAD_W = {'motorway': 18, 'trunk': 17, 'primary': 16, 'secondary': 15, 'tertiary': 14, 'unclassified': 13,
-          'residential': 13, 'service': 12, 'track': 12, 'living_street': 12}
+          'residential': 10, 'service': 12, 'track': 12, 'living_street': 10}
+# service roads by their OSM `service` tag (untagged service roads, e.g. the campus drives, keep 12 m)
+SERVICE_W = {'alley': 5, 'driveway': 5, 'parking_aisle': 6, 'drive-through': 5}
+FLAT_DRIVEWAY = 30.0                 # driveways shorter than this and all parking aisles: flat paving (flat: true)
 PAVED = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street'}
 road_paths, buildings, water_polys = [], [], []
 for e in osm:
@@ -125,8 +134,16 @@ for e in osm:
         h = h.replace('_link', '')
         if h not in ROAD_W: continue
         paved = h in PAVED or t.get('surface') in ('asphalt', 'paved', 'concrete')
+        svc = t.get('service') if h == 'service' else None
+        try: lanes = int(t.get('lanes', 0)) or None
+        except ValueError: lanes = None
+        attr = {'cls': h + (':' + svc if svc in SERVICE_W else ''), 'lanes': lanes,
+                'sidewalk': t.get('sidewalk') if t.get('sidewalk') in ('both', 'left', 'right', 'yes', 'separate') else None,
+                'oneway': t.get('oneway') in ('yes', '1', '-1') or t.get('junction') == 'roundabout'}
+        w = SERVICE_W.get(svc, ROAD_W[h])
         for run in keep_in_map(pts):
-            road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': ROAD_W[h], 'pts': run, 'bridge': t.get('bridge') == 'yes'})
+            road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': w, 'pts': run, 'bridge': t.get('bridge') == 'yes',
+                               'attr': attr})
     elif 'building' in t:
         if not in_map(pts[:, 0].mean(), pts[:, 1].mean(), 80)[0]: continue
         lv = t.get('building:levels')
@@ -305,7 +322,7 @@ for e in edges:
         if not keep_a: nodes.append(piece['pts'][0].copy())
         b = e['b'] if keep_b else len(nodes)
         if not keep_b: nodes.append(piece['pts'][-1].copy())
-        fixed.append({'a': a, 'b': b, 'pts': piece['pts'], 'kind': e['kind'], 'w': e['w']})
+        fixed.append({'a': a, 'b': b, 'pts': piece['pts'], 'kind': e['kind'], 'w': e['w'], 'attr': e.get('attr', {})})
 nodes, edges = roadnet.compact(nodes, fixed)
 paths = edges
 deg = Counter([e['a'] for e in edges] + [e['b'] for e in edges])
@@ -313,6 +330,41 @@ log('network: edges', len(edges), 'junctions', sum(1 for v in deg.values() if v 
     'dead ends', sum(1 for v in deg.values() if v == 1))
 del _d_out, _i_out, _d_in, _i_in
 log('paths', len(paths))
+
+# per-road data written into tile.json: OSM class, lanes, sidewalk, oneway; flat paving for tiny service stubs;
+# median for split carriageways (two one-way roads of the same class side by side, opposite directions)
+from scipy.spatial import cKDTree as _KD
+_samp, _owner = [], []
+for i, p in enumerate(paths):
+    a = p.get('attr', {})
+    if not a.get('oneway'): continue
+    q = roadnet.at_s(p['pts'], np.arange(0, roadnet.arclen(p['pts'])[-1], 10.0))
+    tg = np.gradient(q, axis=0) if len(q) > 1 else np.zeros_like(q)
+    for k in range(len(q)): _samp.append((q[k, 0], q[k, 1], tg[k, 0], tg[k, 1])); _owner.append(i)
+_samp, _owner = np.array(_samp).reshape(-1, 4), np.array(_owner, int)
+_kd = _KD(_samp[:, :2]) if len(_samp) else None
+for i, p in enumerate(paths):
+    a = p.get('attr', {}); cls = a.get('cls', p['kind'])          # Ethan's campus trails: cls 'trail'
+    L = float(roadnet.arclen(p['pts'])[-1])
+    meta = {'cls': cls}
+    if a.get('lanes'): meta['lanes'] = a['lanes']
+    if a.get('sidewalk'): meta['sidewalk'] = a['sidewalk']
+    if a.get('oneway'): meta['oneway'] = True
+    if cls == 'service:parking_aisle' or (cls == 'service:driveway' and L < FLAT_DRIVEWAY): meta['flat'] = True
+    if a.get('oneway') and _kd is not None:
+        mine = np.nonzero(_owner == i)[0]; hits = 0
+        for k in mine:
+            for j in _kd.query_ball_point(_samp[k, :2], 30.0):
+                o = _owner[j]
+                if o != i and paths[o].get('attr', {}).get('cls') == cls and \
+                   np.dot(_samp[k, 2:], _samp[j, 2:]) / (np.hypot(*_samp[k, 2:]) * np.hypot(*_samp[j, 2:]) + 1e-9) < -0.7:
+                    hits += 1; break
+        if len(mine) and hits / len(mine) >= 0.6: meta['median'] = True
+    p['meta'] = meta
+_cc = Counter(p['meta']['cls'] for p in paths)
+log('road classes:', dict(_cc.most_common()))
+log('flat paving:', sum('flat' in p['meta'] for p in paths), '· median (split carriageway):',
+    sum('median' in p['meta'] for p in paths), '· with sidewalk tag:', sum('sidewalk' in p['meta'] for p in paths))
 
 # ---------------------------------------------------------------- 5. global heights (4 m), smoothed, carved
 gh = np.full((GHH, GHW), np.nan, np.float32)
@@ -496,7 +548,7 @@ for tx, tz in TILES:
 
     # ---- strips: exact pieces for drawing, padded pieces for physics (a strip's width can reach over the edge)
     render, phys = [], []
-    piece = lambda p, pc: {'kind': p['kind'], 'w': p['w'], 'pts': np.round(pc[:, :2], 2).tolist(),
+    piece = lambda p, pc: {'kind': p['kind'], 'w': p['w'], **p['meta'], 'pts': np.round(pc[:, :2], 2).tolist(),
                            'yc': [[round(float(y), 3), round(float(c), 4)] for y, c in pc[:, 2:4]]}
     for p in paths:
         o = p['out']

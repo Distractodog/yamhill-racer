@@ -87,7 +87,8 @@ def build_graph(paths):
         for i in range(1, len(pts)):
             if use[ks[i]] > 1 or i == len(pts) - 1:
                 seg = pts[start:i + 1]
-                edges.append({'a': nid(seg[0]), 'b': nid(seg[-1]), 'pts': seg, 'kind': p['kind'], 'w': p['w']})
+                edges.append({'a': nid(seg[0]), 'b': nid(seg[-1]), 'pts': seg, 'kind': p['kind'], 'w': p['w'],
+                              'attr': p.get('attr', {})})        # OSM class etc. (build_tiles: ROAD_ATTR)
                 start = i
     return nodes, edges
 
@@ -162,7 +163,7 @@ def merge_deg2(nodes, edges):
             (e1, end1), (e2, end2) = l
             if e1 == e2 or e1 in touched or e2 in touched: continue
             A, B = edges[e1], edges[e2]
-            if A['kind'] != B['kind'] or A['w'] != B['w']: continue
+            if A['kind'] != B['kind'] or A['w'] != B['w'] or A.get('attr') != B.get('attr'): continue
             pa = A['pts'] if end1 == 1 else A['pts'][::-1]
             pb = B['pts'] if end2 == 0 else B['pts'][::-1]
             na = A['a'] if end1 == 1 else A['b']; nb = B['b'] if end2 == 0 else B['a']
