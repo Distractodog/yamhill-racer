@@ -26,9 +26,11 @@ HWY18 = {(3, 1), (4, 1), (5, 1), (3, 0), (4, 0), (5, 0), (6, 0), (5, -1), (6, -1
          (10, -6)}
 MCMINNVILLE = {(8, -6), (9, -6), (11, -6), (9, -7), (10, -7), (11, -7)}   # rest of town (OSM building counts)
 OLD_TILE_SET = BASE | HWY18 | MCMINNVILLE
-MAP_CX, MAP_CZ, SCENERY_RADIUS = 9000, -5000, 17800
+# Second expansion: 22.5 km playable radius plus 600 m of scenery.
+# Keep the same centre; this prepares raw data, not the live world manifest.
+MAP_CX, MAP_CZ, SCENERY_RADIUS = 9000, -5000, 23100
 # Select squares intersecting the scenery circle, not centres inside it. The
-# centre rule selects only 256 tiles and leaves gaps along the 17.2 km rim.
+# centre-only rule can leave gaps along the playable rim.
 TILE_SET = sorted({(tx, tz)
     for tx in range(math.floor((MAP_CX - SCENERY_RADIUS - TILE / 2) / TILE),
                     math.ceil((MAP_CX + SCENERY_RADIUS + TILE / 2) / TILE) + 1)
@@ -37,7 +39,7 @@ TILE_SET = sorted({(tx, tz)
     if math.hypot(max(0, abs(tx * TILE - MAP_CX) - TILE / 2),
                   max(0, abs(tz * TILE - MAP_CZ) - TILE / 2)) <= SCENERY_RADIUS},
     key=lambda t: (t[1], t[0]))
-assert len(TILE_SET) == 276 and OLD_TILE_SET <= set(TILE_SET)
+assert len(TILE_SET) == 468 and OLD_TILE_SET <= set(TILE_SET)
 TX = range(min(t[0] for t in TILE_SET), max(t[0] for t in TILE_SET) + 1)   # bounding ranges (global grid extent)
 TZ = range(min(t[1] for t in TILE_SET), max(t[1] for t in TILE_SET) + 1)
 HSTEP = 4.0                # height grid spacing (m)
