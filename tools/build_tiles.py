@@ -34,7 +34,6 @@ ASSETS = os.environ.get('YR_ASSETS', os.path.join(ROOT, 'game', 'assets'))   # Y
 OUT = os.path.join(ASSETS, 'tiles')
 PACK = os.environ.get('YR_PACK', '1') != '0'      # packed tile files (tools/tilefmt.py); YR_PACK=0 writes the old ones
 os.makedirs(OUT, exist_ok=True)
-rng = np.random.default_rng(7)
 T0 = time.time()
 def log(*a): print(f'[{time.time() - T0:5.0f}s]', *a, flush=True)
 
@@ -493,6 +492,7 @@ def clip_polyline(pts, rect):
 
 world_tiles = []
 for tx, tz in TILES:
+    rng = np.random.default_rng([7, tx + 1000, tz + 1000])
     t1 = time.time()
     rx0, rz0, rx1, rz1 = tile_rect(tx, tz)
     out = os.path.join(OUT, f'{tx}_{tz}'); os.makedirs(out, exist_ok=True)
