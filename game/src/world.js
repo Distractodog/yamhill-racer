@@ -8,7 +8,7 @@ import { roadLOD, roadBatches, buildJunctions } from './roads.js';
 import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import { buildCampusGeometry } from './campusmodel.js';
-import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext } from './townmodel.js';
+import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
@@ -334,14 +334,15 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       }
       for (const b of v.buildingLods) {
         const d = Math.hypot(b.cx - cam.x, b.cz - cam.z);
-        b.near.visible = d < 300; b.far.visible = d >= 300;
-        b.near.castShadow = d < 100;
+        b.near.visible = d < townRange.near;
+        b.far.visible = d >= townRange.near && d < townRange.far;
+        b.near.castShadow = d < townRange.shadow;
       }
     }
     notePerf();
   }
 
-  return Object.assign(world, { group, updateLOD, updateShadows, tick(t) { waterUniforms.time.value = t; },
+  return Object.assign(world, { group, updateLOD, updateShadows, townRange, tick(t) { waterUniforms.time.value = t; },
     loadedTiles: () => vis.size, pendingTiles: () => loading.size + jobs.length });
 }
 

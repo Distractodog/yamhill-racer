@@ -8,6 +8,22 @@ import { planBuilding } from './townbuild.js';
 const CELL = 200;
 const MAIN = /^(motorway|trunk|primary|secondary|tertiary)/;
 
+// Near buildings (windows) out to `near`, simple buildings out to `far`, none past that.
+// Shadows only inside `shadow`. Step 0 is the full range; step 1 is the fallback.
+const STEPS = [
+  { near: 300, far: 900, shadow: 100 },
+  { near: 160, far: 480, shadow: 50 },
+];
+export const townRange = { near: 300, far: 900, shadow: 100, step: 0 };
+
+export function setTownStep(step) {
+  const s = STEPS[step > 0 ? 1 : 0];
+  townRange.near = s.near;
+  townRange.far = s.far;
+  townRange.shadow = s.shadow;
+  townRange.step = step > 0 ? 1 : 0;
+}
+
 // A short sample of each road, split into "main" and "other", for door facing and class.
 export function roadContext(roads) {
   const all = [], main = [];
