@@ -217,6 +217,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     ch = list[i]; sel = i; result = null;
     closeMenu(); done.style.display = 'none';
     vehicles?.switchTo(ch.vehicle || 'car');
+    car.glide?.cancel();
     // jet races: a crash (or R) puts you back in the air at the last ring you flew through
     if (vehicles) vehicles.jet.respawn = ch.vehicle === 'jet' ? () => {
       if (state !== 'running' || next < 2) return null;
@@ -316,6 +317,10 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   addEventListener('keydown', e => {
     if (e.gameUI) return;
     if (e.repeat) return;
+    if (e.code === 'KeyG' && car.glide && (state === 'placing' || state === 'countdown' || state === 'running')) {
+      car.glide.cancel(); car.glide.say('No glider in races', 1.8);
+      e.preventDefault(); e.stopImmediatePropagation(); return;
+    }
     if (e.code === 'KeyJ') { menuOpen ? closeMenu() : openMenu(); return; }
     if (menuOpen) {
       if (e.code === 'ArrowDown' || e.code === 'ArrowUp') { sel = (sel + (e.code === 'ArrowDown' ? 1 : list.length - 1)) % list.length; renderMenu(); }
@@ -334,7 +339,10 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     best: () => best, start, quit, openMenu, closeMenu,
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
-      if (!track || (state !== 'countdown' && state !== 'running')) return;
+      if (state !== 'countdown' && state !== 'running') return;
+      // Also fold a wing opened before the race or through another control path.
+      if (car.glide?.active) { car.glide.cancel(); car.glide.say('No glider in races', 1.8); }
+      if (!track) return;
       const hit = track.constrain(car);
       if (hit > 0) car.hit = Math.max(car.hit || 0, hit * 0.5);
     },
