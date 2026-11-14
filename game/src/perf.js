@@ -11,12 +11,13 @@
 //   buildings hidden  16.7 ms   340 calls   1170091 tris
 //   water hidden      16.7 ms   342 calls   1333893 tris
 //
-// After merging road batches into 250 m blocks, 20 s bench:
-//   McMinnville   1400707 tris   333 calls   16.7 ms   0%
-//   Sheridan      1106513 tris   298 calls   16.7 ms   0%
-//   Willamina      869295 tris   249 calls   16.7 ms   0%
-//   campus         567095 tris   151 calls   16.7 ms   0%
-// The same spots before the merge were 344 / 301 / 250 / 153 calls, still 16.7 ms and 0%.
+// After merging road batches into 250 m blocks, 20 s bench on the round map:
+//   McMinnville   1859806 tris   337 calls   16.7 ms   0%     was 1790566 tris, 348 calls
+//   Sheridan      1107267 tris   301 calls   16.7 ms   0%     was 1085787 tris, 302 calls
+//   Willamina      864838 tris   250 calls   16.7 ms   0%     was  863558 tris, 251 calls
+//   campus         566495 tris   154 calls   16.7 ms   0%     was  565695 tris, 156 calls
+// An earlier bench, before the round map, showed the same pattern: 344/301/250/153 calls
+// became 333/298/249/151, still 16.7 ms and 0% slow.
 //
 // What was tried: the block merge is the change that shipped. Draw calls fell and the frame
 // stayed on the 16.7 ms cap. Triangles rose a little because a block's detailed mesh stays
