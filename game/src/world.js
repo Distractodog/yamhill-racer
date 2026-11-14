@@ -7,6 +7,7 @@ import { readTileData, fetchReader, groundFile } from './tilepack.js';
 import { roadLOD, roadBatches, buildJunctions } from './roads.js';
 import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
 import { installPerf } from './perf.js';
+import { buildCampusGateGeometry } from './campusgate.js';
 import { placeCampus } from './campusmodel.js';
 import { placeLandmarks } from './landmarksmodel.js';
 import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
@@ -206,6 +207,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     out.treeMats = treeMats;
     // buildings: planned town blocks, plus the hand-made campus
     const cGeos = [], lGeos = [], cells = new Map(), roads = roadContext(td.renderRoads);
+    if (td.tx === 0 && td.tz === 0) cGeos.push(buildCampusGateGeometry(td.terrainAt));
     let planned = 0;
     for (const b of td.buildings) {
       if (b.campusPart) {      // hand-made campus building (campus.js), drawn once from its first footprint

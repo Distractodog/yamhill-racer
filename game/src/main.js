@@ -12,9 +12,11 @@ import { Glider, BIKE_GLIDER } from './glider.js';
 import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
+import { createSpawn } from './spawn.js';
 import { createSettings } from './settings.js';
 import { makeRim } from './rim.js';
 
+const sessionSpawn = createSpawn();
 const settings = createSettings();
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -112,17 +114,8 @@ fb.close(); fj.close();
 gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuning, JET); saveB(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'resetV').name('Reset bike + jet');
 gui.open();
 
-// H: back to the Delphian campus from anywhere (waits for the campus tiles to stream in first)
-async function goHome() {
-  const [hx, hz] = world.spawn;
-  for (let k = 0; k < 60 && !(world.loadedAt(hx, hz) && world.pendingTiles() === 0); k++) {
-    car.pos.set(hx, car.pos.y, hz); car.vel.set(0, 0, 0); car._lastLoaded = null;
-    await new Promise(r => setTimeout(r, 200));
-  }
-  let s = world.placeOn(hx, hz, 3, 80);
-  if (world.surfaceAt(s[0], s[1]) !== 3) s = world.placeOn(hx, hz, 4, 150);
-  car.reset(...s); car.safe = []; car._lastLoaded = null;
-}
+// H returns to the point chosen for this session.
+function goHome() { sessionSpawn.goHome(); }
 
 // F: put the car back on its wheels right where it is, facing the way it was pointing (keeps the clock running)
 function flipUpright() {
@@ -148,7 +141,7 @@ addEventListener('keydown', e => {
   audio.start();
   if (e.code === 'KeyR') car.resetToSafe();
   if (e.code === 'KeyF') flipUpright();
-  if (e.code === 'KeyH') goHome();
+  if (e.code === 'KeyH' && !e.repeat) goHome();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
   if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.glide) vehicles.current.glide.toggle(); else vehicles.current.say?.('The jet has its own wings', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -343,7 +336,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   readInput();
   challenges.holdInput(input);
-  acc += dt;
+  acc += sessionSpawn.blocked ? 0 : dt;
   while (acc >= STEP) { car.savePrev(); car.step(STEP, input); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
   challenges.update(dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
@@ -387,3 +380,6 @@ window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x
 window.game.glider = glider; window.game.bikeGlider = bikeGlider;
 window.game.vehicles = vehicles;
 // Every fresh load starts in the car; V still switches vehicles during play.
+
+sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim });
+window.game.sessionSpawn = sessionSpawn;

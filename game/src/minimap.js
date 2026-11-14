@@ -49,6 +49,7 @@ export async function createMinimap(base = './assets/') {
   const css = document.createElement('style');
   css.textContent = `#fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
     #fullmap canvas.drag { cursor: grabbing; }
+    #fullmap.spawn-picker .fm-hint { top: 20px; padding: 12px 20px; border-radius: 12px; background: #10251fee; font-size: 18px; font-weight: 700; text-align: center; width: min(700px, 75vw); }
     #fullmap .fm-zoom { position: absolute; right: calc(3vw + 12px); top: calc(3vh + 12px); display: flex; flex-direction: column; gap: 6px; }
     #fullmap .fm-zoom button { width: 36px; height: 36px; border: 0; border-radius: 9px; background: #000b; color: #fff;
       font: 700 20px/1 system-ui, sans-serif; cursor: pointer; box-shadow: 0 2px 8px #0005; }
@@ -63,11 +64,13 @@ export async function createMinimap(base = './assets/') {
   const cc = corner.querySelector('canvas'), fc = full.querySelector('canvas');
   const cctx = cc.getContext('2d'), fctx = fc.getContext('2d');
 
-  let open = false, viewM = 600;
+  let open = false, viewM = 600, spawnPicker = null;
+  const normalHint = full.querySelector(".fm-hint").textContent;
   // full map view: zoom 1 = whole map fits; (vx, vy) = image pixel at the centre of the canvas
   const MAX_ZOOM = 12;           // the picture is 5 m per pixel: much closer is just blur
   let zoom = 1, vx = img.width / 2, vy = img.height / 2, carPx = [vx, vy];
   const toggle = v => {
+    if (spawnPicker && v !== true) return;
     open = v ?? !open; full.classList.toggle('open', open); corner.classList.toggle('hidden', open);
     if (open) { zoom = 1; vx = img.width / 2; vy = img.height / 2; }       // always opens on the whole map
   };
@@ -119,6 +122,10 @@ export async function createMinimap(base = './assets/') {
     if (!click) return;
     const [cx, cy] = canvasPt(e), s = fitScale() * zoom, d = Math.min(devicePixelRatio, 2);
     const ix = vx + (cx - fc.width / 2) / s, iy = vy + (cy - fc.height / 2) / s;
+    if (spawnPicker) {
+      spawnPicker(ex0 + ix * mpp, ez0 + iy * mpp);
+      return;
+    }
     if (pin) {                                     // clicked on the pin (its head sits ~19 px above the point): remove it
       const [qx, qy] = toPx(pin.x, pin.z);
       if (Math.hypot((qx - ix) * s, (qy - iy) * s - 13 * d) < 16 * d) { setPin(null); return; }
@@ -134,7 +141,7 @@ export async function createMinimap(base = './assets/') {
     else if (z === 'fit') { zoom = 1; clampView(); }
     else if (z === 'car') { zoom = Math.max(zoom, 6); [vx, vy] = carPx; clampView(); }
     else if (z === 'close') toggle(false);
-    else if (z === 'unpin') setPin(null);
+    else if (z === 'unpin' && !spawnPicker) setPin(null);
   }
   full.querySelectorAll('.fm-zoom button').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); zoomCmd(b.dataset.z); }));
 
@@ -254,12 +261,19 @@ export async function createMinimap(base = './assets/') {
     if (e.gameUI) return;
     if (e.code === 'KeyM') toggle();
     if (e.code === 'Escape' && open) toggle(false);
-    if (e.code === 'KeyP' && pin) setPin(null);
+    if (e.code === 'KeyP' && pin && !spawnPicker) setPin(null);
     if (!open) return;
     if (e.code === 'Equal' || e.code === 'NumpadAdd') zoomCmd('in');
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') zoomCmd('out');
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
-  return { update, toggle, setOverlay: o => { overlay = o; }, get open() { return open; },
+  return { update, toggle,
+    pickSpawn(callback, message = 'Where do you want to start? Click a point on the map · scroll to zoom · drag to move') {
+      spawnPicker = callback;
+      full.classList.toggle('spawn-picker', !!callback);
+      full.querySelector('.fm-hint').textContent = callback ? message : normalHint;
+      for (const command of ['close', 'unpin', 'car']) full.querySelector(`[data-z="${command}"]`).hidden = !!callback;
+      if (callback && !open) toggle(true);
+    }, setOverlay: o => { overlay = o; }, get open() { return open; },
     get pin() { return pin; }, setPin, onPin: f => pinListeners.push(f) };
 }
