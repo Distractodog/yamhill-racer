@@ -3,6 +3,7 @@
 // data is loaded separately (makeTileData) and registered with the world (makeWorld), which routes every query
 // to the tile that contains the point.
 import * as THREE from 'three';
+import { sidewalkSides, KERB } from './roads.js';
 import { applyCampus } from './campus.js';
 
 // road / trail strips and junction pieces: surface class per kind. Heights come baked from the build
@@ -45,7 +46,10 @@ export function prepRoad(p, id) {
     let tx = xs[b] - xs[a], tz = zs[b] - zs[a]; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
     lx[i] = tz; lz[i] = -tx;
   }
-  return { id, kind: p.kind, hw: p.w / 2, cls: K.cls, x: xs, z: zs, y: ys, c: cs, lx, lz, n };
+  // road class data (tile.json from builds with road classes; absent on older tiles)
+  const sw = sidewalkSides(p.sidewalk);
+  return { id, kind: p.kind, hw: p.w / 2, cls: K.cls, x: xs, z: zs, y: ys, c: cs, lx, lz, n,
+    osm: p.cls, flat: !!p.flat, oneway: !!p.oneway, sw, hasSidewalk: !!(sw[0] || sw[1]), stop: p.stop };
 }
 
 // ---------------------------------------------------------------- one tile
@@ -88,7 +92,7 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
   for (const p of tile.physPaths || []) {
     const r = prepRoad(p, roads.length); if (!r) continue; roads.push(r);
     for (let i = 0; i < r.n - 1; i++) {
-      const m = r.hw + 1;
+      const m = r.hw + 1 + Math.max(r.sw[0], r.sw[1]);
       addBox(Math.min(r.x[i], r.x[i + 1]) - m, Math.max(r.x[i], r.x[i + 1]) + m,
         Math.min(r.z[i], r.z[i + 1]) - m, Math.max(r.z[i], r.z[i + 1]) + m, r.id, i);
     }
@@ -124,8 +128,15 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
       const u = ((x - ax) * ex + (z - az) * ez) / L2;
       if (u < -0.02 || u > 1.02) continue;
       const off = ((x - ax) * ez - (z - az) * ex) / Math.sqrt(L2);
-      if (Math.abs(off) > r.hw) continue;
       const uc = Math.min(1, Math.max(0, u));
+      if (Math.abs(off) > r.hw) {               // sidewalk beside the road: KERB above the road edge, concrete (6)
+        const sw = off > 0 ? r.sw[0] : r.sw[1];
+        if (!sw || Math.abs(off) > r.hw + sw) continue;
+        const e = off > 0 ? r.hw : -r.hw;
+        const y = r.y[i] + (r.y[i + 1] - r.y[i]) * uc + (r.c[i] + (r.c[i + 1] - r.c[i]) * uc) * e + KERB;
+        if (y > best) { best = y; lastCls = 6; }
+        continue;
+      }
       const y = r.y[i] + (r.y[i + 1] - r.y[i]) * uc + (r.c[i] + (r.c[i + 1] - r.c[i]) * uc) * off;
       if (y > best) { best = y; lastCls = r.cls; }
     }

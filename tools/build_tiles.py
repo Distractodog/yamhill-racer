@@ -18,7 +18,7 @@ Per tile, game/assets/tiles/<tx>_<tz>/:
 game/assets/world.json: tile size, list of tiles, spawn, height grid info.
 """
 import json, math, os, sys, time
-from collections import Counter
+from collections import Counter, defaultdict
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 from scipy import ndimage
@@ -361,8 +361,22 @@ for i, p in enumerate(paths):
                     hits += 1; break
         if len(mine) and hits / len(mine) >= 0.6: meta['median'] = True
     p['meta'] = meta
+# stop lines + crosswalks (drawn by roads.js): the ends of a town street where it meets a bigger road
+_RANK = {'motorway': 5, 'trunk': 5, 'primary': 4, 'secondary': 4, 'tertiary': 3, 'unclassified': 2,
+         'residential': 1, 'living_street': 1}
+_rank = lambda c: _RANK.get(c.split(':')[0], 0.5 if c.startswith('service') else 0)
+_at = defaultdict(list)
+for i, p in enumerate(paths): _at[p['a']].append(i); _at[p['b']].append(i)
+for i, p in enumerate(paths):
+    m = p['meta']; c = m['cls']
+    town = 'sidewalk' in m or c.split(':')[0] in ('residential', 'living_street', 'service')
+    if not town or 'flat' in m or c == 'trail' or c == 'service': continue      # campus drives / stubs: no paint
+    for end, node in (('stopA', p['a']), ('stopB', p['b'])):
+        if len(_at[node]) >= 3 and any(_rank(paths[o]['meta']['cls']) > _rank(c) for o in _at[node] if o != i):
+            p[end] = True
 _cc = Counter(p['meta']['cls'] for p in paths)
 log('road classes:', dict(_cc.most_common()))
+log('stop lines at', sum(p.get('stopA', False) + p.get('stopB', False) for p in paths), 'street ends')
 log('flat paving:', sum('flat' in p['meta'] for p in paths), '· median (split carriageway):',
     sum('median' in p['meta'] for p in paths), '· with sidewalk tag:', sum('sidewalk' in p['meta'] for p in paths))
 
@@ -554,7 +568,11 @@ for tx, tz in TILES:
         o = p['out']
         if roadnet.arclen(o)[-1] < 0.5: continue                     # fully swallowed by its junctions
         if o[:, 0].max() < rx0 - 60 or o[:, 0].min() > rx1 + 60 or o[:, 1].max() < rz0 - 60 or o[:, 1].min() > rz1 + 60: continue
-        for pc in clip_polyline(o, tile_rect(tx, tz)): render.append(piece(p, pc))
+        for pc in clip_polyline(o, tile_rect(tx, tz)):
+            q = piece(p, pc)                                     # stop line at an end that is the road's real end
+            st = [bool(p.get('stopA')) and np.allclose(pc[0, :2], o[0, :2]), bool(p.get('stopB')) and np.allclose(pc[-1, :2], o[-1, :2])]
+            if any(st): q['stop'] = st
+            render.append(q)
         for pc in clip_polyline(o, tile_rect(tx, tz, pad=p['w'])): phys.append(piece(p, pc))
     pr = tile_rect(tx, tz, pad=40)
     tj = [jn for jn in juncs if rx0 <= jn['c'][0] < rx1 and rz0 <= jn['c'][1] < rz1]
