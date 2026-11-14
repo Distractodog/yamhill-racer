@@ -26,3 +26,11 @@ export function mergeRoadBatches(batches) {
   }
   return [...groups.values(), ...alone];
 }
+
+// roadLOD builds the near and far meshes. Give each one a bounding sphere now so a
+// block outside the camera is culled without waiting for the first frame that sees it.
+export function placeRoadBlock(tile, material, batch, roadLOD) {
+  const lod = roadLOD(tile, material, batch);
+  lod.traverse(o => { if (o.isMesh && o.geometry) o.geometry.computeBoundingSphere(); });
+  return lod;
+}
