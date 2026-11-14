@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import GUI from 'lil-gui';
 import { loadWorld } from './world.js';
+import { createRimRing } from './rimring.js';
 import { Car, TUNING_DEFAULTS } from './car.js';
 import { Effects } from './effects.js';
 import { CarAudio } from './audio.js';
@@ -60,6 +61,7 @@ const save = () => { try { localStorage.setItem('yr-tuning-2', JSON.stringify(tu
 const loadingEl = document.getElementById('loading');
 const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Loading map… ${n}/${of}`; });
 scene.add(world.group);
+const rimRing = createRimRing({ scene, rim: world.W.rim });
 // vehicles (vehicles.js): `car` below is a stand-in for whichever vehicle you're in (V switches)
 const bikeTuning = { ...BIKE }, jetTuning = { ...JET };
 // what the Settings menu can change (min, max, step); only these are saved and loaded back
@@ -355,6 +357,7 @@ function frame(now) {
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
   pinGuide.update(dt);
+  rimRing?.update(car.renderPos);
   renderer.render(scene, camera);
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
