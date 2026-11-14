@@ -8,6 +8,7 @@ import { roadLOD, roadBatches, buildJunctions } from './roads.js';
 import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import { buildCampusGeometry } from './campusmodel.js';
+import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext } from './townmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
@@ -59,7 +60,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   // builds one tile's meshes, yielding between pieces so the frame budget can pause it
   function* buildTile(td, img) {
-    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], treeMats: null, tgrid: null };
+    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], treeMats: null, tgrid: null };
     out.textures = []; out.materials = [];
     const quarterMats = [];
     for (const bmp of img) {
@@ -197,27 +198,38 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       yield 'trees';
     }
     out.treeMats = treeMats;
-    // buildings
-    const bGeos = [], cGeos = [];
+    // buildings: planned town blocks, plus the hand-made campus
+    const cGeos = [], cells = new Map(), roads = roadContext(td.renderRoads);
+    let planned = 0;
     for (const b of td.buildings) {
       if (b.campusPart) {      // hand-made campus building (campus.js), drawn once from its first footprint
         if (b.campus) { cGeos.push(buildCampusGeometry(b.campus, td.terrainAt)); yield 'buildings'; }
         continue;
       }
-      if (b.pts.length < 3) continue;
+      if (!b.pts || b.pts.length < 3) continue;
       let lo = Infinity, hi = -Infinity;
       for (const [x, z] of b.pts) { const h = td.terrainAt(x, z); lo = Math.min(lo, h); hi = Math.max(hi, h); }
-      const geo = new THREE.ExtrudeGeometry(new THREE.Shape(b.pts.map(([x, z]) => new THREE.Vector2(x, -z))), { depth: (hi - lo) + b.h + 1, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2); geo.translate(0, lo - 1, 0);
-      const c = new Float32Array(geo.attributes.position.count * 3), nrm = geo.attributes.normal;
-      for (let i = 0; i < nrm.count; i++) c.set(nrm.getY(i) > 0.5 ? [0.42, 0.40, 0.40] : [0.88, 0.86, 0.80], i * 3);
-      geo.setAttribute('color', new THREE.BufferAttribute(c, 3));
-      bGeos.push(geo); b.lo = lo; b.top = hi + b.h;
-      if (bGeos.length % 20 === 0) yield 'buildings';
+      const plan = planFootprint(b, roads);
+      const meshes = footprintMeshes(plan, td.terrainAt);
+      b.lo = lo; b.top = hi + (b.h || 6);   // collision keeps the footprint height so drive times stay put
+      if (meshes) {
+        const block = blockOf(plan);
+        let cell = cells.get(block.key);
+        if (!cell) cells.set(block.key, cell = { cx: block.cx, cz: block.cz, near: [], far: [] });
+        cell.near.push(meshes.near); cell.far.push(meshes.far);
+      }
+      if (++planned % 8 === 0) yield 'buildings';
     }
-    if (bGeos.length) {
-      const bm = new THREE.Mesh(mergeGeometries(bGeos), buildingMat); bm.castShadow = bm.receiveShadow = true; g.add(bm);
-      bGeos.forEach(x => x.dispose());
+    for (const cell of cells.values()) {
+      const nearG = mergeBlock(cell.near), farG = mergeBlock(cell.far);
+      if (!nearG || !farG) { nearG?.dispose(); farG?.dispose(); continue; }
+      const near = new THREE.Mesh(nearG, buildingMat), far = new THREE.Mesh(farG, buildingMat);
+      near.receiveShadow = far.receiveShadow = true;
+      near.castShadow = false; far.castShadow = false;
+      near.visible = false; far.visible = false;
+      g.add(near, far);
+      out.buildingLods.push({ near, far, cx: cell.cx, cz: cell.cz });
+      yield 'buildings';
     }
     if (cGeos.length) {
       const cm = new THREE.Mesh(mergeGeometries(cGeos), campusMat); cm.name = 'campus'; cm.castShadow = cm.receiveShadow = true; g.add(cm);
@@ -319,6 +331,11 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       for (const l of v.treeLods) {
         const near = Math.hypot(l.cx - cam.x, l.cz - cam.z) < 420;
         l.near.visible = near; l.far.visible = !near;
+      }
+      for (const b of v.buildingLods) {
+        const d = Math.hypot(b.cx - cam.x, b.cz - cam.z);
+        b.near.visible = d < 300; b.far.visible = d >= 300;
+        b.near.castShadow = d < 100;
       }
     }
     notePerf();
