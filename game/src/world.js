@@ -9,6 +9,7 @@ import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import { buildCampusGeometry } from './campusmodel.js';
 import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
+import { addProps, propGeometries, showProps } from './propsmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
@@ -40,7 +41,9 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         vec4 wp = modelMatrix * vec4(transformed, 1.0);
         transformed.y += sin(wp.x * 0.35 + time * 1.7) * 0.035 + cos(wp.z * 0.42 + time * 1.3) * 0.035;`);
   };
-  const SHARED = new Set([conifer, broadleaf, coniferFar, broadFar]);
+  const propGeos = propGeometries();
+  const propMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const SHARED = new Set([conifer, broadleaf, coniferFar, broadFar, ...Object.values(propGeos)]);
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
@@ -60,7 +63,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   // builds one tile's meshes, yielding between pieces so the frame budget can pause it
   function* buildTile(td, img) {
-    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], treeMats: null, tgrid: null };
+    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], treeMats: null, tgrid: null };
     out.textures = []; out.materials = [];
     const quarterMats = [];
     for (const bmp of img) {
@@ -235,6 +238,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       const cm = new THREE.Mesh(mergeGeometries(cGeos), campusMat); cm.name = 'campus'; cm.castShadow = cm.receiveShadow = true; g.add(cm);
       cGeos.forEach(x => x.dispose());
     }
+    yield* addProps(g, out.propLods, td, propGeos, propMat);
     return out;
   }
 
@@ -338,6 +342,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         b.far.visible = d >= townRange.near && d < townRange.far;
         b.near.castShadow = d < townRange.shadow;
       }
+      showProps(v.propLods, cam);
     }
     notePerf();
   }
