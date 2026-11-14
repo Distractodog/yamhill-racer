@@ -34,9 +34,17 @@ const has=(arr,c)=>{for(let i=0;i<arr.length;i+=3)if(c.every((v,k)=>Math.abs(v-a
 const asphalt=new THREE.Color(0x50535c),grey=[asphalt.r,asphalt.g,asphalt.b];
 assert(has(colors('asphalt',2000,2000),yellow));
 assert(!has(colors('asphalt',-550,300),yellow));
-assert(has(colors('gravel',-550,300),grey));
+const driveBlack = new THREE.Color(0x25272a).toArray();
+assert(has(colors('gravel',-550,300),driveBlack));
 assert(has(colors('trail',-550,300),grey));
 assert(!campusRoad(-800,700,'trail'));assert(!campusRoad(-800,400,'trail'));
 const junction=buildJunctions([{kind:'gravel',c:[-550,300,0],ring:[[-555,295,0,1],[-545,295,0,1],[-550,305,0,1]]}],mat);
-assert(has(junction.geometry.attributes.color.array,grey));
+assert(has(junction.geometry.attributes.color.array,driveBlack));
+for (const [x,z] of [[690,280],[520,472],[270,469],[120,280],[-200,-27],[-502,-175],[-477,70],[-480,180]]) {
+  assert(campusRoad(x,z,'gravel'), `Approach missing at ${x},${z}`);
+  assert(has(colors('gravel',x,z),driveBlack), `Approach not black at ${x},${z}`);
+}
+for (const [x,z] of [[694.01,270.67],[527.07,472.1],[263.41,468.06],[122.59,282.81],[-477.49,66.6]]) assert.equal(td.surfaceAt(x,z),3, 'Approach has asphalt grip');
+assert(!CAMPUS.find(b=>b.name.startsWith('Larson')).parts[0].boxes?.length);
+assert(!CAMPUS[0].parts.find(p=>p.name==='east wing').boxes?.length);
 console.log(`PASS: kitchen uphill floor + one storey, downhill lower storey, separate collision top; road clearance ${clearance.toFixed(2)} m beyond driving edge; asphalt school strips/junctions without yellow; town yellow and woodland dirt retained.`);

@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { sidewalkSides, KERB } from './roads.js';
 import { applyCampus } from './campus.js';
 import { applyTrack } from './campustrack.js';
+import { campusDrive } from './campusdrive.js';
 import { applyLandmarks } from './landmarks.js';
 
 // road / trail strips and junction pieces: surface class per kind. Heights come baked from the build
@@ -157,7 +158,12 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
     }
     return best;
   }
-  function surfaceAt(x, z) { overlayAt(x, z); return lastCls >= 0 ? lastCls : rasterSurfaceAt(x, z); }
+  function surfaceAt(x, z) {
+    overlayAt(x, z);
+    // Pave only the approach road strips/junctions, leaving surrounding gravel and trails alone.
+    if (lastCls === 4 && campusDrive(x, z)) return 3;
+    return lastCls >= 0 ? lastCls : rasterSurfaceAt(x, z);
+  }
 
   // trunks, bucketed for collisions
   const nT = trees.length / 4, GC = 8, GN = Math.ceil(T / GC), tgrid = new Map();

@@ -65,7 +65,10 @@ export function* addCampusItems(group, lods, td, geos, mat) {
   const yAt = (x, z) => td.terrainAt(x, z);
   const types = [];
   for (const name of ORDER) {
-    const items = placed[KEY[name]];
+    // Fixed campus props are listed globally; only their owning tile may build them.
+    // Sampling another tile's clamped terrain used to leave duplicate lamps/signs in the air.
+    const items = placed[KEY[name]].filter(it =>
+      it.x >= td.x0 && it.x < td.x0 + 2000 && it.z >= td.z0 && it.z < td.z0 + 2000);
     if (!items.length) continue;
     const src = new Float32Array(items.length * 16), xz = new Float32Array(items.length * 2);
     const col = name === 'sign' ? new Float32Array(items.length * 3) : null;

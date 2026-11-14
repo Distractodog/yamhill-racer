@@ -1,7 +1,7 @@
-// Small fixed pools add gravel, scrape sparks, exhaust and wingtip vapour without touching physics.
+// Small fixed pools add gravel, scrape sparks and wingtip vapour without touching physics.
 import * as THREE from 'three';
 const COUNT = 220, TRAILS = 80;
-const SPARK = new THREE.Color('#ffb657'), GRAVEL = new THREE.Color('#ad9976'), EXHAUST = new THREE.Color('#a8adb1');
+const SPARK = new THREE.Color('#ffb657'), GRAVEL = new THREE.Color('#ad9976');
 export class DrivingFX {
   constructor(scene) {
     this.scene = scene; this.cursor = 0; this.trailCursor = 0; this.clock = 0; this.tick = 0; this.trailTick = 0; this.hitCooldown = 0;
@@ -22,7 +22,7 @@ export class DrivingFX {
       vertexShader:'attribute float alpha; varying float a; void main(){a=alpha;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
       fragmentShader:'varying float a; void main(){gl_FragColor=vec4(.85,.92,1.,a);}'
     }));this.trails.frustumCulled=false;scene.add(this.trails);
-    this.p=new THREE.Vector3();this.back=new THREE.Vector3();this.lastTips=[null,null];this.lastPos=new THREE.Vector3();this.kind=null;
+    this.p=new THREE.Vector3();this.lastTips=[null,null];this.lastPos=new THREE.Vector3();this.kind=null;
   }
   emit(p, velocity, color, size, life, gravity, scatter=2) {
     const i=this.cursor++%COUNT,k=i*3;
@@ -45,10 +45,6 @@ export class DrivingFX {
       this.tick%=.05;
       for(const wheel of car.wheels||[])if(wheel.contact && [1,2,4].includes(wheel.surf) && speed>8){
         this.p.copy(wheel.contactPoint);this.p.y+=.1;this.emit(this.p,car.vel,GRAVEL,.045,.5,18,Math.min(7,speed*.1));
-      }
-      if(car.kind!=='jet' && speed>1 && (car.input?.throttle||0)>.15){
-        this.p.set(car.kind==='bike'?.25:.55,.2,car.kind==='bike'?-1:-2).applyQuaternion(car.renderQuat).add(car.renderPos);
-        this.back.set(0,.4,-2).applyQuaternion(car.renderQuat);this.emit(this.p,this.back,EXHAUST,.15,.7,-.3,.4);
       }
     }
     const flying=car.kind==='jet' && car.mode==='air' && speed>75;

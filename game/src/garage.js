@@ -6,7 +6,7 @@ let activeKeyboard = null;
 if (typeof addEventListener === 'function') addEventListener('keydown', e => activeKeyboard?.(e), true);
 const PRESET_KEY = 'yr-garage-presets-1';
 const NAMES = { car: 'Car', bike: 'Dirt bike', jet: 'Jet' };
-export function createGarage({ cosmetics, vehicles, onOpen = () => {}, onClose = () => {}, canOpen = () => true, rewards = null }) {
+export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen = () => {}, onClose = () => {}, canOpen = () => true, rewards = null }) {
   const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./garage.css', import.meta.url).href; document.head.append(link);
   let button = document.getElementById('garage-button');
   if (!button) { button = document.createElement('button'); button.id = 'garage-button'; button.className = 'menu-button'; button.textContent = 'Garage'; (document.getElementById('menu-bar') || document.body).append(button); }
@@ -18,6 +18,7 @@ export function createGarage({ cosmetics, vehicles, onOpen = () => {}, onClose =
     <form class="garage-controls"><h3>Paint & finish</h3><div class="garage-colors">${[['body','Body'],['trim','Trim'],['wheels','Wheels'],['helmet','Helmet'],['jacket','Jacket & pants'],['gloves','Gloves']].map(([key,label])=>`<label data-role="${key}"><span>${label}</span><input type="color" name="${key}" aria-label="${label} color"></label>`).join('')}</div>
     <div class="garage-pair"><label>Wheel style<select name="wheelStyle"><option value="factory">Factory spokes</option><option value="sport">Sport hubs</option><option value="rally">Rally discs</option></select></label><label>Race number<input name="number" inputmode="numeric" maxlength="2" pattern="[0-9]{1,2}" aria-label="Race number"></label></div>
     <h3>Livery</h3><div class="garage-liveries"></div>
+    <div class="garage-glider" hidden><h3>Glider colors</h3><div class="garage-colors">${[['wing','Wing + tail'],['stripe','Center stripe'],['accent','Accent panels']].map(([key,label])=>`<label><span>${label}</span><input type="color" data-glider-color="${key}" aria-label="Glider ${label.toLowerCase()}"></label>`).join('')}</div><div class="garage-actions"><button type="button" class="glider-solid">One color</button><button type="button" class="glider-reset">Reset glider colors</button></div></div>
     <h3>Saved looks</h3><div class="garage-presets">${[0,1,2].map(i=>`<div><span>Look ${i+1}</span><button type="button" data-save="${i}">Save</button><button type="button" data-load="${i}">Load</button></div>`).join('')}</div>
     <div class="garage-actions"><button type="button" class="garage-reset">Factory colors</button><button type="button" class="garage-done">Done</button></div><p class="garage-status" role="status" aria-live="polite">Changes save automatically.</p></form></div></div>`;
   document.body.append(dialog);
@@ -57,7 +58,17 @@ export function createGarage({ cosmetics, vehicles, onOpen = () => {}, onClose =
       canvasHost.textContent='Live preview is unavailable on this device. Your colors still apply in the game.';
     }
   }
+  function refreshGlider() {
+    const palette = gliderColors?.get(kind);
+    dialog.querySelector('.garage-glider').hidden = !palette;
+    if (palette) dialog.querySelectorAll('[data-glider-color]').forEach(field => { field.value = palette[field.dataset.gliderColor]; });
+  }
+  function gliderMessage(saved) {
+    refreshGlider();
+    message(saved ? 'Saved to this browser.' : 'Browser storage is unavailable; changes last until you reload.');
+  }
   function refresh() {
+    refreshGlider();
     const focusedLivery = dialog.contains(document.activeElement) ? document.activeElement?.dataset?.livery : null;
     const config=cosmetics.get(kind);
     dialog.querySelectorAll('[data-kind]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.kind===kind)));
@@ -96,7 +107,12 @@ export function createGarage({ cosmetics, vehicles, onOpen = () => {}, onClose =
   button.addEventListener('click',()=>open?close():show());button.setAttribute('aria-controls','cosmetic-garage');button.setAttribute('aria-expanded','false');
   dialog.querySelector('form').addEventListener('submit',e=>e.preventDefault());
   dialog.querySelectorAll('[data-kind]').forEach(b=>b.addEventListener('click',()=>{kind=b.dataset.kind;rotation=.65;zoom=1;refresh();}));
-  dialog.querySelectorAll('input,select').forEach(field=>field.addEventListener('input',()=>{if(field.name==='number'&&!/^\d{1,2}$/.test(field.value))return;const saved=cosmetics.set(kind,{[field.name]:field.value});message(saved?'Saved to this browser.':'Browser storage is unavailable; changes last until you reload.');}));
+  dialog.querySelectorAll('input[name],select[name]').forEach(field=>field.addEventListener('input',()=>{if(field.name==='number'&&!/^\d{1,2}$/.test(field.value))return;const saved=cosmetics.set(kind,{[field.name]:field.value});message(saved?'Saved to this browser.':'Browser storage is unavailable; changes last until you reload.');}));
+  dialog.querySelectorAll('[data-glider-color]').forEach(field => field.addEventListener('input', () => {
+    gliderMessage(gliderColors.set(kind, { [field.dataset.gliderColor]: field.value }));
+  }));
+  dialog.querySelector('.glider-solid').addEventListener('click', () => gliderMessage(gliderColors.solid(kind)));
+  dialog.querySelector('.glider-reset').addEventListener('click', () => gliderMessage(gliderColors.reset(kind)));
   dialog.querySelector('.garage-wash').addEventListener('click',()=>{cosmetics.wash(kind);message('Washed, dried and polished.');});
   dialog.querySelector('.garage-reset').addEventListener('click',()=>{cosmetics.reset(kind);message('Factory colors restored. Saved looks are still available.');});
   dialog.querySelectorAll('[data-save]').forEach(b=>b.addEventListener('click',()=>{const slot=+b.dataset.save;if(!Array.isArray(presets[kind]))presets[kind]=[];presets[kind][slot]=cosmetics.get(kind);try{localStorage.setItem(PRESET_KEY,JSON.stringify(presets));message(`Look ${slot+1} saved for your ${NAMES[kind].toLowerCase()}.`);}catch{message('Browser storage is unavailable; this look lasts until you reload.');}refresh();}));

@@ -1,15 +1,16 @@
 // 3D meshes for the road / trail strips and junction pieces of one tile (data.js `renderRoads` / `renderJunctions`).
 // Heights are baked by the build (tools/roadnet.py), which also carved the ground just below every road.
 import * as THREE from 'three';
+import { campusDrive } from './campusdrive.js';
 
-const TOP = { asphalt: 0x50535c, gravel: 0xb9a888, trail: 0xc98d55 };
-const SIDE = { asphalt: 0x44474f, gravel: 0xa39472, trail: 0xb27a47 };
+const TOP = { campus: 0x25272a, asphalt: 0x50535c, gravel: 0xb9a888, trail: 0xc98d55 };
+const SIDE = { campus: 0x202225, asphalt: 0x44474f, gravel: 0xa39472, trail: 0xb27a47 };
 const LINE = 0xf2f2ea, DASH = 0xf3c63c;
 // Developed school drives use town asphalt, without yellow centre markings. Woodland trails stay dirt.
 export function campusRoad(x, z, kind) {
   const developed = x >= -900 && x <= -350 && z >= 130 && z <= 650;
   const courtyard = x >= -660 && x <= -470 && z >= 200 && z <= 460;
-  return developed && (kind !== 'trail' || courtyard);
+  return (developed && (kind !== 'trail' || courtyard)) || (kind !== 'trail' && campusDrive(x, z));
 }
 // Road drawing by OSM class (tile.json `cls`, tools/build_tiles.py). A tile without `cls` (older builds) draws
 // exactly as before. With `cls`:
@@ -120,7 +121,8 @@ function stripTriangles(batch, far) {
       const j = Math.min(b, i + step);
       const school = campusRoad((x[i] + x[j]) / 2, (z[i] + z[j]) / 2, r.kind);
       if (r.osm !== undefined && school !== school0) { cols = columns(r, school, far); K = cols.length; }
-      const style = school ? 'asphalt' : r.kind;
+      const approach = r.kind !== 'trail' && campusDrive((x[i] + x[j]) / 2, (z[i] + z[j]) / 2);
+      const style = approach ? 'campus' : school ? 'asphalt' : r.kind;
       const dashOn = !school && Math.floor(i / 2) % 2 === 0;
       for (let k = 0; k < K - 1; k++) {
         const rgb = colourOf(cols[k][2], style, dashOn);
@@ -214,7 +216,7 @@ export function buildJunctions(list, groundMat) {
     for (const q of pts) { P.push(q[0], q[1], q[2]); Cc.push(col[0], col[1], col[2]); }
   };
   for (const j of list) {
-    const style = campusRoad(j.c[0], j.c[1], j.kind) ? 'asphalt' : j.kind;
+    const style = j.kind !== 'trail' && campusDrive(j.c[0], j.c[1]) ? 'campus' : campusRoad(j.c[0], j.c[1], j.kind) ? 'asphalt' : j.kind;
     const top = RGB[TOP[style]], side = RGB[SIDE[style]], R = j.ring, n = R.length;
     const c = [j.c[0], j.c[2], j.c[1]];
     const v = q => [q[0], q[2], q[1]];

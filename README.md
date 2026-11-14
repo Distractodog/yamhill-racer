@@ -75,6 +75,6 @@ images only for visible tiles; the full map can zoom to 32×. `tools/build_minim
 rebuilds the overview and `minimap-detail/` images from existing tiles without changing
 terrain. Run `node tools/minimap_detail_test.mjs` to verify loading/cache behavior.
 
-Settings → Glider colors changes the wing/tail, center stripe, and accent panels for
+Garage → Car / Dirt bike → Glider colors changes the wing/tail, center stripe, and accent panels for
 the car and dirt bike separately. Make wing one color removes contrasting stripes;
 Reset glider colors restores the red/white default. Palettes are saved locally.

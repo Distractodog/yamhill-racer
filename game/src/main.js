@@ -14,7 +14,7 @@ import { createMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
 import { Glider, BIKE_GLIDER } from './glider.js';
-import { addGliderColorSettings } from './glidercolors.js';
+import { createGliderColors } from './glidercolors.js';
 import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
@@ -104,7 +104,8 @@ const challenges = await createChallenges({ scene, world, car, minimap, vehicles
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
 const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });
-const garage = createGarage({ cosmetics, vehicles, rewards: challenges.rewards,
+const gliderColors = createGliderColors({ car: glider, bike: bikeGlider });
+const garage = createGarage({ cosmetics, vehicles, gliderColors, rewards: challenges.rewards,
   canOpen: () => !sessionSpawn.blocked && challenges.state === 'idle',
   onOpen: () => { settings.closeWelcome(); settings.close(); vehicles.close(); challenges.closeMenu(); minimap.toggle(false); clearKeys(); },
   onClose: () => clearKeys(),
@@ -113,7 +114,6 @@ const garage = createGarage({ cosmetics, vehicles, rewards: challenges.rewards,
 const garageButton = document.getElementById('garage-button');
 
 const gui = new GUI({ title: 'Vehicle tuning', container: document.getElementById('tuning-controls') });
-addGliderColorSettings(gui, { car: glider, bike: bikeGlider });
 const fc = gui.addFolder('Car');
 const RANGES = {
   accel: [5, 60, 0.5], topSpeed: [100, 1500, 10], brakeDecel: [10, 100, 1],

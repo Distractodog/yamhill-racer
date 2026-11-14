@@ -16,22 +16,24 @@ export function setGliderColors(model, value) {
   attribute.needsUpdate = true;
   fin.material.color.set(palette.wing);
 }
-export function addGliderColorSettings(gui, gliders, storage) {
+export function createGliderColors(gliders, storage) {
   let saved = {};
   try { storage ??= globalThis.localStorage; saved = JSON.parse(storage?.getItem(KEY) || '{}') || {}; } catch {}
   const palettes = {};
-  const folder = gui.addFolder('Glider colors');
-  const save = () => { try { storage?.setItem(KEY, JSON.stringify(palettes)); } catch {} };
   for (const [kind, glider] of Object.entries(gliders)) {
-    const palette = palettes[kind] = normalizeGliderColors(saved[kind]);
-    setGliderColors(glider.mesh, palette);
-    const section = folder.addFolder(kind === 'car' ? 'Car glider' : 'Dirt bike glider');
-    const apply = () => { setGliderColors(glider.mesh, palette); save(); };
-    for (const [key, label] of [['wing', 'Wing + tail'], ['stripe', 'Center stripe'], ['accent', 'Accent panels']])
-      section.addColor(palette, key).name(label).onChange(apply);
-    section.add({ solid: () => { palette.stripe = palette.accent = palette.wing; apply(); section.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'solid').name('Make wing one color');
-    section.add({ reset: () => { Object.assign(palette, GLIDER_COLORS); apply(); section.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'reset').name('Reset glider colors');
+    palettes[kind] = normalizeGliderColors(saved[kind]);
+    setGliderColors(glider.mesh, palettes[kind]);
   }
-  folder.close();
-  return palettes;
+  function set(kind, changes) {
+    if (!gliders[kind]) return false;
+    palettes[kind] = normalizeGliderColors({ ...palettes[kind], ...changes });
+    setGliderColors(gliders[kind].mesh, palettes[kind]);
+    try { if (!storage) return false; storage.setItem(KEY, JSON.stringify(palettes)); return true; } catch { return false; }
+  }
+  return {
+    get: kind => palettes[kind] ? { ...palettes[kind] } : null,
+    set,
+    solid: kind => set(kind, { stripe: palettes[kind]?.wing, accent: palettes[kind]?.wing }),
+    reset: kind => set(kind, GLIDER_COLORS),
+  };
 }

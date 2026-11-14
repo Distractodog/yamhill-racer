@@ -168,11 +168,10 @@ export class Effects {
       const loose = DUST[wh.surf][1];
       let amt = 0;
       if (rear && (sliding || handbrake)) amt = 1;
-      else if (launching && rear && this.launchT < 0.6) amt = 0.6;
       else if (braking && this.brakeT < 0.7) amt = 0.35;
       const trail = loose * Math.min(1, sp / 40);
       if (rear && Math.random() < trail * dt * 40) this.emit(wh.contactPoint, car.vel, wh.surf, 0.6);
-      if (amt && Math.random() < amt * dt * 60) this.emit(wh.contactPoint, car.vel, wh.surf, amt);
+      if (amt && loose > 0 && Math.random() < amt * dt * 60) this.emit(wh.contactPoint, car.vel, wh.surf, amt);
     });
     // water: a big burst when you hit it, then a bow wave while ploughing through
     if (wet && !this.wasWet && sp > 4) for (let k = 0; k < Math.min(60, 12 + sp); k++) this.splash(car.pos, car.vel, Math.min(1.4, sp / 25));
