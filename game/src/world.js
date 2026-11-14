@@ -2,10 +2,10 @@
 // World space: metres, x = east, z = south, y = up. Origin = centre of the map.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeWorld, makeTileData } from './data.js';
+import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileData, fetchReader, groundFile } from './tilepack.js';
-import { roadLOD, roadBatches, buildJunctions } from './roads.js';
-import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
+import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
+import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import { createTileScenery } from './scenery.js';
 import { buildCampusGateGeometry } from './campusgate.js';
@@ -70,6 +70,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
   const loading = new Set();
   const jobs = [];                  // generators building tile visuals, stepped within the frame budget
+  const stepCost = new Map();       // step kind (what the generator yielded before it) -> recent cost, ms
 
   async function fetchTile(tx, tz) {
     const dir = `${base}tiles/${tx}_${tz}/`;
@@ -79,12 +80,13 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => Promise.all([0, 1, 2, 3].map(q =>
         createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' })))),
     ]);
-    return { td: makeTileData(W, tx, tz, data), img };
+    return { data, img };
   }
 
-  // builds one tile's meshes, yielding between pieces so the frame budget can pause it
-  function* buildTile(td, img) {
-    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], campusItemLods: [], treeMats: null, tgrid: null };
+  // builds one tile's data and meshes, yielding between pieces so the frame budget can pause it
+  function* buildTile(tx, tz, data, img) {
+    const td = yield* makeTileDataSteps(W, tx, tz, data);
+    const g = new THREE.Group(), out = { td, group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], campusItemLods: [], treeMats: null, tgrid: null };
     out.textures = []; out.materials = [];
     const quarterMats = [];
     for (const bmp of img) {
@@ -172,7 +174,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       out.chunks.push({ levels, cx: td.x0 + (j0 + j1) / 2 * HS, cz: td.z0 + (i0 + i1) / 2 * HS, lv: -1 });
     }
     // road / trail strips
-    for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) { g.add(placeRoadBlock(td, stripMat, batch, roadLOD)); yield 'roads'; }   // one near + far pair per block
+    for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) g.add(yield* placeRoadBlockSteps(td, stripMat, batch, roadLODSteps));   // one near + far pair per block
     for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
     // ponds: a flat quad per height cell inside a pond
     const wpos = [];
@@ -288,9 +290,9 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     const k = world.key(tx, tz);
     if (loading.has(k) || vis.has(k) || !available.has(k)) return null;
     loading.add(k);
-    return fetchTile(tx, tz).then(({ td, img }) => {
-      const gen = buildTile(td, img);
-      const finish = v => { world.add(td); vis.set(k, v); group.add(v.group); loading.delete(k); lastShadowAt = null; };
+    return fetchTile(tx, tz).then(({ data, img }) => {
+      const gen = buildTile(tx, tz, data, img);
+      const finish = v => { world.add(v.td); vis.set(k, v); group.add(v.group); loading.delete(k); lastShadowAt = null; };
       if (now) { let r; while (!(r = gen.next()).done); finish(r.value); }
       else jobs.push({ gen, finish });
     });
@@ -328,10 +330,16 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       const dx = Math.max(t.x0 - cam.x, 0, cam.x - (t.x0 + T)), dz = Math.max(t.z0 - cam.z, 0, cam.z - (t.z0 + T));
       if (Math.hypot(dx, dz) > DROP_R) { dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
     }
+    // Each step's cost is remembered by the label the job yielded just before it (that label tells which piece comes
+    // next); a step only starts if its usual cost still fits in what is left of this frame's budget. The first step
+    // of a frame always runs, so the queue never stalls.
     const t0 = performance.now(), budget = FRAME_BUDGET_MS + Math.min(4, sp / 60);
-    while (jobs.length && performance.now() - t0 < budget) {
-      const j = jobs[0], r = j.gen.next();
-      if (r.done) { jobs.shift(); j.finish(r.value); }
+    for (let first = true; jobs.length; first = false) {
+      const now = performance.now(), j = jobs[0];
+      if (!first && now - t0 + (stepCost.get(j.next) || 0) > budget) break;
+      const r = j.gen.next(), d = performance.now() - now, c = stepCost.get(j.next);
+      stepCost.set(j.next, c === undefined ? d : Math.max(d, c * 0.9 + d * 0.1));   // falls slowly, jumps up at once
+      if (r.done) { jobs.shift(); j.finish(r.value); } else j.next = r.value;
     }
   }
 

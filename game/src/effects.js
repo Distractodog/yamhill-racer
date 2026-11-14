@@ -68,7 +68,7 @@ export class Effects {
   placeBlob(m, x, z, yaw, above, world) {
     const h = world.heightAt(x, z);
     m.position.set(x, h + 0.03, z);
-    const n = world.normalAt(x, z);
+    const n = world.normalAt(x, z, this._n ||= new THREE.Vector3());   // roof-aware worlds need an out vector
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
     m.rotateY(yaw);
     m.material.opacity = m.userData.op * Math.max(0, 1 - above / 2.5);

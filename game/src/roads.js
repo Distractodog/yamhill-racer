@@ -181,6 +181,12 @@ export function buildRoads(D, groundMat, batch, far = false) {
 
 // near + far versions of a batch: the far one is shown once the camera is FAR_AT m beyond the batch's extent
 export function roadLOD(D, groundMat, batch) {
+  const steps = roadLODSteps(D, groundMat, batch); let r;
+  while (!(r = steps.next()).done);
+  return r.value;
+}
+// roadLOD, yielding after each level (far first: it is the cheap one, and the one seen first when arriving fast)
+export function* roadLODSteps(D, groundMat, batch) {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
   for (const { r, a, b } of batch) for (let i = a; i <= b; i++) {
     x0 = Math.min(x0, r.x[i]); x1 = Math.max(x1, r.x[i]); z0 = Math.min(z0, r.z[i]); z1 = Math.max(z1, r.z[i]);
@@ -188,9 +194,10 @@ export function roadLOD(D, groundMat, batch) {
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, rad = Math.hypot(x1 - x0, z1 - z0) / 2;
   const lod = new THREE.LOD();
   lod.position.set(cx, 0, cz);
-  for (const [far, dist] of [[false, 0], [true, FAR_AT + rad]]) {
+  for (const [far, dist] of [[true, FAR_AT + rad], [false, 0]]) {
     const m = buildRoads(D, groundMat, batch, far); m.position.set(-cx, 0, -cz);   // geometry stays in world coords
-    lod.addLevel(m, dist);
+    lod.addLevel(m, dist);                   // addLevel keeps the levels sorted by distance
+    yield far ? 'roads-far' : 'roads-near';
   }
   return lod;
 }

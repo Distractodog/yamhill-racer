@@ -55,7 +55,13 @@ export function prepRoad(p, id) {
 }
 
 // ---------------------------------------------------------------- one tile
-export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
+export function makeTileData(W, tx, tz, data) {
+  const steps = makeTileDataSteps(W, tx, tz, data); let r;
+  while (!(r = steps.next()).done);
+  return r.value;
+}
+// the same, yielding between pieces so the game can spread a big town tile over several frames
+export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
   const T = W.tile, HS = W.hstep, HN = W.hn, HM = W.hm, NN = HN + 2 * HM;
   const x0 = tx * T - T / 2, z0 = tz * T - T / 2;             // tile corner (core)
   const gx0 = x0 - HM * HS, gz0 = z0 - HM * HS;               // height grid origin (includes margin)
@@ -91,7 +97,9 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
         const k = gz * SGN + gx; let l = segGrid.get(k); if (!l) segGrid.set(k, l = []); l.push(id, i);
       }
   };
+  let work = 0;
   for (const p of tile.physPaths || []) {
+    if ((work += p.pts.length) > 1500) { work = 0; yield 'tiledata'; }
     const r = prepRoad(p, roads.length); if (!r) continue; roads.push(r);
     for (let i = 0; i < r.n - 1; i++) {
       const m = r.hw + 1 + Math.max(r.sw[0], r.sw[1]);
@@ -106,7 +114,12 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
       addBox(Math.min(c[0], p[0], q[0]), Math.max(c[0], p[0], q[0]), Math.min(c[1], p[1], q[1]), Math.max(c[1], p[1], q[1]), -1 - id, k);
     }
   }
-  for (const p of tile.paths || []) { const r = prepRoad(p, renderRoads.length); if (r) renderRoads.push(r); }
+  yield 'tiledata';
+  for (const p of tile.paths || []) {
+    if ((work += p.pts.length) > 1500) { work = 0; yield 'tiledata'; }
+    const r = prepRoad(p, renderRoads.length); if (r) renderRoads.push(r);
+  }
+  yield 'tiledata';
   const renderJunctions = (tile.junctions || []).map(j => ({ ...j, cls: PATH_KINDS[j.kind].cls }));
   let lastCls = -1;
   function overlayAt(x, z) {                 // road surface height here (-Infinity if no road); sets lastCls
@@ -161,12 +174,14 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
       for (const t of l) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]), trees[t * 4 + 2], trees[t * 4 + 3]);   // x, z, trunk r, height, broadleaf?
     }
   }
+  yield 'tiledata';
   const td = { tx, tz, x0, z0, gx0, gz0, NN, hs: HS, H, surf, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
     sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
     pondId, pondLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
     heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
   applyTrack(td);                           // running track north of the gym: level ground + surface (campustrack.js)
   td.buildings = applyCampus(td);           // Delphian campus: hand-made models replace the OSM blocks (campus.js)
+  yield 'tiledata';
   td.buildings = applyLandmarks(td);        // landmarks.js replaces the OSM block under each landmark
   return td;
 }

@@ -34,3 +34,10 @@ export function placeRoadBlock(tile, material, batch, roadLOD) {
   lod.traverse(o => { if (o.isMesh && o.geometry) o.geometry.computeBoundingSphere(); });
   return lod;
 }
+// The same, built one level at a time (roadLODSteps yields between the far and near meshes), so a dense town block
+// is spread over frames by the streaming budget.
+export function* placeRoadBlockSteps(tile, material, batch, roadLODSteps) {
+  const lod = yield* roadLODSteps(tile, material, batch);
+  lod.traverse(o => { if (o.isMesh && o.geometry) o.geometry.computeBoundingSphere(); });
+  return lod;
+}
