@@ -120,6 +120,20 @@ def resample(line, step):
     if math.dist(out[-1], line[-1]) > 1: out.append(line[-1])
     return out
 
+_trees = {}
+def trees_near(x, z, r):
+    """Tree trunks (x, z) within r of a point, from the built tiles' trees.bin."""
+    out, T2 = [], 2000.0                       # tile size (world.json 'tile')
+    for tx in range(math.floor((x - r + T2 / 2) / T2), math.floor((x + r + T2 / 2) / T2) + 1):
+        for tz in range(math.floor((z - r + T2 / 2) / T2), math.floor((z + r + T2 / 2) / T2) + 1):
+            if (tx, tz) not in _trees:
+                d = os.path.join(ROOT, 'game', 'assets', 'tiles', f'{tx}_{tz}')
+                _trees[(tx, tz)] = np.frombuffer(tilefmt.read_bytes(d, 'trees.bin'), '<f4').reshape(-1, 4)[:, :2] if os.path.isdir(d) else np.zeros((0, 2))
+            T = _trees[(tx, tz)]
+            if len(T): out.extend(T[np.hypot(T[:, 0] - x, T[:, 1] - z) < r])
+    return out
+
+
 result = []
 for c in CHALLENGES:
     nodes = []
@@ -209,7 +223,19 @@ for c in CHALLENGES:
         for q in jtree.query_ball_point(F[j], jrad.max()):
             d = float(np.hypot(*(F[j] - jpts[q])))
             if d < jrad[q]: hw = max(hw, float(jrad[q]) - d * 0.5)
+        if hw > fw[j] / 2:                   # opened out at a junction: stay 1.8 m short of trees in the gap between
+            for tx_, tz_ in trees_near(F[j][0], F[j][1], hw + 2.5):   # the roads (they're only kept clear of strips)
+                hw = max(float(fw[j]) / 2, min(hw, float(np.hypot(tx_ - F[j][0], tz_ - F[j][1])) - 1.8))
         return hw
+    # U-turns at an acute fork (> 100 degrees within ~20 m): the inside of the turn is open, or the corridors of the
+    # two legs leave a walled-off V that a car cutting the corner gets pinned in
+    _hd = np.arctan2(np.gradient(F[:, 0]), np.gradient(F[:, 1]))
+    def turn_at(j, k=10):
+        a, b = max(0, j - k), min(len(F) - 1, j + k)
+        return abs((_hd[b] - _hd[a] + np.pi) % (2 * np.pi) - np.pi)
+    _hw0 = half_width
+    def half_width(j):
+        return max(_hw0(j), 11.0) if turn_at(j) > math.radians(100) else _hw0(j)
     track = [[round(float(F[j][0]), 2), round(float(F[j][1]), 2), round(half_width(j), 2)]
              for j in list(range(0, len(F), 2)) + [len(F) - 1]]
     simple = resample(line, 8.0)
