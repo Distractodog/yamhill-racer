@@ -28,8 +28,8 @@ BUILDING = (205, 200, 192)
 world = json.loads((ASSETS / 'world.json').read_text())
 T = world['tile']
 ex0, ez0, ex1, ez1 = world['extent']
-if ex1 - ex0 > 30000:                 # the round map (36 km): coarser, or the picture gets huge (memory + browser)
-    DRAW_MPP, OUT_MPP = 4.0, 8.0
+if ex1 - ex0 > 30000:                 # the round map: draw at 4 m, keep 5 m/px (the default sharpness)
+    DRAW_MPP, OUT_MPP = 4.0, 5.0
 W, H = int((ex1 - ex0) / DRAW_MPP), int((ez1 - ez0) / DRAW_MPP)
 img = Image.new('RGB', (W, H), (34, 40, 36))          # off the map (the map is a set of tiles, not a rectangle)
 tile_px = int(T / DRAW_MPP)
@@ -86,7 +86,12 @@ if rim:                               # round map: shade everything beyond the r
     draw.ellipse([cx - rr, cz - rr, cx + rr, cz + rr], outline=(194, 243, 255), width=max(2, int(round(30 / DRAW_MPP))))
 out = img.resize((int(W * DRAW_MPP / OUT_MPP), int(H * DRAW_MPP / OUT_MPP)), Image.LANCZOS)
 dst = ASSETS / 'minimap.jpg'
-out.save(dst, quality=84, optimize=True)
+quality = 30
+while True:                            # 5 m/px is the sharpness; drop quality until the file is under 3 MB
+    out.save(dst, quality=quality, optimize=True)
+    if dst.stat().st_size <= 3_000_000 or quality <= 20: break
+    quality -= 2
 meta = {'extent': world['extent'], 'mpp': OUT_MPP, 'size': list(out.size)}
+if rim: meta['rim'] = {'cx': rim['cx'], 'cz': rim['cz'], 'r': rim['r']}
 (ASSETS / 'minimap.json').write_text(json.dumps(meta))
-print(dst, out.size, f'{dst.stat().st_size / 1e6:.2f} MB')
+print(dst, out.size, f'{dst.stat().st_size / 1e6:.2f} MB', 'q', quality)
