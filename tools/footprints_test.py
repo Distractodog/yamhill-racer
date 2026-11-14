@@ -41,6 +41,14 @@ class FootprintsTest(unittest.TestCase):
             self.assertEqual(default_height(area), expected)
         for h in [None, -1, 'bad', float('inf')]:
             self.assertEqual(merge([], [box(0,0,10,6,h)])[0]['h'], 5.5)
+        self.assertEqual(merge([], [box(0,0,h=.01)])[0]['h'], .1)
+
+    def test_extreme_geometry_has_bounded_grid(self):
+        self.assertEqual(merge([], [box(0,0,1e155,1e155)]), [])
+        # Large accepted shapes still suppress overlapping later additions.
+        huge = box(0,0,100000,100000)
+        self.assertEqual(len(merge([], [huge, box(100,100)])), 1)
+        self.assertEqual(len(merge([], [box(100,100), huge])), 2)
 
     def test_geojson_conversion_and_courtyard(self):
         ring = [[0,0],[1,0],[1,1],[0,1],[0,0]]

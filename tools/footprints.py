@@ -32,7 +32,7 @@ def _polygon(item):
         if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 3 or not np.isfinite(pts).all():
             return None
         p = Polygon(pts)
-        return p if p.is_valid and not p.is_empty and p.area >= 1.0 else None
+        return p if p.is_valid and not p.is_empty and math.isfinite(p.area) and p.area >= 1.0 else None
     except (ValueError, TypeError, KeyError):
         return None
 
@@ -49,12 +49,17 @@ def merge(osm_buildings, new_footprints):
     tree = STRtree(osm_polys)
     # Small grid for accepted additions keeps duplicate checks local without
     # rebuilding an STRtree for every building.
-    accepted, cells = [], {}
+    accepted, cells, large = [], {}, []
 
     def keys(p):
         x0, z0, x1, z1 = p.bounds
-        return [(x, z) for x in range(math.floor(x0 / 100), math.floor(x1 / 100) + 1)
-                for z in range(math.floor(z0 / 100), math.floor(z1 / 100) + 1)]
+        left, right = math.floor(x0 / 100), math.floor(x1 / 100)
+        top, bottom = math.floor(z0 / 100), math.floor(z1 / 100)
+        # A malformed or unusually long polygon must not allocate millions of
+        # grid cells. Rare large shapes use a bounded-memory linear query.
+        if (right - left + 1) * (bottom - top + 1) > 4096:
+            return None
+        return [(x, z) for x in range(left, right + 1) for z in range(top, bottom + 1)]
 
     for item in new_footprints:
         p = _polygon(item)
@@ -62,7 +67,7 @@ def merge(osm_buildings, new_footprints):
             continue
         occupied = keys(p)
         neighbors = [osm_polys[int(i)] for i in tree.query(p, predicate='intersects')]
-        seen = {i for key in occupied for i in cells.get(key, ())}
+        seen = range(len(accepted)) if occupied is None else set(large) | {i for key in occupied for i in cells.get(key, ())}
         neighbors.extend(accepted[i] for i in seen if accepted[i].intersects(p))
         overlap = p.intersection(unary_union(neighbors)).area if neighbors else 0.0
         if overlap / p.area > 0.30 + 1e-12:
@@ -73,10 +78,13 @@ def merge(osm_buildings, new_footprints):
             h = 0
         if not math.isfinite(h) or h <= 0:
             h = default_height(p.area)
-        result.append({'pts': np.asarray(p.exterior.coords[:-1], dtype=float), 'h': round(h, 1)})
+        # Positive sub-decimetre source estimates must not round to zero walls.
+        result.append({'pts': np.asarray(p.exterior.coords[:-1], dtype=float), 'h': max(0.1, round(h, 1))})
         index = len(accepted)
         accepted.append(p)
-        for key in occupied:
+        if occupied is None:
+            large.append(index)
+        for key in occupied or ():
             cells.setdefault(key, []).append(index)
     return result
 
