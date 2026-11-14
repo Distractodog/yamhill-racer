@@ -1,3 +1,4 @@
+import { drawMapImage } from './mapimage.js';
 import { createMapDetail, mapDetailLevel } from './mapdetail.js';
 import { createMapDetail as createMapImagery } from './minimapdetail.js';
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
@@ -272,7 +273,7 @@ export async function createMinimap(base = './assets/') {
       cctx.fillStyle = '#222824'; cctx.fillRect(0, 0, W, H);   // off the map (same as the baked picture)
       cctx.imageSmoothingQuality = 'high';
       const cox = W / 2 - px * s, coy = H / 2 - py * s;
-      cctx.drawImage(img, cox, coy, img.width * s, img.height * s);
+      drawMapImage(cctx, img, cox, coy, s);
       cctx.save();
       if (rim) { const [rx, ry, rr] = rimAt(cox, coy, s); cctx.beginPath(); cctx.arc(rx, ry, rr, 0, Math.PI * 2); cctx.clip(); }
       imagery.draw(cctx, cox, coy, s);
@@ -305,7 +306,7 @@ export async function createMinimap(base = './assets/') {
         mapBase.width=W;mapBase.height=H;mapBaseKey=baseKey;
         mapCtx.fillStyle='#141816';mapCtx.fillRect(0,0,W,H);mapCtx.save();
         if(rim){const[rx,ry,rr]=rimAt(ox,oy,s);mapCtx.beginPath();mapCtx.arc(rx,ry,rr,0,Math.PI*2);mapCtx.clip();}
-        mapCtx.imageSmoothingQuality='high';mapCtx.drawImage(img,ox,oy,img.width*s,img.height*s);
+        mapCtx.imageSmoothingQuality='high';drawMapImage(mapCtx,img,ox,oy,s);
         imagery.draw(mapCtx,ox,oy,s);
         detail.draw(mapCtx,{bounds,ppm,d,map:fmap});
         if(mapDetailLevel(ppm/d)<3)for(const l of LABELS){const[lx,ly]=fmap(l.x,l.z);if(lx>-120&&ly>-30&&lx<W+120&&ly<H+30)label(mapCtx,l.name,lx,ly,(zoom>25?12:15)*d);}
