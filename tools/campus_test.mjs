@@ -4,10 +4,12 @@ import * as THREE from 'three';
 import { CAMPUS, partPts, inPoly } from '../game/src/campus.js';
 import { makeTileData } from '../game/src/data.js';
 import { buildRoads, buildJunctions, campusRoad } from '../game/src/roads.js';
-const W = JSON.parse(fs.readFileSync('game/assets/world.json')), dir='game/assets/tiles/0_0/';
+import { readTileData } from '../game/src/tilepack.js';
+const A=(process.env.YR_ASSETS||'game/assets').replace(/\/?$/,'/');      // YR_ASSETS=dir tests another assets folder
+const W = JSON.parse(fs.readFileSync(A+'world.json')), dir=A+'tiles/0_0/';
 const ab=f=>{const b=fs.readFileSync(dir+f);return b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);};
-const raw=JSON.parse(fs.readFileSync(dir+'tile.json'));
-const td=makeTileData(W,0,0,{hbuf:ab('height.bin'),sbuf:ab('surface.bin'),tbuf:ab('trees.bin'),pbuf:ab('ponds.bin'),tile:raw});
+const data=await readTileData(async f=>ab(f),W.packed), raw=data.tile;
+const td=makeTileData(W,0,0,data);
 const kitchen=CAMPUS.find(b=>b.name==='Back kitchen'), poly=partPts(kitchen.parts[0]);
 assert.equal(kitchen.parts[0].win.rows,1);
 assert.equal(kitchen.parts[0].win.basementRows,1);
