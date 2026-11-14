@@ -1,5 +1,7 @@
 # Tile format v3
 
+**Release blocked.** The current converted assets meet the size and numerical error limits, but the full DRIVE comparison fails: North Woods does not finish, campus wandering gains a flip, and jet landing bounce counts increase. The headless screenshot gate is also not verified. Do not publish this candidate. See `v3_validation.json` for measured results and baseline commit.
+
 `world.json` identifies the published format with numeric `"packed": 3`. The browser loader accepts only v3 and returns the existing float32 terrain/tree arrays and JSON objects to the simulation. Python tools retain plain/v1/v2 readers for conversion. Do not publish an intermediate mixture of versions.
 
 Each tile contains `height.bin.gz`, `surface.bin.gz`, `ponds.bin.gz`, `trees.bin.gz`, `tile.json.gz`, and `ground.webp`. Conversion may also retain a validated `v3.json` SHA-256 receipt. All binary integers and floats below are little-endian. Gzip uses level 9 and `mtime=0`; identical inputs and encoder versions produce deterministic bytes.

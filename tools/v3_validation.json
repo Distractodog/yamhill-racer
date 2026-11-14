@@ -1,0 +1,170 @@
+{
+  "release_status": "BLOCKED - DO NOT PUSH",
+  "validated_asset_commit": "b65def5",
+  "baseline_commit": "67327f0",
+  "data_verification": {
+    "version": 3,
+    "tiles_checked": 468,
+    "tree_count": 16193898,
+    "shared_core_seams_checked": 888,
+    "max_errors": {
+      "height_error": 0.009998321533203125,
+      "tree_radial_error": 0.015411830177818974,
+      "geometry_coordinate_error": 0,
+      "geometry_height_error": 0.005000000000002558,
+      "road_overlay_bound": 0.009250000000002562
+    },
+    "ground_mean_absolute_channel_error": 1.2606770041321755,
+    "size_table": [
+      {
+        "type": "audio/*",
+        "before": 424288,
+        "after": 424288,
+        "saved": 0
+      },
+      {
+        "type": "challenges.json",
+        "before": 236376,
+        "after": 236376,
+        "saved": 0
+      },
+      {
+        "type": "minimap-detail",
+        "before": 120663830,
+        "after": 64821912,
+        "saved": 55841918
+      },
+      {
+        "type": "minimap.jpg",
+        "before": 18238771,
+        "after": 18227004,
+        "saved": 11767
+      },
+      {
+        "type": "minimap.json",
+        "before": 4536,
+        "after": 4536,
+        "saved": 0
+      },
+      {
+        "type": "navigation.json",
+        "before": 9639052,
+        "after": 9639052,
+        "saved": 0
+      },
+      {
+        "type": "ramps.json",
+        "before": 111,
+        "after": 111,
+        "saved": 0
+      },
+      {
+        "type": "tiles/ground",
+        "before": 250116807,
+        "after": 85256360,
+        "saved": 164860447
+      },
+      {
+        "type": "tiles/height.bin",
+        "before": 280273018,
+        "after": 78933317,
+        "saved": 201339701
+      },
+      {
+        "type": "tiles/ponds.bin",
+        "before": 293699,
+        "after": 293699,
+        "saved": 0
+      },
+      {
+        "type": "tiles/surface.bin",
+        "before": 18987978,
+        "after": 18987978,
+        "saved": 0
+      },
+      {
+        "type": "tiles/tile.json",
+        "before": 54274348,
+        "after": 48109877,
+        "saved": 6164471
+      },
+      {
+        "type": "tiles/trees.bin",
+        "before": 152922123,
+        "after": 97200271,
+        "saved": 55721852
+      },
+      {
+        "type": "tiles/v3.json",
+        "before": 0,
+        "after": 478296,
+        "saved": -478296
+      },
+      {
+        "type": "world.json",
+        "before": 13388,
+        "after": 5824,
+        "saved": 7564
+      }
+    ],
+    "total_before_bytes": 906088325,
+    "total_after_bytes": 422618901,
+    "size_limit_bytes": 450000000,
+    "errors": [],
+    "passed": true
+  },
+  "ssim": {
+    "ground": {
+      "meanSSIM": 0.9707827476914325,
+      "minSSIM": 0.9254147666085443,
+      "threshold": 0.97,
+      "pass": true,
+      "sampleBefore": 10998417,
+      "sampleAfter": 3759070,
+      "byteRatio": 0.3417828220188414
+    },
+    "detail": {
+      "meanSSIM": 0.9741990155574365,
+      "minSSIM": 0.9660597093016287,
+      "threshold": 0.95,
+      "pass": true,
+      "sampleBefore": 5253724,
+      "sampleAfter": 2834456,
+      "byteRatio": 0.5395136859111747
+    }
+  },
+  "python_tests": {
+    "passed": 44
+  },
+  "javascript_checks": "PASS: v3 codec identity, minimap detail/map caches, campus, rim/ring, jet camera/boundary/wreck",
+  "drive": {
+    "process_exit_code": 0,
+    "acceptance": "FAIL",
+    "section_count": 97,
+    "changed_sections": 62,
+    "new_failures": [
+      "walls: bot drives North woods scramble"
+    ],
+    "increased_flips": [
+      {
+        "section": "60 s wander over campus hills",
+        "before": 0.0,
+        "after": 1.0,
+        "delta": 1.0
+      }
+    ],
+    "jet_landing_air_mode_entries": {
+      "before": 2,
+      "after": 30
+    },
+    "note": "drive.mjs encodes no numerical noise allowance; exit zero is not proof of unchanged physics."
+  },
+  "headless_screenshots": "NOT VERIFIED; no retry permitted. Supplemental IAB views do not satisfy this release gate.",
+  "diagnosis": "Independent v2 height/tree/geometry substitutions improve different cases. All original physics components together recover the original tested behavior. Small bounded quantization errors interact in long simulations.",
+  "lossless_height_research": {
+    "sample_tiles": 20,
+    "best_forecast_height_bytes": 226309623,
+    "forecast_total_bytes": 569995207,
+    "note": "Sample estimate for the best of six tested exact codecs, not a proof that every possible method exceeds the limit."
+  }
+}
