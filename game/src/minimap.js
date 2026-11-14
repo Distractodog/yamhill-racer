@@ -23,6 +23,18 @@ export async function createMinimap(base = './assets/') {
   await img.decode();
   const [ex0, ez0] = meta.extent, mpp = meta.mpp;
   const toPx = (x, z) => [(x - ex0) / mpp, (z - ez0) / mpp];   // world metres → map image pixels
+  const rim = meta.rim || null;
+  // canvas position of the scenery circle, given the image's top-left and px-per-image-pixel
+  const rimAt = (ox, oy, s) => {
+    const [ix, iy] = toPx(rim.cx, rim.cz);
+    return [ox + ix * s, oy + iy * s, rim.r / mpp * s];
+  };
+  function strokeRim(ctx, ox, oy, s, d) {
+    if (!rim) return;
+    const [x, y, r] = rimAt(ox, oy, s);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#c2f3ff'; ctx.lineWidth = Math.max(1.5 * d, Math.min(3.5 * d, 24 / mpp * s)); ctx.stroke();
+  }
 
   const corner = document.createElement('div');
   corner.id = 'minimap';
@@ -197,7 +209,9 @@ export async function createMinimap(base = './assets/') {
       const s = W / (viewM / mpp);               // canvas px per image px
       cctx.fillStyle = '#222824'; cctx.fillRect(0, 0, W, H);   // off the map (same as the baked picture)
       cctx.imageSmoothingQuality = 'high';
-      cctx.drawImage(img, W / 2 - px * s, H / 2 - py * s, img.width * s, img.height * s);
+      const cox = W / 2 - px * s, coy = H / 2 - py * s;
+      cctx.drawImage(img, cox, coy, img.width * s, img.height * s);
+      strokeRim(cctx, cox, coy, s, d);
       const cmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [W / 2 + (a - px) * s, H / 2 + (b - py) * s]; };
       drawOverlay(cctx, cmap, d);
       if (pin) {                                   // pin on the corner map; held at the edge when it's further away
@@ -215,8 +229,9 @@ export async function createMinimap(base = './assets/') {
       carPx = [px, py]; clampView();
       const s = fitScale() * zoom, ox = W / 2 - vx * s, oy = H / 2 - vy * s;
       full.querySelector('[data-z="in"]').disabled = zoom >= MAX_ZOOM; full.querySelector('[data-z="out"]').disabled = zoom <= 1;
-      fctx.clearRect(0, 0, W, H);
-      if (zoom > 1) { fctx.fillStyle = '#222824'; fctx.fillRect(0, 0, W, H); }
+      fctx.fillStyle = '#141816'; fctx.fillRect(0, 0, W, H);
+      fctx.save();
+      if (rim) { const [rx, ry, rr] = rimAt(ox, oy, s); fctx.beginPath(); fctx.arc(rx, ry, rr, 0, Math.PI * 2); fctx.clip(); }
       fctx.imageSmoothingQuality = 'high';
       fctx.drawImage(img, ox, oy, img.width * s, img.height * s);
       for (const l of LABELS) { const [lx, ly] = toPx(l.x, l.z); label(fctx, l.name, ox + lx * s, oy + ly * s, 15 * d); }
@@ -230,6 +245,8 @@ export async function createMinimap(base = './assets/') {
       fctx.strokeStyle = `rgba(255,59,48,${1 - ((t * 1.2) % 1)})`; fctx.lineWidth = 2.5 * d; fctx.stroke();
       arrow(fctx, ox + px * s, oy + py * s, heading, 11 * d);
       if (pin) drawPin(fctx, ...fmap(pin.x, pin.z), 13 * d);
+      fctx.restore();
+      strokeRim(fctx, ox, oy, s, d);
     }
   }
 
