@@ -57,6 +57,23 @@ Full piece text: BR-0 to BR-3 in [CHATGPT.md](agents/CHATGPT.md), BR-4 in [CURSO
 BR-0 can start any time; BR-4 can start on a test build from BR-2. A first draft of BR-1/2/3 (unfinished) is on the owner's
 local branch `bridges` (not pushed).
 
+## RJ — ramps, merges and splits (planned 2026-11-14, not started)
+Owner, 2026-11-14, from a screenshot of a one-lane highway where an exit splits off to the left and an on-ramp feeds in:
+"they all kinda blend together and it looks bad." Today the build treats every ramp meet as an ordinary junction (a wide fan
+of asphalt, lines running into each other, no gore, no lane-ending taper), and ramps are built as wide as their main road.
+RJ-1 shares `build_tiles.py` / `roadnet.py` with BR-1/BR-2: one piece at a time, merged before the next. **RJ-4 and BR-5 are one
+rebuild** (468 tiles): don't rebuild for either alone.
+
+| Piece | Size | Who | What |
+|---|---|---|---|
+| RJ-0 | S | ChatGPT | audit: every ramp meeting a road at < 30°, typed (exit / on-ramp / Y-split), screenshotted; the owner's spot is row 1 |
+| RJ-1 | M–L | Claude | road build: parallel taper + widened lane + flat gore piece instead of a fan; ramps get their own width; heights follow the main road |
+| RJ-2 | M | Cursor | markings: edge line follows the taper, dashed lane-drop line, gore V + chevrons, no crossing lines |
+| RJ-3 | S–M | ChatGPT | physics (`data.js`) and the minimap draw the same tapers and gores |
+| RJ-4 | — | Claude | folded into BR-5's single 468-tile rebuild + minimap re-bake |
+
+Full piece text: RJ-0 + RJ-3 in [CHATGPT.md](agents/CHATGPT.md), RJ-2 in [CURSOR.md](agents/CURSOR.md), RJ-1 + RJ-4 in [CLAUDE.md](agents/CLAUDE.md).
+
 ## Rules that keep four agents from breaking each other
 1. **One git branch per piece**, named after its ID in lower case (`tw-1b`, `bug-1`, `rm-1a`), made from the current `main`.
    Agents commit only on their branch as `Distractodog` with the GitHub noreply email. **No agent pushes `main`.** A branch is pushed

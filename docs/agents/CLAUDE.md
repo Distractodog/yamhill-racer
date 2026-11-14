@@ -100,9 +100,31 @@ format and loader, the road network, and the one big rebuild. Everything else wa
 The whole plan (BR-0 to BR-5) is in `docs/HANDOFF.md`; yours is the rebuild, after BR-1 to BR-3 are merged.
 
 ### BR-5 — rebuild tiles + re-bake the minimap (L, mostly commands; Claude)
-- **Goal:** one rebuild with BR-1 + BR-2 together, then the minimap shows the rivers.
+- **Goal:** one rebuild with BR-1 + BR-2 **and RJ-1 (RJ-4)** together, then the minimap shows the rivers.
 - **Note:** the map is now **468 tiles / a 45 km circle**, so the build costs more than the last one (276 tiles took ~30 min and 5.2 GB peak). Build into `YR_ASSETS=<new dir>` in the background, then swap in; never half-written tiles in `game/assets/`. Then `build_minimap.py`, `challenge_routes.py` (arches), `pack_tiles`/`verify_pack` as RM-4 did.
 - **Done when:** [ ] build log: river/stream lines, pools, bridges counted, no errors; [ ] ROADCLIP ≤ 0.02 %; DRIVE (0 NaN, 0 DNF, bots finish), `bridge_test.mjs` (BR-3) pass; STREAM 0 frames without ground; [ ] the BR-0 screenshot list re-shot: every row "fine"; [ ] minimap shows the rivers; [ ] asset size reported (Pages limit ~1 GB); [ ] pushed only when the owner says so.
+
+### RJ — ramps, merges and splits (planned 2026-11-14)
+Owner, 2026-11-14, from a screenshot of a one-lane highway where an exit splits off to the left and an on-ramp feeds in:
+"they all kinda blend together and it looks bad." Today the build treats every ramp meet as an ordinary junction (a wide fan
+of asphalt, lines running into each other, no gore, no lane-ending taper), and ramps are built as wide as their main road.
+RJ-1 shares `build_tiles.py` / `roadnet.py` with BR-1/BR-2: one piece at a time, merged before the next. **RJ-4 and BR-5 are one
+rebuild** (468 tiles): don't rebuild for either alone.
+
+### RJ-1 — tapers instead of fans in the road build (M–L, strongest model; `build_tiles.py` / `roadnet.py` one agent at a time)
+- **Goal:** a shallow-angle meet becomes a taper: the ramp runs alongside the main road for a taper length, widening it, then peels away; a separate flat **gore** piece fills the V between them; no fan junction there.
+- **Read only:** `roadnet.py` docstring, `junction_layout`, `profiles`, `junction_rings`, `harmonize`; `build_tiles.py` OSM road loop (~lines 120–150) and the `piece` lambda / tile.json strip writer. **Edit:** those. **Leave alone:** ordinary junctions (> 30°), trails.
+- **Steps:**
+  1. Keep `_link` in the road's attr (`cls` e.g. `trunk_link`) and give ramps their own width: one lane ≈ 6–7 m drawn (roads are drawn ~1.5–2× real), no centre line.
+  2. Detect ramp meets in `junction_layout`: a node where a link (or oneway) edge leaves a non-link edge at < 30°. Mark it `taper` instead of computing a fan trim.
+  3. Taper geometry: the ramp edge is re-laid so its centre line runs parallel to the main road's edge for `TAPER` m (trunk/motorway ~100–120 m, primary/secondary ~80, tertiary ~60), offset by (main half-width + ramp half-width), then blends onto its own OSM line. Along the taper the main road strip gets an extra lane-width on that side (a `widen` [side, start s, end s] range in tile.json, so the drawing and physics know), narrowing to zero over the last ~30 m for a merge (lane drop) or starting from zero for a diverge.
+  4. Heights: through the taper the ramp takes the main road's profile + cross slope at that offset (like `harmonize` does, but forced), then eases to its own profile after the gore; no junction plane at a taper node.
+  5. Gore: the triangle between the main road edge, the ramp edge and the nose point where they're ~1 m apart → a flat piece in `junctions` with `gore: true` (heights from the two edges).
+  6. Carve under the widened strip + gore like any road.
+- **Done when:** [ ] `YR_TILES` test build of the owner's spot + 2 others: no fan junction at any audited meet (probe tile.json), ramp parallel to the main road for the taper length (± 1 m offset), gore piece present; [ ] heights: ramp and main road surface match within 5 cm across the taper (probe `heightAt` across the road every 10 m); [ ] ROADCLIP ≤ 0.02 %; [ ] DRIVE bots finish; [ ] ordinary junctions byte-identical in tile.json for a tile with no ramps.
+
+### RJ-4 — rebuild (combined with BR-5: one 468-tile rebuild, Claude)
+- RJ-1–RJ-3 merge first, then the **single** rebuild that also carries BR-1/BR-2 (see BR-5): never two full rebuilds. Same checks as BR-5, plus: the RJ-0 screenshot list re-shot and every row "fine"; minimap re-baked; `challenge_routes.py` re-run (arches near ramps on the right road).
 
 ## Report back (send the owner this, filled in)
 ```

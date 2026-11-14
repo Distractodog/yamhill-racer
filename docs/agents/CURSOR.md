@@ -142,6 +142,16 @@ The whole plan (BR-0 to BR-5) is in `docs/HANDOFF.md`; yours is the meshes. Wait
 - **Done when:** [ ] SHOT side + driver's views: Sheridan Bridge (3594, 1345), the S Bridge St overpass over Hwy 18 (3570, 2370), Hwy 18 over the South Yamhill (5149, 1810), one creek bridge; [ ] driving through the truss: nothing clips the car or camera (overhead clearance ≥ 6 m); [ ] BENCH at Sheridan within baseline, triangles added reported; [ ] PAGEERR clean; [ ] **(owner)** looks right, the green is right. Railings are visual only (no collision) unless the owner asks.
 
 
+### RJ — ramps, merges and splits (planned 2026-11-14)
+Whole plan in `docs/HANDOFF.md`; yours is the markings, after RJ-1's tile.json fields exist (a test build is enough).
+
+### RJ-2 — ramp markings (M; after RJ-1's tile.json fields exist)
+- **Goal:** lines that read like a real highway: no line crosses another.
+- **Edit:** `game/src/roads.js` (`columns()`, `stripTriangles`, a new gore drawer next to `buildJunctions`). **Leave alone:** physics, the tile build.
+- **Steps:** main road: the solid white edge line follows the *outside* of the widened lane through the taper; a dashed white lane line (short dashes, ~1 m on / 3 m off) along the taper where the lane drops or splits; no yellow centre dashes on ramps (one-way); the ramp's own two edge lines start at the gore nose; gore: two solid white lines meeting in a V with white chevrons (or a solid white V on narrow gores); the main road's centre dashes unchanged.
+- **Done when:** [ ] SHOT the owner's spot (driver's view on the highway, both directions, and from 40 m up) + 2 more audited rows: no line runs into or across another, gore V visible, taper reads as a lane; [ ] far (LOD) version has no markings, as today; [ ] BENCH at one highway spot within baseline; [ ] PAGEERR clean; [ ] **(owner)** looks right compared with his screenshot.
+
+
 ## Report back (send the owner this, filled in)
 ```
 Piece: <ID>   Branch: <name>   Commits: <short hashes>

@@ -135,6 +135,27 @@ or one clips through the other. Pieces in order (BR-1 → BR-2 share `build_tile
 - **Done when:** [ ] new `tools/bridge_test.mjs` (Node, no browser): a car driven along the lower road under each audited overpass at 100 km/h stays on the lower road (max height jump < 0.5 m), and one driven over the deck stays on the deck; a car dropped into the river under Sheridan Bridge stays in the water; [ ] DRIVE output identical where there's no bridge; `jet`, `glider`, `bikeglider` sections unchanged; [ ] PAGEERR clean.
 
 
+### RJ — ramps, merges and splits (planned 2026-11-14)
+Owner, 2026-11-14, from a screenshot of a one-lane highway where an exit splits off to the left and an on-ramp feeds in:
+"they all kinda blend together and it looks bad." Today the build treats every ramp meet as an ordinary junction (a wide fan
+of asphalt, lines running into each other, no gore, no lane-ending taper), and ramps are built as wide as their main road.
+RJ-1 shares `build_tiles.py` / `roadnet.py` with BR-1/BR-2: one piece at a time, merged before the next. **RJ-4 and BR-5 are one
+rebuild** (468 tiles): don't rebuild for either alone.
+
+### RJ-0 — ramp / merge / split audit (S, cheap model for the script; look at the screenshots yourself)
+- **Goal:** a list of every place a ramp meets a road at a shallow angle, so RJ-1/RJ-2 have a fixed test set.
+- **Create:** `tools/ramp_audit.py` (reads `data/raw/osm_region.json`; `lonlat_to_world` as in `build_tiles.py` lines 59–61): every OSM node shared by a `highway=*_link` way and a non-link road where the two leave at < 30° (also `junction=*` and a `oneway` road meeting another at < 30°) → `docs/research/ramps-audit.md` (table) + a json outside the repo; `tools/ramp_shots.mjs` (pattern `tools/shot.mjs`: one driver's view approaching on the main road, one view from ~40 m up). **Edit** nothing else.
+- **Each row:** id, x,z, main road (class, name, one/two-way, lanes), ramp way, angle, type (**diverge / exit**, **merge / on-ramp**, **Y-split**), the ramp's direction of travel, screenshot path, verdict.
+- **Known already (276-tile OSM data, re-run on the 468-tile data):** 66 ramp ways (47 `trunk_link`, 11 `tertiary_link`, 4 `primary_link`, 4 `secondary_link`) and 63 shallow ramp meets (40 on trunks = Hwy 18 / 99W, 12 primary, 6 tertiary, 4 secondary). Examples: Willamina/Grand Ronde side of Hwy 18 around (−4660, 6561) and (−4147, 6187); McMinnville bypass around (20268, −9741). Also: `build_tiles.py` drops the `_link` suffix (`h.replace('_link', '')`), so **every ramp is built as wide as its main road** (a trunk ramp is 17 m with yellow centre dashes). That's a big part of why they "blend together".
+- **Test case (owner's screenshot, 2026-11-14):** a one-lane-each-way highway where an exit splits off to the **left** and an on-ramp feeds in; "they all kinda blend together and it looks bad." Today both are ordinary fan junctions: a wide wedge of asphalt, lines running into each other, no gore, no lane-ending taper. Find that spot in the audit (a left exit near an on-ramp on Hwy 18) and make it row 1.
+- **Done when:** [ ] table covers the whole map with counts per type; [ ] every row screenshotted and given a one-line verdict; [ ] the owner's spot identified as row 1 (or "not found" with the closest candidates).
+
+### RJ-3 — physics + minimap draw the same shapes (S–M)
+- **Goal:** what you drive on is exactly what is drawn; the map shows ramps as ramps.
+- **Edit:** `game/src/data.js` (`prepRoad` / `overlayAt`: honour the strip's `widen` range and gore pieces with the same maths as roads.js), `tools/build_minimap.py` (draw ramps thinner than their main road, from the same tile.json strips). Coordinate with whoever owns the minimap that day; one session at a time in `build_minimap.py`.
+- **Done when:** [ ] probe: `surfaceAt` = asphalt and `heightAt` = drawn surface (± 2 cm) across every taper and gore in the test tiles; [ ] a race bot / scripted car takes the exit and the on-ramp at 120 km/h without a bump (> 0.15 m step) or leaving the asphalt; [ ] DRIVE unchanged elsewhere; [ ] minimap SHOT of the owner's spot shows the ramp split off cleanly.
+
+
 ## Report back (send the owner this, filled in)
 ```
 Piece: <ID>   Branch: <name>   Commits: <short hashes>
