@@ -12,6 +12,7 @@ import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
 import { createSettings } from './settings.js';
+import { makeRim } from './rim.js';
 
 const settings = createSettings();
 
@@ -59,6 +60,7 @@ const save = () => { try { localStorage.setItem('yr-tuning-2', JSON.stringify(tu
 
 const loadingEl = document.getElementById('loading');
 const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Loading map… ${n}/${of}`; });
+const rim = makeRim(world.W.rim);
 scene.add(world.group);
 // vehicles (vehicles.js): `car` below is a stand-in for whichever vehicle you're in (V switches)
 const bikeTuning = { ...BIKE }, jetTuning = { ...JET };
@@ -340,7 +342,7 @@ function frame(now) {
   readInput();
   challenges.holdInput(input);
   acc += dt;
-  while (acc >= STEP) { car.savePrev(); car.step(STEP, input); challenges.constrain(); acc -= STEP; }
+  while (acc >= STEP) { car.savePrev(); car.step(STEP, input); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
   challenges.update(dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
