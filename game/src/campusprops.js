@@ -64,13 +64,12 @@ function lampGeometry() {
 // Flat plaza, a light X, and a curved walk. y sits just above the ground at the doors.
 function groundDressing(ground) {
   const { at, N, U } = ENTRANCE;
-  const y = ground(at[0], at[1]) + 0.08;
   const P = [], C = [];
   const corner = (nu, uu) => {
     const p = add(at, N, nu, U, uu);
-    return [p[0], y, p[1]];
+    return [p[0], ground(p[0], p[1]) + 0.14, p[1]];
   };
-  const slab = (n0, n1, u0, u1, col) => quad(P, C, corner(n0, u0), corner(n0, u1), corner(n1, u1), corner(n1, u0), col);
+  const slab = (n0, n1, u0, u1, col) => quad(P, C, corner(n0, u0), corner(n1, u0), corner(n1, u1), corner(n0, u1), col);
   slab(4.4, 16, -8, 8, BRICK);
   slab(6.2, 14.2, -1.1, 1.1, CREAM);
   slab(8.5, 11.5, -6.2, 6.2, CREAM);
@@ -81,9 +80,9 @@ function groundDressing(ground) {
     const next = add(at, N, 12 - t * 4, U, 8 + t * 16);
     const side = (p, s) => {
       const dx = next[0] - prev[0], dz = next[1] - prev[1], L = Math.hypot(dx, dz) || 1;
-      return [p[0] + (-dz / L) * s, y, p[1] + (dx / L) * s];
+      return [p[0] + (-dz / L) * s, ground(p[0], p[1]) + 0.14, p[1] + (dx / L) * s];
     };
-    quad(P, C, side(prev, -0.9), side(prev, 0.9), side(next, 0.9), side(next, -0.9), WALK);
+    quad(P, C, side(prev, -0.9), side(next, -0.9), side(next, 0.9), side(prev, 0.9), WALK);
     prev = next;
   }
   const g = new THREE.BufferGeometry();
@@ -99,8 +98,8 @@ function groundDressing(ground) {
 function nameSign(ground) {
   const mat = signMaterial(); if (!mat) return null;
   const { at, N, U } = ENTRANCE;
-  const y = ground(at[0], at[1]) + 4.7;
-  const p = add(at, N, 0.55);
+  const y = ground(at[0], at[1]) + 3.85;
+  const p = add(at, N, 1.2);
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.05), mat);
   mesh.position.set(p[0], y, p[1]);
   const face = new THREE.Vector3(N[0], 0, N[1]);
