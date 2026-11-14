@@ -10,6 +10,7 @@ import { installPerf } from './perf.js';
 import { placeCampus } from './campusmodel.js';
 import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
 import { addProps, propGeometries, showProps } from './propsmodel.js';
+import { addCampusItems, campusItemGeometries, showCampusItems } from './campusitemsmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
@@ -42,8 +43,9 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         transformed.y += sin(wp.x * 0.35 + time * 1.7) * 0.035 + cos(wp.z * 0.42 + time * 1.3) * 0.035;`);
   };
   const propGeos = propGeometries();
+  const campusItemGeos = campusItemGeometries();
   const propMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-  const SHARED = new Set([conifer, broadleaf, coniferFar, broadFar, ...Object.values(propGeos)]);
+  const SHARED = new Set([conifer, broadleaf, coniferFar, broadFar, ...Object.values(propGeos), ...Object.values(campusItemGeos)]);
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
@@ -63,7 +65,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   // builds one tile's meshes, yielding between pieces so the frame budget can pause it
   function* buildTile(td, img) {
-    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], treeMats: null, tgrid: null };
+    const g = new THREE.Group(), out = { group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], campusItemLods: [], treeMats: null, tgrid: null };
     out.textures = []; out.materials = [];
     const quarterMats = [];
     for (const bmp of img) {
@@ -239,6 +241,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       cGeos.forEach(x => x.dispose());
     }
     yield* addProps(g, out.propLods, td, propGeos, propMat);
+    yield* addCampusItems(g, out.campusItemLods, td, campusItemGeos, propMat);
     return out;
   }
 
@@ -343,6 +346,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         b.near.castShadow = d < townRange.shadow;
       }
       showProps(v.propLods, cam);
+      showCampusItems(v.campusItemLods, cam);
       for (const c of v.campusLods) {
         const near = Math.hypot(c.cx - cam.x, c.cz - cam.z) < 250;
         c.near.visible = near; c.far.visible = !near;
