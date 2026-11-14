@@ -1,0 +1,48 @@
+#cosmetic-garage[hidden]{display:none!important}
+#cosmetic-garage{position:fixed;inset:0;z-index:70;background:#07110ff2;color:#edf7ef;display:grid;place-items:center;padding:20px;box-sizing:border-box;font:14px/1.4 system-ui,sans-serif;overflow:auto}
+#cosmetic-garage *{box-sizing:border-box}
+#cosmetic-garage .garage-shell{width:min(1060px,100%);border:1px solid #ffffff20;background:#12251f;border-radius:22px;box-shadow:0 24px 80px #0008;overflow:hidden}
+#cosmetic-garage header{display:flex;align-items:center;justify-content:space-between;padding:22px 28px 12px}
+#cosmetic-garage .garage-eyebrow{color:#b9db82;font-size:10px;font-weight:800;letter-spacing:.16em;margin:0 0 3px}
+#cosmetic-garage h2{font-size:30px;letter-spacing:-.035em;margin:0}
+#cosmetic-garage button,#cosmetic-garage input,#cosmetic-garage select{font:inherit;color:inherit}
+#cosmetic-garage button{background:#ffffff0b;border:1px solid #ffffff25;border-radius:9px;padding:9px 13px;cursor:pointer}
+#cosmetic-garage button:hover:not(:disabled){background:#ffffff1c;border-color:#d0e8a1}
+#cosmetic-garage button:focus-visible,#cosmetic-garage input:focus-visible,#cosmetic-garage select:focus-visible{outline:3px solid #e2eaa6;outline-offset:3px}
+#cosmetic-garage button:disabled{opacity:.46;cursor:default}
+#cosmetic-garage .garage-close{font-size:18px;background:transparent}
+#cosmetic-garage .garage-tabs{display:flex;gap:8px;padding:0 28px 18px;border-bottom:1px solid #ffffff15}
+#cosmetic-garage [aria-pressed=true]{background:#c6e79b;color:#17241a;border-color:#c6e79b}
+#cosmetic-garage button[aria-pressed=true]:hover:not(:disabled){background:#d2eeae;color:#17241a;border-color:#e0f4c1}
+#cosmetic-garage .garage-layout{display:grid;grid-template-columns:1.05fr 1fr;min-height:480px}
+#cosmetic-garage .garage-preview{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 48%,#38594d,#152b23 65%);padding:16px;min-width:0}
+#cosmetic-garage .garage-canvas{width:100%;height:330px;touch-action:none;cursor:grab}
+#cosmetic-garage .garage-canvas:active{cursor:grabbing}
+#cosmetic-garage .garage-preview-help{color:#b3cbbd;font-size:12px;margin:0 0 18px}
+#cosmetic-garage .garage-condition{font-size:12px;color:#c6d8cc;margin-bottom:10px}
+#cosmetic-garage .garage-controls{padding:18px 24px;max-height:min(620px,74vh);overflow:auto}
+#cosmetic-garage h3{font-size:11px;text-transform:uppercase;letter-spacing:.12em;margin:16px 0 10px;color:#acc5b4}
+#cosmetic-garage h3:first-child{margin-top:0}
+#cosmetic-garage .garage-colors{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+#cosmetic-garage label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#d8e6dc}
+#cosmetic-garage label[hidden]{display:none}
+#cosmetic-garage input[type=color]{appearance:none;-webkit-appearance:none;width:100%;height:34px;padding:3px;border:1px solid #ffffff30;border-radius:7px;background:#0d1b16;cursor:pointer}
+#cosmetic-garage input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+#cosmetic-garage input[type=color]::-webkit-color-swatch{border:0;border-radius:4px}
+#cosmetic-garage .garage-pair{display:flex;gap:14px;margin-top:13px}
+#cosmetic-garage .garage-pair label:first-child{flex:1}
+#cosmetic-garage select,#cosmetic-garage input[name=number]{background:#0d1b16;border:1px solid #ffffff30;padding:8px;border-radius:7px;min-width:0}
+#cosmetic-garage input[name=number]{width:76px}
+#cosmetic-garage .garage-liveries{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+#cosmetic-garage .garage-liveries button{text-align:left;padding:9px 10px}
+#cosmetic-garage .garage-liveries strong{font-size:12px;display:block}
+#cosmetic-garage .garage-liveries span{font-size:10px;display:block;opacity:.75;margin-top:3px}
+#cosmetic-garage .garage-presets{display:flex;gap:7px}
+#cosmetic-garage .garage-presets>div{flex:1;background:#ffffff06;border-radius:8px;padding:8px;display:flex;flex-wrap:wrap;gap:5px}
+#cosmetic-garage .garage-presets span{flex-basis:100%;font-size:11px;color:#b4cbbd}
+#cosmetic-garage .garage-presets button{padding:4px 7px;font-size:11px}
+#cosmetic-garage .garage-actions{display:flex;justify-content:space-between;gap:12px;margin-top:20px}
+#cosmetic-garage .garage-done{background:#c6e79b;color:#17241a;font-weight:800;min-width:100px}
+#cosmetic-garage .garage-status{font-size:11px;color:#b5ccb9;min-height:16px;margin:9px 0 0}
+@media(max-width:760px){#cosmetic-garage{padding:8px;align-items:start}#cosmetic-garage button[aria-pressed=true]:hover:not(:disabled){background:#d2eeae;color:#17241a;border-color:#e0f4c1}
+#cosmetic-garage .garage-layout{grid-template-columns:1fr}#cosmetic-garage .garage-canvas{height:220px}#cosmetic-garage .garage-preview-help{margin-bottom:7px}#cosmetic-garage .garage-controls{max-height:none}#cosmetic-garage .garage-preview{padding-bottom:12px}#cosmetic-garage header{padding:18px}#cosmetic-garage .garage-tabs{padding:0 18px 14px}}

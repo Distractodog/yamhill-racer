@@ -47,7 +47,7 @@ const originalGlobals = { document: globalThis.document, localStorage: globalThi
 try {
  values.clear(); globalThis.localStorage = storage;
  const context = { fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, fill() {} };
- const element = () => ({ style: {}, append() {}, appendChild() {}, querySelectorAll: () => [], getContext: () => context });
+ const element = () => ({ style: {}, append() {}, appendChild() {}, querySelector: () => ({ addEventListener() {} }), querySelectorAll: () => [], getContext: () => context });
  globalThis.document = { createElement: element, head: element(), body: element() }; globalThis.addEventListener = () => {};
  const race = { ...ch, name: 'Ghost integration', length: 10, route: [[0, 0], [0, 10]], gates: [{ x: 0, z: 0, yaw: 0, w: 20 }, { x: 0, z: 10, yaw: 0, w: 20 }] };
  globalThis.fetch = async url => ({ ok: true, json: async () => url.endsWith('challenges.json') ? [race] : [] });

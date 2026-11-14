@@ -418,6 +418,7 @@ export function buildJetModel() {
   const root = new THREE.Group(); root.name = 'jet';
   const M = (c, o = {}) => new THREE.MeshLambertMaterial({ color: c, flatShading: true, ...o });
   const white = M(0xeef0f2), orange = M(0xff6a1a), dark = M(0x2a2e36), glass = M(0x1b3550, { emissive: 0x0a1a2a });
+  white.userData.cosmeticRole = 'body'; orange.userData.cosmeticRole = 'trim';
   const add = (geo, mat, x = 0, y = 0, z = 0, parent = root) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; parent.add(m); return m; };
   // fuselage: an 8-sided tube, tapered nose and tail
   const fus = new THREE.CylinderGeometry(0.75, 0.6, 9, 8).rotateX(Math.PI / 2); add(fus, white, 0, 0, -0.4);

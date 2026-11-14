@@ -1,0 +1,83 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Yamhill polish benchmark</title>
+<style>body{font:14px system-ui;margin:20px;background:#10251f;color:#eee}button,a{color:inherit}button{background:#315744;border:1px solid #93b49c;border-radius:6px;padding:10px 18px;cursor:pointer}iframe{width:1280px;height:760px;border:1px solid #587564;display:block;margin-top:16px}table{border-collapse:collapse;margin:16px 0;font-variant-numeric:tabular-nums}td,th{text-align:right;padding:6px 12px;border-bottom:1px solid #446052}td:first-child,th:first-child{text-align:left}pre{white-space:pre-wrap}#state{margin:12px 0;color:#e5cf95}.error{color:#ff9b88}details{max-width:1280px}</style>
+<h1>Yamhill Racer · polish benchmark</h1>
+<p>Fixed 1280 × 760 iframe. Physics stays paused at the spawn picker; rendering and streaming continue. Keep this tab visible.</p>
+<p>Each scene settles for 2 seconds, then samples iframe animation frames for 5 seconds. Compare runs on the same browser and machine. Draw counts describe the game renderer; garage preview cost is included in frame time.</p>
+<button id="run">Run benchmark</button> <button id="copy" disabled>Copy JSON</button>
+<div id="state" role="status">Ready</div>
+<table><thead><tr><th>Scene</th><th>Median ms</th><th>p95 ms</th><th>&gt;20 ms</th><th>Triangles</th><th>Draw calls</th><th>Frames</th></tr></thead><tbody id="rows"></tbody></table>
+<details><summary>Results / errors</summary><pre id="results"></pre><pre id="errors" class="error"></pre></details>
+<iframe id="game" title="Game benchmark preview" allow="autoplay"></iframe>
+<script type="module">
+const SPOTS = [
+ {name:'McMinnville NE 3rd St',x:19451,z:-11032,yaw:-1.573},
+ {name:'Sheridan East Main St',x:3794,z:1288,yaw:-1.834},
+ {name:'Willamina Main St',x:-3306,z:3499,yaw:2.008},
+ {name:'Campus Main Building',x:-542,z:440,yaw:1.8},
+];
+const frame=document.querySelector('#game'),state=document.querySelector('#state'),rows=document.querySelector('#rows'),output=document.querySelector('#results'),errorsEl=document.querySelector('#errors');
+let report=null,token='',pageErrors=[];
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const percentile=(values,p)=>{const a=[...values].sort((x,y)=>x-y),i=(a.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return a[lo]+(a[hi]-a[lo])*(i-lo);};
+const round=v=>Math.round(v*100)/100;
+function logError(message){pageErrors.push(String(message));errorsEl.textContent=pageErrors.join('\n');}
+addEventListener('message',e=>{if(e.source===frame.contentWindow&&e.data?.token===token)logError(e.data.message);});
+async function until(predicate,timeout,message){const end=performance.now()+timeout;while(!predicate()){if(performance.now()>end)throw Error(message);await wait(100);}}
+async function load(){
+ const target=new URL(new URLSearchParams(location.search).get('target')||'../game/?perf',location.href);
+ if(target.origin!==location.origin||!['http:','https:'].includes(target.protocol))throw Error('Target must be on the same HTTP origin.');
+ target.searchParams.set('perf','');report.target=target.href;state.textContent='Loading '+target.pathname;
+ const response=await fetch(target,{cache:'no-store'});if(!response.ok)throw Error(`Target returned HTTP ${response.status}`);
+ const html=await response.text();token=crypto.randomUUID();
+ // Inject before game scripts so startup errors are collected, including failed module resources.
+ const hook=`<base href="${target.href.replaceAll('&','&amp;').replaceAll('"','&quot;')}"><script>const benchToken=${JSON.stringify(token)};window.__benchToken=benchToken;const send=m=>parent.postMessage({token:benchToken,message:m},${JSON.stringify(location.origin)});addEventListener('error',e=>send(e.message||('Resource failed: '+(e.target?.src||e.target?.href||'unknown'))),true);addEventListener('unhandledrejection',e=>send(String(e.reason?.stack||e.reason)));<\/script>`;
+ frame.srcdoc=html.replace(/<head[^>]*>/i,match=>match+hook);
+ await until(()=>frame.contentWindow?.__benchToken===token&&frame.contentWindow?.game,120000,'Game initialization timed out');
+ const win=frame.contentWindow,g=win.game;
+ g.keys?.clear();g.minimap?.pickSpawn?.(null);g.minimap?.toggle(false);
+ const welcome=win.document.getElementById('welcome');if(welcome)welcome.hidden=true;
+ win.document.getElementById('settings-panel')?.setAttribute('hidden','');
+ g.atmosphere?.setPreset('midday',false);
+ return {win,g};
+}
+async function place(g,spot){
+ state.textContent='Streaming '+spot.name+'…';g.setCam?.(0);g.garage?.close();
+ const car=g.car;car.pos.set(spot.x,car.pos.y,spot.z);car.vel.set(0,0,0);car._lastLoaded=null;car.savePrev?.();car.interpolate?.(0);
+ g.camera.position.set(spot.x-12*Math.sin(spot.yaw),car.pos.y+7,spot.z-12*Math.cos(spot.yaw));
+ await until(()=>g.world.loadedAt(spot.x,spot.z)&&g.world.pendingTiles()===0,60000,'Terrain did not settle at '+spot.name);
+ car.reset(spot.x,spot.z,spot.yaw);car.vel.set(0,0,0);car.safe=[];car._lastLoaded=null;
+ await wait(2000);
+}
+async function sample(win,g,name){
+ state.textContent='Measuring '+name+' · keep this tab visible';
+ const dts=[],tris=[],calls=[];const began=performance.now();
+ await new Promise((resolve,reject)=>{
+  let last=null,start=null;const timeout=setTimeout(()=>reject(Error('Frame sampling stalled; keep the benchmark tab visible')),20000);
+  const tick=now=>{if(start===null)start=now;if(last!==null){dts.push(now-last);tris.push(g.renderer.info.render.triangles);calls.push(g.renderer.info.render.calls);}last=now;
+   if(now-start<5000)win.requestAnimationFrame(tick);else{clearTimeout(timeout);resolve();}};win.requestAnimationFrame(tick);
+ });
+ if(dts.length<20)throw Error('Too few animation frames at '+name);
+ const row={name,median:round(percentile(dts,.5)),p95:round(percentile(dts,.95)),slowPercent:round(100*dts.filter(t=>t>20).length/dts.length),triangles:Math.round(percentile(tris,.5)),drawCalls:Math.round(percentile(calls,.5)),frames:dts.length,elapsedMs:Math.round(performance.now()-began),x:round(g.car.pos.x),z:round(g.car.pos.z)};
+ report.rows.push(row);const tr=document.createElement('tr');for(const value of [name,row.median,row.p95,row.slowPercent+'%',row.triangles,row.drawCalls,row.frames]){const td=document.createElement('td');td.textContent=value;tr.append(td);}rows.append(tr);output.textContent=JSON.stringify(report,null,2);
+}
+document.querySelector('#run').addEventListener('click',async()=>{
+ const run=document.querySelector('#run');run.disabled=true;document.querySelector('#copy').disabled=true;rows.replaceChildren();pageErrors=[];errorsEl.textContent='';report={started:new Date().toISOString(),viewport:[1280,760],sampleMs:5000,settleMs:2000,rows:[],errors:pageErrors};
+ try{
+  const {win,g}=await load();
+  report.physicsPaused=!!g.sessionSpawn?.blocked;
+  for(const spot of SPOTS){await place(g,spot);await sample(win,g,spot.name);}
+  if(g.atmosphere){g.atmosphere.setPreset('rain',false);await wait(2000);await sample(win,g,'Campus · rain');g.atmosphere.setPreset('midday',false);}
+  if(g.garage){
+   // Permit the garage to open synchronously without letting physics advance between frames.
+   const descriptor=g.sessionSpawn&&Object.getOwnPropertyDescriptor(g.sessionSpawn,'blocked');
+   try{if(descriptor?.configurable)Object.defineProperty(g.sessionSpawn,'blocked',{configurable:true,get:()=>false});g.garage.show();}
+   finally{if(descriptor?.configurable)Object.defineProperty(g.sessionSpawn,'blocked',descriptor);}
+   if(!g.garage.open)throw Error('Garage could not open for its benchmark');
+   await wait(2000);await sample(win,g,'Campus · garage preview');g.garage.close();
+  }
+  report.completed=true;state.textContent=`Complete · ${report.rows.length} scenes · ${pageErrors.length} page errors`;
+ }catch(error){logError(error.stack||error);report.completed=false;state.textContent='Benchmark failed · see errors';}
+ finally{report.finished=new Date().toISOString();output.textContent=JSON.stringify(report,null,2);window.benchResults=report;run.disabled=false;document.querySelector('#copy').disabled=false;}
+});
+document.querySelector('#copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(report,null,2));state.textContent='Results copied';}catch{output.parentElement.open=true;state.textContent='Copy unavailable; select the JSON in Results.';}});
+</script></html>

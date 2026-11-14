@@ -4,6 +4,10 @@ import { loadWorld } from './world.js';
 import { createRimRing } from './rimring.js';
 import { Car, TUNING_DEFAULTS } from './car.js';
 import { Effects } from './effects.js';
+import { DrivingFX } from './drivingfx.js';
+import { createCosmetics } from './cosmetics.js';
+import { createGarage } from './garage.js';
+import { createAtmosphere } from './atmosphere.js';
 import { CarAudio } from './audio.js';
 import { createDirections } from './directions.js';
 import { createMinimap } from './minimap.js';
@@ -88,12 +92,23 @@ let spawn = world.placeOn(sx, sz, 3, 80);
 if (world.surfaceAt(spawn[0], spawn[1]) !== 3) spawn = world.placeOn(sx, sz, 4, 150);
 car.reset(...spawn);
 const effects = new Effects(scene);
+const drivingFX = new DrivingFX(scene);
+const atmosphere = createAtmosphere({ scene, sun, sunDirection: SUN_DIR, world });
+settings.bindAtmosphere(atmosphere, atmosphere.presets);
 const audio = new CarAudio();
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 const challenges = await createChallenges({ scene, world, car, minimap, vehicles });
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
+const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });
+const garage = createGarage({ cosmetics, vehicles, rewards: challenges.rewards,
+  canOpen: () => !sessionSpawn.blocked && challenges.state === 'idle',
+  onOpen: () => { settings.closeWelcome(); settings.close(); vehicles.close(); challenges.closeMenu(); minimap.toggle(false); clearKeys(); },
+  onClose: () => clearKeys(),
+});
+
+const garageButton = document.getElementById('garage-button');
 
 const gui = new GUI({ title: 'Vehicle tuning', container: document.getElementById('tuning-controls') });
 const fc = gui.addFolder('Car');
@@ -134,7 +149,7 @@ const keys = new Set();                 // physical keys held (e.code)
 const letters = new Map();              // e.code → 'KeyW' etc. from e.key
 const clearKeys = () => { keys.clear(); letters.clear(); };
 settings.ready(clearKeys, () => {
-  vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
+  garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
 addEventListener('keydown', e => {
   if (e.gameUI) return;
@@ -170,7 +185,7 @@ function activePad() {
 }
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
-  const k = c => !settings.open && held(c);
+  const k = c => !settings.open && !garage.open && held(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
@@ -183,7 +198,7 @@ function readInput() {
   J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
   J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
   const gp = activePad();
-  if (gp && !settings.open) {
+  if (gp && !settings.open && !garage.open) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
     if (gp.buttons[6]?.value > 0.05) input.brake = gp.buttons[6].value;
@@ -300,7 +315,7 @@ vlineEl.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px;font-v
 speedEl.before(vlineEl);
 // Debug readout (F8, or open the game with ?debug): what this browser actually sends the game, so a player can
 // screenshot it when a control doesn't work on their machine.
-const BUILD = '2026-11-13 input fix';
+const BUILD = '2026-11-14 cosmetics and street map';
 const dbgEl = Object.assign(document.createElement('pre'), { id: 'debug-readout' });
 dbgEl.style.cssText = 'position:fixed;left:8px;top:64px;z-index:50;margin:0;padding:8px 10px;max-width:min(560px,calc(100vw - 16px));' +
   'background:rgba(0,0,0,.72);color:#e8f0e8;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;border-radius:6px;pointer-events:none;';
@@ -338,7 +353,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   readInput();
   challenges.holdInput(input);
-  acc += sessionSpawn.blocked ? 0 : dt;
+  acc += sessionSpawn.blocked || garage.open ? 0 : dt;
   while (acc >= STEP) { car.savePrev(); car.step(STEP, input); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
   challenges.update(dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
@@ -346,9 +361,17 @@ function frame(now) {
   car.syncMesh(dt);
   glider.update(dt, vehicles.current === vehicles.car); bikeGlider.update(dt, vehicles.current === vehicles.bike);
   car.mesh.updateMatrixWorld(true);
-  effects.update(dt, car);
+  effects.update(garage.open || sessionSpawn.blocked ? 0 : dt, car);
+  drivingFX.update(garage.open || sessionSpawn.blocked ? 0 : dt, car);
+  cosmetics.setWetness(atmosphere.wetness);
+  cosmetics.update(garage.open || sessionSpawn.blocked ? 0 : dt, vehicles.current);
+  atmosphere.update(dt, camera);
+  garage.update(dt);
+  const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
+  if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
   audio.update(car, input, dt);
   updateCamera(dt);
+  world.tick?.(now / 1000);
   world.updateLOD(camera.position, car.vel);
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
@@ -386,3 +409,5 @@ window.game.vehicles = vehicles;
 
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim });
 window.game.sessionSpawn = sessionSpawn;
+
+Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX });

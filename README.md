@@ -1,20 +1,40 @@
 # Yamhill Racer
 
 A low-poly open-world racing game set on real roads and forest trails in Yamhill County, Oregon —
-from Willamina through the hills to Sheridan (about 10 × 8 km). Runs in the browser, no install.
+from Willamina through Sheridan and the hills to McMinnville. Runs in the browser, no install.
 
 **Play:** https://distractodog.github.io/yamhill-racer/
 
+## Make it yours
+
+- Choose a spawn point on the map each time you open the game. **H** returns to that point for the rest of the session.
+- Open **Garage** during free roam for vehicle paint, trim, wheels, liveries, race numbers and rider colors. Rotate the preview by dragging and zoom with the wheel. Save up to three looks per vehicle; **Wash & repair** removes dust, wetness and scuffs.
+- Earn **Delphian green** by finishing the Long Walk climb, **Trail explorer** by finishing all three dirt-bike races, and **Sky captain** by finishing both jet races. Race progress and saved looks stay in your browser; previous best times count toward unlocks.
+- Open **Atmosphere** for midday, golden hour, misty morning, dusk, night or rain. Weather, wear and cosmetics change appearance without changing vehicle performance or grip.
+- The flat map zooms from the whole valley down to streets and buildings, revealing more detail as you zoom. Click to place a navigation pin.
+
 ## Controls
+
 | Key | |
 |---|---|
 | W / S or ↑ / ↓ | throttle / brake (and reverse) |
 | A / D or ← / → | steer |
 | Space | handbrake — tap it while steering to drift |
 | R | back to a recent spot on the road |
-| H | back to the Delphian campus |
+| H | return to your chosen spawn |
 | C | change camera |
-| T | car tuning panel |
+| T | vehicle tuning panel |
+| V | choose car, dirt bike or jet |
+| J | race list |
+| F | flip upright / level the jet |
+| G | open / fold the car or bike glider |
+| M | full map |
+| + / −, scroll or pinch | zoom the map around the pointer |
+| 0 | fit the whole map |
+| P | remove the map pin |
+| Esc | close a menu or map; otherwise leave the race |
+
+Drag to pan the map. **Garage**, **Atmosphere**, and **How to play?** are in the top menu; Help includes the bike and jet controls.
 
 A gamepad works too (right trigger, left trigger, left stick, A for handbrake).
 

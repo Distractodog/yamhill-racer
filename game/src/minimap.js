@@ -1,3 +1,4 @@
+import { createMapDetail, mapDetailLevel } from './mapdetail.js';
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
 // The full map zooms (scroll / pinch / + −, around the pointer) and pans (drag). A click drops a pin
 // (click it again, 📍 or P to clear); pin.js guides you to it.
@@ -22,6 +23,9 @@ export async function createMinimap(base = './assets/') {
   img.src = base + 'minimap.jpg';
   await img.decode();
   const [ex0, ez0] = meta.extent, mpp = meta.mpp;
+  const detail = createMapDetail(base);
+  const mapBase = document.createElement('canvas'), mapCtx = mapBase.getContext('2d');
+  let mapBaseKey = '';
   const toPx = (x, z) => [(x - ex0) / mpp, (z - ez0) / mpp];   // world metres → map image pixels
   const rim = meta.rim || null;
   // canvas position of the scenery circle, given the image's top-left and px-per-image-pixel
@@ -43,12 +47,14 @@ export async function createMinimap(base = './assets/') {
   const full = document.createElement('div');
   full.id = 'fullmap';
   full.innerHTML = '<canvas></canvas><div class="fm-hint">↱ for road directions · click to drop a pin · scroll or + − to zoom · drag to move · M or Esc to close</div>' +
-    '<div class="fm-zoom"><button data-z="in" title="Zoom in (+)">+</button><button data-z="out" title="Zoom out (−)">−</button>' +
+    '<div class="fm-status" aria-live="polite"></div><div class="fm-scale"></div><div class="fm-zoom"><button data-z="in" title="Zoom in (+)">+</button><button data-z="out" title="Zoom out (−)">−</button>' +
     '<button data-z="fit" title="Whole map (0)">⤢</button><button data-z="car" title="Centre on car">◎</button>' +
     '<button data-z="directions" title="Road directions" aria-label="Road directions">↱</button><button data-z="unpin" title="Remove the pin (P)">📍</button><button data-z="close" title="Close (M)">✕</button></div>';
   const css = document.createElement('style');
   css.textContent = `#fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
     #fullmap canvas.drag { cursor: grabbing; }
+    #fullmap .fm-status { position:absolute; left:calc(3vw + 12px); bottom:calc(3vh + 12px); color:#f2f5e9; background:#14291ed9; border-radius:8px; padding:6px 10px; font:12px system-ui,sans-serif; pointer-events:none; }
+    #fullmap .fm-scale { position:absolute; right:calc(3vw + 16px); bottom:calc(3vh + 16px); border:solid #fff; border-width:0 2px 2px; height:18px; color:white; font:11px system-ui,sans-serif; text-align:center; text-shadow:0 1px 3px #000; pointer-events:none; }
     #fullmap.spawn-picker .fm-hint { top: 20px; padding: 12px 20px; border-radius: 12px; background: #10251fee; font-size: 18px; font-weight: 700; text-align: center; width: min(700px, 75vw); }
     #fullmap .fm-zoom { position: absolute; right: calc(3vw + 12px); top: calc(3vh + 12px); display: flex; flex-direction: column; gap: 6px; }
     #fullmap .fm-zoom button { width: 36px; height: 36px; border: 0; border-radius: 9px; background: #000b; color: #fff;
@@ -63,16 +69,19 @@ export async function createMinimap(base = './assets/') {
   document.body.append(corner, full);
   const cc = corner.querySelector('canvas'), fc = full.querySelector('canvas');
   const cctx = cc.getContext('2d'), fctx = fc.getContext('2d');
+  const zoomIn = full.querySelector('[data-z="in"]'), zoomOut = full.querySelector('[data-z="out"]');
+  const unpinButton = full.querySelector('[data-z="unpin"]'), statusEl = full.querySelector('.fm-status'), scaleEl = full.querySelector('.fm-scale');
 
   let directionMode = false, directionBegin = null, directionChoose = null, directions = null;
   let open = false, viewM = 600, spawnPicker = null;
   const normalHint = full.querySelector(".fm-hint").textContent;
   // full map view: zoom 1 = whole map fits; (vx, vy) = image pixel at the centre of the canvas
-  const MAX_ZOOM = 12;           // the picture is 5 m per pixel: much closer is just blur
+  const MAX_ZOOM = 1024;         // vector detail remains crisp down to individual metres
   let zoom = 1, vx = img.width / 2, vy = img.height / 2, carPx = [vx, vy];
   const toggle = v => {
     if (spawnPicker && v !== true) return;
     open = v ?? !open; full.classList.toggle('open', open); corner.classList.toggle('hidden', open);
+    if (!open) detail.update([0,0,0,0],0);
     if (open) { zoom = 1; vx = img.width / 2; vy = img.height / 2; }       // always opens on the whole map
   };
   corner.addEventListener('click', () => toggle(true));
@@ -83,6 +92,11 @@ export async function createMinimap(base = './assets/') {
     const s = fitScale() * zoom, hw = fc.width / s / 2, hh = fc.height / s / 2;
     vx = hw * 2 >= img.width ? img.width / 2 : Math.min(img.width - hw, Math.max(hw, vx));
     vy = hh * 2 >= img.height ? img.height / 2 : Math.min(img.height - hh, Math.max(hh, vy));
+    if (rim && zoom > 1) {
+      const [rx, ry] = toPx(rim.cx, rim.cz), dx = vx - rx, dy = vy - ry;
+      const limit = Math.max(0, rim.r / mpp - Math.min(hw, hh) * .35), length = Math.hypot(dx, dy);
+      if (length > limit + 1e-7) { vx = rx + dx / length * limit; vy = ry + dy / length * limit; }
+    }
   }
   // zoom by factor f keeping the image point under canvas pixel (cx, cy) where it is
   function zoomAt(f, cx = fc.width / 2, cy = fc.height / 2) {
@@ -105,21 +119,37 @@ export async function createMinimap(base = './assets/') {
     try { localStorage.setItem('yr-pin-1', JSON.stringify(pin)); } catch {}
     for (const f of pinListeners) f(pin);
   }
-  const onMap = (x, z) => { const [a, b] = toPx(x, z); return a >= 0 && b >= 0 && a < img.width && b < img.height; };
-  let drag = null;
+  const onMap = (x, z) => { const [a, b] = toPx(x, z); return a >= 0 && b >= 0 && a < img.width && b < img.height && (!rim || Math.hypot(x-rim.cx,z-rim.cz)<=rim.r); };
+  let drag = null, pinch = null;
+  const pointers = new Map();
+  const pinchState = () => { const [a,b] = [...pointers.values()]; return { x:(a[0]+b[0])/2, y:(a[1]+b[1])/2, distance:Math.hypot(a[0]-b[0],a[1]-b[1]) }; };
   fc.addEventListener('pointerdown', e => {
-    drag = { id: e.pointerId, p: canvasPt(e), p0: canvasPt(e), moved: 0 }; fc.setPointerCapture(e.pointerId); fc.classList.add('drag');
+    if (e.button !== 0) return;
+    const p=canvasPt(e); pointers.set(e.pointerId,p);fc.setPointerCapture(e.pointerId);fc.classList.add('drag');
+    if (pointers.size === 1) drag = { id:e.pointerId,p,p0:p,moved:0 };
+    else if (pointers.size === 2) { pinch=pinchState(); if(drag)drag.moved=Infinity; }
   });
   fc.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    const p=canvasPt(e);pointers.set(e.pointerId,p);
+    if (pointers.size === 2 && pinch) {
+      const next=pinchState(),s=fitScale()*zoom;
+      vx-=(next.x-pinch.x)/s;vy-=(next.y-pinch.y)/s;
+      if(pinch.distance>1)zoomAt(next.distance/pinch.distance,next.x,next.y);pinch=next;clampView();return;
+    }
     if (!drag || e.pointerId !== drag.id) return;
-    const p = canvasPt(e), s = fitScale() * zoom;
+    const s = fitScale() * zoom;
     drag.moved = Math.max(drag.moved, Math.hypot(p[0] - drag.p0[0], p[1] - drag.p0[1]));
     vx -= (p[0] - drag.p[0]) / s; vy -= (p[1] - drag.p[1]) / s; drag.p = p; clampView();
   });
-  const endDrag = () => { drag = null; fc.classList.remove('drag'); };
+  function endPointer(e) {
+    pointers.delete(e.pointerId);pinch=null;
+    if(pointers.size===1){const[id,p]=[...pointers][0];drag={id,p,p0:p,moved:Infinity};}
+    else {drag=null;fc.classList.remove('drag');}
+  }
   fc.addEventListener('pointerup', e => {
-    const click = drag && drag.moved < 6 * Math.min(devicePixelRatio, 2);
-    endDrag();
+    const click = pointers.size === 1 && drag && drag.id === e.pointerId && drag.moved < 6 * Math.min(devicePixelRatio, 2);
+    endPointer(e);
     if (!click) return;
     const [cx, cy] = canvasPt(e), s = fitScale() * zoom, d = Math.min(devicePixelRatio, 2);
     const ix = vx + (cx - fc.width / 2) / s, iy = vy + (cy - fc.height / 2) / s;
@@ -135,14 +165,15 @@ export async function createMinimap(base = './assets/') {
     const x = ex0 + ix * mpp, z = ez0 + iy * mpp;
     if (onMap(x, z)) setPin({ x, z });
   });
-  fc.addEventListener('pointercancel', endDrag);
+  fc.addEventListener('pointercancel', endPointer);
+  fc.addEventListener('lostpointercapture', e => { if (pointers.has(e.pointerId)) endPointer(e); });
   const ZOOM_STEP = 1.6;
   function zoomCmd(z) {
     if (z === 'directions' && !spawnPicker) directionBegin?.();
     else if (z === 'in') zoomAt(ZOOM_STEP);
     else if (z === 'out') zoomAt(1 / ZOOM_STEP);
     else if (z === 'fit') { zoom = 1; clampView(); }
-    else if (z === 'car') { zoom = Math.max(zoom, 6); [vx, vy] = carPx; clampView(); }
+    else if (z === 'car') { zoom = Math.max(zoom, 40); [vx, vy] = carPx; clampView(); }
     else if (z === 'close') toggle(false);
     else if (z === 'unpin' && !spawnPicker) setPin(null);
   }
@@ -250,18 +281,35 @@ export async function createMinimap(base = './assets/') {
       const d = fit(fc), W = fc.width, H = fc.height;
       carPx = [px, py]; clampView();
       const s = fitScale() * zoom, ox = W / 2 - vx * s, oy = H / 2 - vy * s;
-      full.querySelector('[data-z="in"]').disabled = zoom >= MAX_ZOOM; full.querySelector('[data-z="out"]').disabled = zoom <= 1;
-      fctx.fillStyle = '#141816'; fctx.fillRect(0, 0, W, H);
+      if (zoomIn.disabled !== (zoom >= MAX_ZOOM)) zoomIn.disabled = zoom >= MAX_ZOOM;
+      if (zoomOut.disabled !== (zoom <= 1)) zoomOut.disabled = zoom <= 1;
+      const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
+      const ppm=s/mpp,bounds=[ex0+(vx-W/2/s)*mpp,ez0+(vy-H/2/s)*mpp,ex0+(vx+W/2/s)*mpp,ez0+(vy+H/2/s)*mpp];
+      detail.update(bounds,ppm/d);
+      const baseKey=[W,H,vx,vy,zoom,d,detail.revision].join(':');
+      if(baseKey!==mapBaseKey){
+        mapBase.width=W;mapBase.height=H;mapBaseKey=baseKey;
+        mapCtx.fillStyle='#141816';mapCtx.fillRect(0,0,W,H);mapCtx.save();
+        if(rim){const[rx,ry,rr]=rimAt(ox,oy,s);mapCtx.beginPath();mapCtx.arc(rx,ry,rr,0,Math.PI*2);mapCtx.clip();}
+        mapCtx.imageSmoothingQuality='high';mapCtx.drawImage(img,ox,oy,img.width*s,img.height*s);
+        detail.draw(mapCtx,{bounds,ppm,d,map:fmap});
+        if(mapDetailLevel(ppm/d)<3)for(const l of LABELS){const[lx,ly]=fmap(l.x,l.z);if(lx>-120&&ly>-30&&lx<W+120&&ly<H+30)label(mapCtx,l.name,lx,ly,(zoom>25?12:15)*d);}
+        mapCtx.restore();
+      }
+      fctx.drawImage(mapBase,0,0);
+      const stats=detail.stats,level=mapDetailLevel(ppm/d),status=statusEl;
+      const statusText=level===0?'County overview':stats.pending?'Loading street detail…':stats.failed||stats.manifestError?'Some detail unavailable · overview remains visible':level===1?'Neighborhood map':level===2?'Streets & buildings':'Street-level detail';
+      if(status.textContent!==statusText)status.textContent=statusText;
+      const target=100*d/ppm,power=10**Math.floor(Math.log10(target)),step=[1,2,5,10].find(n=>n*power>=target)||10,metres=step*power;
+      const scaleWidth=(metres*ppm/d)+'px', scaleText=metres>=1000?(metres/1000)+' km':metres+' m';
+      if(scaleEl.style.width!==scaleWidth)scaleEl.style.width=scaleWidth;
+      if(scaleEl.textContent!==scaleText)scaleEl.textContent=scaleText;
       fctx.save();
       if (rim) { const [rx, ry, rr] = rimAt(ox, oy, s); fctx.beginPath(); fctx.arc(rx, ry, rr, 0, Math.PI * 2); fctx.clip(); }
-      fctx.imageSmoothingQuality = 'high';
-      fctx.drawImage(img, ox, oy, img.width * s, img.height * s);
-      for (const l of LABELS) { const [lx, ly] = toPx(l.x, l.z); label(fctx, l.name, ox + lx * s, oy + ly * s, 15 * d); }
-      const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
       drawOverlay(fctx, fmap, d);
       drawDirections(fctx, fmap, d);
       drawPinLine(fctx, fmap, ox + px * s, oy + py * s, d);
-      full.querySelector('[data-z="unpin"]').disabled = !pin;
+      if(unpinButton.disabled!==!pin)unpinButton.disabled=!pin;
       // pulsing ring so you can spot yourself on the big map
       const t = performance.now() / 1000, r = (10 + 8 * ((t * 1.2) % 1)) * d;
       fctx.beginPath(); fctx.arc(ox + px * s, oy + py * s, r, 0, Math.PI * 2);
@@ -283,7 +331,7 @@ export async function createMinimap(base = './assets/') {
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') zoomCmd('out');
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
-  return { update, toggle,
+  return { update, toggle, get detailStats() { return detail.stats; }, get zoom() { return zoom; },
     setDirectionHandlers(begin, choose) { directionBegin=begin; directionChoose=choose; },
     setDirections(points) { directions=points; },
     setDirectionMode(value) {

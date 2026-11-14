@@ -64,6 +64,7 @@
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font-size: 20px;
              background: #2d4a2f; z-index: 100; }
 </style>
+<link rel="stylesheet" href="presentation.css">
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -76,26 +77,32 @@
 <div id="loading">Loading map…</div>
 <div id="hud"><div id="speed">0<small>km/h</small></div><div id="info"></div></div>
 <nav id="menu-bar" aria-label="Game options">
+  <span class="menu-brand" aria-label="Yamhill Racer">YR<span> MOTOR CLUB</span></span>
+  <button id="garage-button" class="menu-button" disabled>Garage</button>
+  <button id="atmosphere-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Atmosphere</button>
   <button id="settings-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Settings</button>
   <button id="help-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>How to play?</button>
 </nav>
 <section id="welcome" role="dialog" aria-labelledby="welcome-title" hidden>
   <div class="card">
-    <h2 id="welcome-title">Welcome to Yamhill Racer</h2>
+    <div class="welcome-landscape" aria-hidden="true"><span>45° N · OREGON</span><i></i></div>
+    <div class="welcome-eyebrow">THE VALLEY IS YOURS</div>
+    <h2 id="welcome-title">Yamhill <em>Racer</em></h2>
     <p>Drive the real Delphian School campus and the roads of Yamhill County, from Willamina to McMinnville, in a car,
       on a dirt bike or in a jet.</p>
     <dl>
       <dt>W A S D / arrows</dt><dd>Drive and steer · Space handbrake</dd>
       <dt>V</dt><dd>Switch vehicle: car, dirt bike or jet</dd>
       <dt>J</dt><dd>Races: pick one and press Enter, wait for 3-2-1-GO, then go through every checkpoint</dd>
-      <dt>M</dt><dd>Full map: click it to drop a pin and follow the arrow there</dd>
+      <dt>M</dt><dd>Map: zoom from the valley down to streets; click to place a pin</dd>
       <dt>G</dt><dd>Glider (car or dirt bike): open it in the air, or above 90 km/h (bike 70)</dd>
       <dt>R</dt><dd>Back to a safe spot if you're stuck</dd>
     </dl>
+    <p>Make your ride your own in <strong>Garage</strong>, earn liveries in races, and choose sunshine, dusk or rain in <strong>Atmosphere</strong>.</p>
     <p>Jet and other controls: <button id="welcome-help" type="button">How to play</button></p>
     <div class="row">
       <label><input id="welcome-hide" type="checkbox"> Don't show this again</label>
-      <button id="welcome-start" type="button">Start driving</button>
+      <button id="welcome-start" type="button">Let’s drive ↗</button>
     </div>
   </div>
 </section>
@@ -105,6 +112,11 @@
     <p>Make each vehicle feel right for you. Changes are saved automatically.</p>
     <div id="tuning-controls"></div>
     <button id="settings-help" class="menu-button">How to play?</button>
+  </div>
+  <div id="atmosphere-content" hidden>
+    <p>Choose the light or a rainy valley drive. Your preference is remembered.</p>
+    <div id="atmosphere-presets" class="atmosphere-presets" role="group" aria-label="Time of day"></div>
+    <p class="panel-note">Lighting and rain change the view and vehicle finish; grip and handling stay the same.</p>
   </div>
   <div id="help-content" hidden>
     <p>Explore Yamhill, choose a vehicle, or pick a race.</p>
@@ -126,10 +138,19 @@
     <dt><kbd>C</kbd></dt><dd>Cycle cameras</dd><dt><kbd>T</kbd></dt><dd>Open / close tuning in Settings</dd>
     <dt><kbd>Backspace</kbd></dt><dd>Restart the current race</dd><dt><kbd>Enter</kbd></dt><dd>Retry after finishing a race</dd>
     <dt><kbd>Esc</kbd></dt><dd>Close a menu or map; otherwise leave the race</dd></dl>
+    <h3>Your garage</h3>
+    <p>Open <strong>Garage</strong> during free roam to change paint, wheels, liveries, race numbers and rider colors. Drag the preview to turn it; scroll to zoom. Changes are saved in this browser.</p>
+    <p>Save up to three looks for each vehicle and load them whenever you like. <strong>Wash &amp; repair</strong> clears dust, wetness and scuffs. Cosmetic changes do not affect performance.</p>
+    <h3>Earn your colors</h3>
+    <dl><dt>Delphian green</dt><dd>Finish the Long Walk climb.</dd><dt>Trail explorer</dt><dd>Finish all three dirt-bike races.</dd><dt>Sky captain</dt><dd>Finish both jet races.</dd></dl>
+    <p>Check your progress in Races. Unlocks are saved in this browser; existing best times count too.</p>
+    <h3>Light &amp; weather</h3>
+    <p>Open <strong>Atmosphere</strong> for clear midday, golden hour, misty morning, rose dusk, moonlit night or valley rain. Rain and wet vehicle finishes are visual only; grip and handling stay the same.</p>
     <h3>Map &amp; navigation</h3>
-    <dl><dt><kbd>M</kbd></dt><dd>Open / close the full map</dd><dt><kbd>+ / −</kbd></dt><dd>Zoom the full map; mouse wheel works too</dd>
+    <p>Choose a starting point each time you open the game; <kbd>H</kbd> returns there. Zoom the flat map from the whole valley down to individual streets and buildings. More detail appears as you move closer.</p>
+    <dl><dt><kbd>M</kbd></dt><dd>Open / close the full map</dd><dt><kbd>+ / −</kbd></dt><dd>Zoom in / out; scroll or pinch around the pointer also works</dd>
     <dt><kbd>0</kbd></dt><dd>Fit the whole map</dd><dt>Drag</dt><dd>Pan the map</dd><dt>Click</dt><dd>Place / remove a map pin</dd>
-          <dt>↱ Directions</dt><dd>While on a road, choose Directions on the map, then click a road destination. Follow the green route and turn instructions.</dd><dt><kbd>P</kbd></dt><dd>Remove the pin</dd></dl>
+    <dt>↱ Directions</dt><dd>While on a road, choose Directions on the map, then click a road destination. Follow the green route and turn instructions.</dd><dt><kbd>P</kbd></dt><dd>Remove the pin</dd></dl>
     <div id="credits">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · extra building outlines Microsoft / Overture Maps Foundation (ODbL) · elevation USGS 3DEP · tree heights Meta/WRI (CC BY 4.0)</div>
   </div>
 </section>

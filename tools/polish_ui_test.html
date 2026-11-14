@@ -1,0 +1,57 @@
+<!doctype html><meta charset="utf-8"><title>Yamhill Racer functional UI checks</title>
+<style>body{font:14px system-ui;margin:20px;background:#10251f;color:#eee}button{background:#315744;color:inherit;border:1px solid #93b49c;border-radius:6px;padding:10px 18px;cursor:pointer}iframe{width:1280px;height:760px;border:1px solid #587564;display:block;margin-top:16px}pre{white-space:pre-wrap}.pass{color:#c6e79b}.fail{color:#ffa590}</style>
+<h1>Yamhill Racer functional UI checks</h1><p>Serve the repository root and keep this tab visible. This runs the actual game in a same-origin iframe. Browser storage is restored afterward.</p>
+<p>Map pointer events are synthetic; pointer capture is stubbed inside the test frame only. Native pointer capture, touch hardware and visual appearance still require manual checks.</p>
+<button id="run">Run functional checks</button><pre id="results" role="status">Ready.</pre><iframe id="game" title="Functional test game" allow="autoplay"></iframe>
+<script type="module">
+const frame=document.querySelector('#game'),results=document.querySelector('#results'),button=document.querySelector('#run');
+const wait=ms=>new Promise(r=>setTimeout(r,ms)),lines=[],errors=[];
+function log(text){lines.push(text);results.textContent=lines.join('\n');}
+function assert(condition,message){if(!condition)throw Error(message);log('PASS '+message);}
+async function until(predicate,message,timeout=120000){const end=performance.now()+timeout;while(!predicate()){if(performance.now()>end)throw Error(message);await wait(50);}}
+function key(w,code,key=code){w.dispatchEvent(new w.KeyboardEvent('keydown',{code,key,bubbles:true,cancelable:true}));w.dispatchEvent(new w.KeyboardEvent('keyup',{code,key,bubbles:true,cancelable:true}));}
+async function load(){frame.src=new URL('../game/?ui-test='+Date.now(),location.href).href;await new Promise((resolve,reject)=>{frame.onload=resolve;setTimeout(()=>reject(Error('frame load timeout')),120000);});const w=frame.contentWindow;w.addEventListener('error',e=>errors.push(e.message));w.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));await until(()=>w.game?.sessionSpawn,'game initialization timed out');await wait(100);return w;}
+function point(w,canvas,type,x,y,id=1){canvas.dispatchEvent(new w.PointerEvent(type,{clientX:x,clientY:y,pointerId:id,pointerType:id===1?'mouse':'touch',button:0,buttons:type==='pointerup'?0:1,bubbles:true,cancelable:true,isPrimary:id===1}));}
+function captureStub(canvas){canvas.setPointerCapture=()=>{};canvas.releasePointerCapture=()=>{};}
+function click(w,canvas,x,y){point(w,canvas,'pointerdown',x,y);point(w,canvas,'pointerup',x,y);}
+async function overviewPoint(w,x,z){const meta=await w.fetch('./assets/minimap.json').then(r=>r.json()),image=new w.Image();image.src='./assets/minimap.jpg';await image.decode();const canvas=w.document.querySelector('#fullmap canvas'),r=canvas.getBoundingClientRect();
+ // The game fits the image in its rounded backing store, then maps pointer CSS pixels
+ // independently on each axis. Fitting CSS bounds directly can be several metres off
+ // at county overview when devicePixelRatio gives fractional CSS canvas dimensions.
+ const scale=Math.min(canvas.width/image.width,canvas.height/image.height);
+ const px=canvas.width/2+((x-meta.extent[0])/meta.mpp-image.width/2)*scale;
+ const py=canvas.height/2+((z-meta.extent[1])/meta.mpp-image.height/2)*scale;
+ return [r.left+px*r.width/canvas.width,r.top+py*r.height/canvas.height];}
+button.onclick=async()=>{
+ button.disabled=true;results.className='';lines.length=0;errors.length=0;const backup=new Map();for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith('yr-'))backup.set(k,localStorage.getItem(k));}
+ try{
+  localStorage.setItem('yr-welcome-hidden-1','1');let w=await load(),g=w.game,d=w.document;let canvas=d.querySelector('#fullmap canvas');captureStub(canvas);
+  assert(g.sessionSpawn.blocked&&g.minimap.open,'spawn picker appears even with welcome hidden');
+  key(w,'Escape','Escape');key(w,'KeyW','w');assert(g.sessionSpawn.blocked&&g.minimap.open&&g.keys.size===0,'startup blocks Escape and driving keys');
+  const target=g.world.spawn;click(w,canvas,...await overviewPoint(w,...target));await until(()=>!g.sessionSpawn.blocked,'selected spawn never finished loading');
+  const spawnError=Math.hypot(g.sessionSpawn.point[0]-target[0],g.sessionSpawn.point[1]-target[1]);
+  log('Spawn transform: expected '+JSON.stringify(target)+', actual '+JSON.stringify(g.sessionSpawn.point)+', error '+spawnError.toFixed(6)+' m; backing '+canvas.width+'×'+canvas.height+', CSS '+canvas.getBoundingClientRect().width+'×'+canvas.getBoundingClientRect().height+', DPR '+w.devicePixelRatio);
+  assert(spawnError<.2,'overview click selects exact world spawn coordinates');
+  g.minimap.setPin(null);key(w,'KeyM','m');await wait(100);
+  const desired=[target[0]+65,target[1]+75];click(w,canvas,...await overviewPoint(w,...desired));log('Overview pin: expected '+JSON.stringify(desired)+', actual '+JSON.stringify(g.minimap.pin));assert(g.minimap.pin&&Math.hypot(g.minimap.pin.x-desired[0],g.minimap.pin.z-desired[1])<.2,'overview pin uses the same world transform');
+  g.minimap.setPin(null);d.querySelector('[data-z="car"]').click();await wait(100);const r=canvas.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,expected=[g.car.renderPos.x,g.car.renderPos.z];click(w,canvas,cx,cy);
+  log('Deep center: expected '+JSON.stringify(expected)+', pin '+JSON.stringify(g.minimap.pin)+', zoom '+g.minimap.zoom);
+  assert(g.minimap.zoom>=40&&g.minimap.pin&&Math.hypot(g.minimap.pin.x-expected[0],g.minimap.pin.z-expected[1])<5,'deep zoom center pin stays aligned with vehicle');
+  g.minimap.setPin(null);point(w,canvas,'pointerdown',cx,cy);point(w,canvas,'pointermove',cx+90,cy+30);point(w,canvas,'pointerup',cx+90,cy+30);assert(g.minimap.pin===null,'map drag does not drop a pin');
+  const zoom=g.minimap.zoom;point(w,canvas,'pointerdown',cx-40,cy,2);point(w,canvas,'pointerdown',cx+40,cy,3);point(w,canvas,'pointermove',cx+90,cy,3);point(w,canvas,'pointerup',cx-40,cy,2);point(w,canvas,'pointerup',cx+90,cy,3);log('Pinch: zoom before '+zoom+', after '+g.minimap.zoom+', pin '+JSON.stringify(g.minimap.pin));assert(g.minimap.zoom>zoom&&g.minimap.pin===null,'two-pointer pinch zooms without accidental pin');
+  point(w,canvas,'pointerdown',cx,cy);point(w,canvas,'pointercancel',cx,cy);point(w,canvas,'pointerup',cx,cy);assert(g.minimap.pin===null,'cancelled pointer cannot place a pin');
+  key(w,'KeyM','m');assert(!g.minimap.open&&g.keys.size===0,'map close releases all keys');
+  g.car.reset(target[0]+40,target[1]+40,0);key(w,'KeyH','h');await until(()=>!g.sessionSpawn.blocked,'H return timed out');log('H return: expected '+JSON.stringify(target)+', actual '+JSON.stringify([g.car.pos.x,g.car.pos.z]));assert(Math.hypot(g.car.pos.x-target[0],g.car.pos.z-target[1])<3,'H returns to the session spawn');
+  d.querySelector('#garage-button').click();assert(g.garage.open,'Garage button opens live customization');const kind=g.vehicles.current.kind;
+  for(const code of ['KeyV','KeyJ','KeyM','KeyH','KeyW'])key(w,code,code.slice(-1).toLowerCase());assert(g.garage.open&&g.vehicles.current.kind===kind&&!g.challenges.menuOpen&&!g.minimap.open&&g.keys.size===0,'garage isolates gameplay shortcuts and held keys');
+  const field=d.querySelector('#cosmetic-garage input[name="body"]');field.value='#3478ab';field.dispatchEvent(new w.Event('input',{bubbles:true}));assert(g.cosmetics.get(kind).body==='#3478ab','garage paint control updates live configuration');
+  d.querySelector('#cosmetic-garage [data-save="0"]').click();field.value='#aa3322';field.dispatchEvent(new w.Event('input',{bubbles:true}));d.querySelector('#cosmetic-garage [data-load="0"]').click();assert(g.cosmetics.get(kind).body==='#3478ab','saved look restores paint');
+  const done=d.querySelector('.garage-done');done.focus();key(w,'Tab','Tab');assert(d.activeElement===d.querySelector('.garage-close'),'garage Tab wraps focus');
+  key(w,'Escape','Escape');assert(!g.garage.open&&g.keys.size===0,'Escape closes garage without stuck keys');
+  d.querySelector('#atmosphere-button').click();d.querySelector('[data-preset="golden"]').click();assert(g.atmosphere.preset==='golden','atmosphere UI selects golden hour');key(w,'Escape','Escape');
+  w=await load();g=w.game;assert(g.sessionSpawn.blocked&&g.sessionSpawn.point===null,'reload requires a new spawn choice');assert(g.cosmetics.get(kind).body==='#3478ab'&&g.atmosphere.preset==='golden','paint and lighting preferences survive reload');
+  assert(errors.length===0,'no page errors or unhandled rejections');results.className='pass';log('ALL FUNCTIONAL UI CHECKS PASSED');
+ }catch(error){results.className='fail';log('FAIL '+error.message);if(errors.length)log(errors.join('\n'));}
+ finally{const keys=[];for(let i=0;i<localStorage.length;i++)if(localStorage.key(i).startsWith('yr-'))keys.push(localStorage.key(i));for(const k of keys)localStorage.removeItem(k);for(const[k,v]of backup)localStorage.setItem(k,v);button.disabled=false;log('Original browser storage restored.');}
+};
+</script>

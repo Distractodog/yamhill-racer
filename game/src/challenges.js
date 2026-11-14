@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
 import { makeTrack } from './track.js';
 import { createGhost } from './ghost.js';
+import { createRewards } from './rewards.js';
 import { checkpointStart, drivingWrongWay } from './raceguidance.js';
 
 const BEST_KEY = 'yr-best-1';
@@ -137,6 +138,7 @@ function makeRamp(world, r) {
 export async function createChallenges({ scene, world, car, minimap, vehicles = null, base = './assets/' }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
   const ghost = createGhost({ scene });
+  const rewards = createRewards();
   // the map's fixed ramps (always there, not part of any challenge)
   const fixedList = await fetch(base + 'ramps.json').then(r => r.ok ? r.json() : []).catch(() => []);
   const fixedRamps = fixedList.map(r => ({ r, grp: null }));
@@ -153,6 +155,8 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   let best = {};
   try { best = JSON.parse(localStorage.getItem(BEST_KEY) || '{}'); } catch {}
+  if (!best || typeof best !== 'object' || Array.isArray(best)) best = {};
+  rewards.importBests(list, best);
   const saveBest = () => { try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch {} };
 
   const group = new THREE.Group(); scene.add(group);
@@ -266,13 +270,19 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     ghost.finish(t, car, isBest);
     if (isBest) { best[ch.id] = { time: t, splits: splits.slice(), date: new Date().toLocaleDateString('en-CA') }; saveBest(); }
     result = { time: t, prev: prev?.time, isBest };
+    const unlocked = rewards.complete(ch, t);
     blip(880, 0.12); setTimeout(() => blip(1320, 0.3), 130);
     beam.visible = false; minimap.setOverlay?.(null); split.style.opacity = 0; splitT = 0;
-    done.innerHTML = `<h2>${ch.name}</h2>
+    done.innerHTML = `<div class="ch-finish-label">FINISH LINE</div><h2>${ch.name}</h2>
       <div class="ch-big">${fmtTime(t)}</div>
       ${isBest ? `<div class="ch-new">${prev ? `New best! ${fmtDelta(t - prev.time)}` : 'First time set!'}</div>`
                : `<div>Best ${fmtTime(prev.time)} · ${fmtDelta(t - prev.time)}</div>`}
+      ${unlocked.map(r => `<div class="ch-reward"><span>NEW LIVERY UNLOCKED</span><strong>${r.name}</strong><small>Available in your Garage</small></div>`).join('')}
+      <div class="ch-actions"><button data-action="retry">Race again</button><button data-action="races">Choose race</button><button data-action="roam">Free roam</button></div>
       <div class="ch-hint">Enter retry · J challenges · Esc free roam</div>`;
+    done.querySelector('[data-action="retry"]').addEventListener('click', () => start(sel));
+    done.querySelector('[data-action="races"]').addEventListener('click', openMenu);
+    done.querySelector('[data-action="roam"]').addEventListener('click', quit);
     done.style.display = 'block';
   }
 
@@ -323,7 +333,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // ---- menu
   function renderMenu() {
     let lastV = null;
-    menu.innerHTML = `<h2>Races</h2>` + list.map((c, i) => {
+    menu.innerHTML = `<div class="ch-finish-label">YAMHILL MOTOR CLUB</div><h2>Pick your next run</h2><p class="ch-intro">Set a time. Earn your colors.</p><div class="reward-collection">${rewards.list().map(r => `<span class="reward-chip${r.unlocked ? ' unlocked' : ''}" title="${r.description}">${r.unlocked ? '✓' : r.completed + '/' + r.total} ${r.name}</span>`).join('')}</div>` + list.map((c, i) => {
       const v = c.vehicle || 'car', head = v !== lastV ? `<div class="ch-group">${VICON[v]} ${VNAME[v]}</div>` : ''; lastV = v;
       return head + `<button class="ch-item${i === sel ? ' sel' : ''}" data-i="${i}"><b>${VICON[v]} ${c.name}</b>
         <span class="ch-meta">${(c.length / 1000).toFixed(1)} km · best ${fmtTime(best[c.id]?.time)}</span>
@@ -337,6 +347,9 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // capture phase: runs before the map's own Esc handler, so Esc with the full map open only closes the map
   addEventListener('keydown', e => {
     if (e.gameUI) return;
+    // Let the focused finish action receive its native Enter/Space click instead of
+    // interpreting every Enter as retry (or Space as a driving input).
+    if (state === 'finished' && /^(Enter|NumpadEnter|Space)$/.test(e.code) && e.target?.closest?.('#ch-done button')) { e.gameUI = true; return; }
     if (e.code === 'KeyR' && state === 'running' && ch.vehicle !== 'jet') {
       e.preventDefault(); e.stopImmediatePropagation();
       if (!e.repeat) returnToCheckpoint();
@@ -362,7 +375,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   return {
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
-    best: () => best, start, quit, openMenu, closeMenu,
+    rewards, best: () => best, start, quit, openMenu, closeMenu,
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
       if (returning || (state !== 'countdown' && state !== 'running')) return;

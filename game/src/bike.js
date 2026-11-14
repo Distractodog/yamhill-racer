@@ -353,6 +353,8 @@ export function buildBikeModel() {
   const body = new THREE.Group(); body.position.y = 0.54; lean.add(body);
   const M = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
   const orange = M(0xff7a1a), black = M(0x1d1f24), grey = M(0x8a9099), white = M(0xf2f2ee), blue = M(0x2a5bd7), skin = M(0xd9a27a);
+  const helmetMat = M(0xff7a1a), jacketMat = M(0xf2f2ee), gloveMat = M(0x1d1f24), wheelMat = M(0x8a9099);
+  for (const [role, material] of Object.entries({ body: orange, trim: white, helmet: helmetMat, jacket: jacketMat, gloves: gloveMat, wheels: wheelMat })) material.userData.cosmeticRole = role;
   const box = (w, h, d, mat, x, y, z, rx = 0, parent = body) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.rotation.x = rx;
     m.castShadow = true; parent.add(m); return m;
@@ -378,24 +380,24 @@ export function buildBikeModel() {
     const spin = new THREE.Group(); holder.add(spin);
     const tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, front ? 0.11 : 0.14, 12).rotateZ(Math.PI / 2), black);
     tyre.castShadow = true; spin.add(tyre);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.16, 8).rotateZ(Math.PI / 2), grey); spin.add(hub);
-    for (let k = 0; k < 4; k++) { const s = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.5, 0.02), grey); s.rotation.x = k * Math.PI / 4; spin.add(s); }
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.16, 8).rotateZ(Math.PI / 2), wheelMat); spin.add(hub);
+    for (let k = 0; k < 4; k++) { const s = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.5, 0.02), wheelMat); s.rotation.x = k * Math.PI / 4; spin.add(s); }
     wheels.push({ holder, spin, r: 0.34, front, restY: -0.2 });
   }
   // rider: legs, torso, arms, helmet
   const rider = new THREE.Group(); rider.position.set(0, 0.42, -0.2); body.add(rider);
   for (const s of [1, -1]) {
-    box(0.13, 0.42, 0.14, blue, s * 0.17, -0.05, 0.12, 0.9, rider);     // thigh
+    box(0.13, 0.42, 0.14, jacketMat, s * 0.17, -0.05, 0.12, 0.9, rider);     // thigh
     box(0.12, 0.42, 0.12, black, s * 0.2, -0.3, 0.3, -0.2, rider);       // shin + boot
-    box(0.1, 0.4, 0.1, white, s * 0.24, 0.42, 0.33, -1.0, rider);        // arm
-    box(0.09, 0.09, 0.09, black, s * 0.3, 0.3, 0.6, 0, rider);           // glove
+    box(0.1, 0.4, 0.1, jacketMat, s * 0.24, 0.42, 0.33, -1.0, rider);        // arm
+    box(0.09, 0.09, 0.09, gloveMat, s * 0.3, 0.3, 0.6, 0, rider);           // glove
   }
-  box(0.4, 0.55, 0.26, white, 0, 0.42, 0.05, 0.35, rider);              // jersey
+  box(0.4, 0.55, 0.26, jacketMat, 0, 0.42, 0.05, 0.35, rider);              // jersey
   box(0.3, 0.12, 0.2, orange, 0, 0.55, 0.12, 0.35, rider);              // stripe
-  const helmet = new THREE.Mesh(new THREE.IcosahedronGeometry(0.17, 1), orange); helmet.position.set(0, 0.82, 0.24);
+  const helmet = new THREE.Mesh(new THREE.IcosahedronGeometry(0.17, 1), helmetMat); helmet.position.set(0, 0.82, 0.24);
   helmet.castShadow = true; rider.add(helmet);
   box(0.22, 0.08, 0.14, black, 0, 0.8, 0.38, 0, rider);                 // goggles
-  box(0.12, 0.06, 0.16, orange, 0, 0.7, 0.42, 0.4, rider);              // chin guard
+  box(0.12, 0.06, 0.16, helmetMat, 0, 0.7, 0.42, 0.4, rider);              // chin guard
   root.userData = { lean, bars, wheels, rider, blob: [0.9, 2.0] };
   return root;
 }

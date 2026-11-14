@@ -3,6 +3,8 @@ export function createSettings() {
   const panel = document.getElementById('settings-panel');
   const settingsButton = document.getElementById('settings-button');
   const helpButton = document.getElementById('help-button');
+  const atmosphereButton = document.getElementById('atmosphere-button');
+  const atmosphereContent = document.getElementById('atmosphere-content');
   const title = document.getElementById('settings-title');
   const tuning = document.getElementById('tuning-content');
   const help = document.getElementById('help-content');
@@ -29,25 +31,27 @@ export function createSettings() {
   function close() {
     if (!current) return;
     current = null; panel.hidden = true;
-    settingsButton.setAttribute('aria-expanded', 'false'); helpButton.setAttribute('aria-expanded', 'false');
+    settingsButton.setAttribute('aria-expanded', 'false'); helpButton.setAttribute('aria-expanded', 'false'); atmosphereButton.setAttribute('aria-expanded', 'false');
     changed(); returnFocus?.focus({ preventScroll: true });
   }
-  function show(view, trigger = view === 'tuning' ? settingsButton : helpButton) {
+  function show(view, trigger = view === 'tuning' ? settingsButton : view === 'atmosphere' ? atmosphereButton : helpButton) {
     if (!ready) return;
     if (current === view) { close(); return; }
     beforeOpen(); returnFocus = trigger; current = view;
-    title.textContent = view === 'tuning' ? 'Settings' : 'How to play';
-    tuning.hidden = view !== 'tuning'; help.hidden = view !== 'help'; panel.hidden = false;
+    title.textContent = view === 'tuning' ? 'Vehicle tuning' : view === 'atmosphere' ? 'Chase the light' : 'How to play';
+    tuning.hidden = view !== 'tuning'; help.hidden = view !== 'help'; atmosphereContent.hidden = view !== 'atmosphere'; panel.hidden = false;
     settingsButton.setAttribute('aria-expanded', String(view === 'tuning'));
     helpButton.setAttribute('aria-expanded', String(view === 'help'));
+    atmosphereButton.setAttribute('aria-expanded', String(view === 'atmosphere'));
     changed(); closeButton.focus({ preventScroll: true });
   }
   settingsButton.addEventListener('click', () => show('tuning'));
   helpButton.addEventListener('click', () => show('help'));
+  atmosphereButton.addEventListener('click', () => show('atmosphere'));
   document.getElementById('settings-help').addEventListener('click', () => show('help'));
   closeButton.addEventListener('click', close);
   addEventListener('keydown', e => {
-    if (!ready) return;
+    if (e.gameUI || !ready) return;
     if (welcomeOpen) {
       // Enter / Esc / Space close the card (and do nothing else); game shortcuts close it and still work;
       // every other key is kept from the game so nothing drives while it's up
@@ -77,6 +81,21 @@ export function createSettings() {
   return {
     get open() { return current !== null || welcomeOpen; }, close, showWelcome, closeWelcome,
     get welcomeOpen() { return welcomeOpen; },
+    bindAtmosphere(atmosphere, presets = atmosphere.presets) {
+      const host = document.getElementById('atmosphere-presets');
+      host.replaceChildren();
+      const buttons = [];
+      const refresh = () => buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.preset === atmosphere.preset)));
+      for (const preset of presets) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'atmosphere-option'; button.dataset.preset = preset.id;
+        const swatch = document.createElement('span'); swatch.className = 'atmosphere-swatch'; swatch.setAttribute('aria-hidden', 'true');
+        const label = document.createElement('span'); label.textContent = preset.name || preset.label || preset.id;
+        button.append(swatch, label); button.addEventListener('click', () => { atmosphere.setPreset(preset.id); refresh(); });
+        buttons.push(button); host.append(button);
+      }
+      refresh(); atmosphereButton.disabled = false;
+    },
     ready(onChange, onOpen) { changed = onChange; beforeOpen = onOpen; ready = true; settingsButton.disabled = false; helpButton.disabled = false; showWelcome(); },
   };
 }

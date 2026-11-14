@@ -7,6 +7,7 @@ import { readTileData, fetchReader, groundFile } from './tilepack.js';
 import { roadLOD, roadBatches, buildJunctions } from './roads.js';
 import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
 import { installPerf } from './perf.js';
+import { createTileScenery } from './scenery.js';
 import { buildCampusGateGeometry } from './campusgate.js';
 import { placeCampus } from './campusmodel.js';
 import { placeLandmarks } from './landmarksmodel.js';
@@ -33,6 +34,20 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const stripMat = groundMaterial(null);
   const conifer = coniferGeometry(), broadleaf = broadleafGeometry(), coniferFar = farConifer(), broadFar = farBroadleaf();
   const treeMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const windTime = { value: 0 };
+  // Sway only the upper canopy. Shader animation avoids rebuilding instance matrices.
+  treeMat.onBeforeCompile = shader => {
+    shader.uniforms.windTime = windTime;
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nuniform float windTime;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          float windPhase = instanceMatrix[3].x * 0.013 + instanceMatrix[3].z * 0.017;
+          float canopy = smoothstep(0.22, 1.1, position.y);
+          transformed.x += sin(windTime * 1.15 + windPhase) * 0.012 * canopy;
+          transformed.z += cos(windTime * 0.85 + windPhase) * 0.008 * canopy;
+        #endif`);
+  };
+  let sceneryTime = 0, nightAmount = 0;
   const buildingMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const campusMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const waterUniforms = { time: { value: 0 } };
@@ -253,11 +268,14 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     yield* addProps(g, out.propLods, td, propGeos, propMat);
     yield* addCampusItems(g, out.campusItemLods, td, campusItemGeos, propMat);
+    out.scenery = createTileScenery(td); g.add(out.scenery.group);
+    out.textures.push(...out.scenery.textures); out.materials.push(...out.scenery.materials);
+    yield 'scenery';
     return out;
   }
 
   function dispose(v) {
-    v.group.traverse(o => { if (o.geometry && !SHARED.has(o.geometry)) o.geometry.dispose(); });
+    v.group.traverse(o => { if (o.isInstancedMesh) o.dispose(); if (o.geometry && !SHARED.has(o.geometry)) o.geometry.dispose(); });
     v.textures.forEach(t => t.dispose()); v.materials.forEach(m => m.dispose());
     group.remove(v.group);
   }
@@ -341,6 +359,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   function updateLOD(cam, vel) {
     update(cam, vel);
     for (const v of vis.values()) {
+      v.scenery?.update(cam, sceneryTime, nightAmount);
       for (const c of v.chunks) {
         const d = Math.hypot(c.cx - cam.x, c.cz - cam.z);
         const lv = d < 420 ? 0 : d < 850 ? 1 : d < 1500 ? 2 : 3;
@@ -366,7 +385,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     notePerf();
   }
 
-  return Object.assign(world, { group, updateLOD, updateShadows, townRange, tick(t) { waterUniforms.time.value = t; },
+  return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { stripMat.color.setScalar(1 - Math.max(0, Math.min(1, Number(value) || 0)) * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
+    tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
     loadedTiles: () => vis.size, pendingTiles: () => loading.size + jobs.length });
 }
 
