@@ -20,7 +20,33 @@ p.y = 4000; ring.update(p); assert.equal(mesh.position.y, 4080);
 p.x += 151; ring.update(p); assert.equal(mesh.visible, false);
 assert.equal(ringFade(300), 0); assert.equal(ringFade(150), 0); assert.equal(ringFade(0), 1);
 assert.ok(ringFade(100) < ringFade(50)); assert.equal(ringFade(-100), ringFade(100));
+// Local draw range covers every potentially visible sector, including seam wraps,
+// while snapped rotation leaves the original world-space tessellation unchanged.
+for (const radius of [100, 299, 301, 350, 600, 17200]) {
+  const test = createRimRing({ rim: { cx: 0, cz: 0, r: radius } }), geometry = test.mesh.geometry;
+  const n = geometry.parameters.radialSegments, step = 2 * Math.PI / n;
+  const first = geometry.drawRange.start / 6, count = geometry.drawRange.count / 6;
+  for (const angle of [-Math.PI - 1e-8, -Math.PI, -Math.PI + 1e-8, -.0000001, 0, .0000001, Math.PI - 1e-8, Math.PI, Math.PI + 1e-8, .719]) {
+    for (const offset of [-149, 0, 149]) {
+      const radial = Math.max(0, radius + offset), position = new THREE.Vector3(Math.sin(angle) * radial, 30, Math.cos(angle) * radial);
+      test.update(position); if (!test.mesh.visible) continue;
+      const shift = Math.round(test.mesh.rotation.y / step);
+      assert(Math.abs(test.mesh.rotation.y / step - shift) < 1e-10, 'rotation must preserve original sector grid');
+      const drawn = new Set(Array.from({ length: count }, (_, i) => ((first + i + shift) % n + n) % n));
+      for (let sector = 0; sector < n; sector++) {
+        const a = sector * step, b = (sector + 1) * step;
+        const ax = Math.sin(a) * radius, az = Math.cos(a) * radius;
+        const dx = Math.sin(b) * radius - ax, dz = Math.cos(b) * radius - az;
+        const u = Math.max(0, Math.min(1, ((position.x - ax) * dx + (position.z - az) * dz) / (dx * dx + dz * dz)));
+        const distance = Math.hypot(ax + dx * u - position.x, az + dz * u - position.z);
+        if (distance < 300 - 1e-7) assert(drawn.has(sector), `missing visible sector r=${radius} angle=${angle} sector=${sector}`);
+      }
+    }
+  }
+  if (radius === 17200) assert(geometry.drawRange.count / 3 <= 20, 'production arc should submit at most 20 triangles');
+  test.dispose();
+}
 let geometryDisposals = 0, materialDisposals = 0;
 mesh.geometry.addEventListener('dispose', () => geometryDisposals++); mesh.material.addEventListener('dispose', () => materialDisposals++);
 ring.dispose(); ring.dispose(); ring.update(p); assert.equal(scene.children.length, 0); assert.equal(geometryDisposals, 1); assert.equal(materialDisposals, 1);
-console.log('PASS: absent manifest disabled, invalid config rejected, one single-pass additive mesh/2048 triangles, distance fade, aircraft height, reusable uniforms, idempotent disposal.');
+console.log('PASS: absent manifest disabled, invalid config rejected, one single-pass additive mesh, local-arc coverage/grid alignment across seams, distance fade, aircraft height, reusable uniforms, idempotent disposal.');
