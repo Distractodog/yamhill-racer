@@ -119,10 +119,25 @@ def fetch_osm():
     open(path, 'wb').write(data)
 
 
+def fetch_landuse():
+    """Town ground for build_tiles.py: parks, lawns, pitches, cemeteries (green), parking + commercial / industrial
+    lots (grey). Separate file so the main OSM download doesn't need re-fetching. data/raw/osm_landuse.json"""
+    path = os.path.join(RAW, 'osm_landuse.json')
+    if os.path.exists(path): return
+    lon0, lat1 = world_to_lonlat(TX.start * TILE - TILE, TZ.start * TILE - TILE)
+    lon1, lat0 = world_to_lonlat((TX.stop - 1) * TILE + TILE, (TZ.stop - 1) * TILE + TILE)
+    bb = f'{lat0},{lon0},{lat1},{lon1}'
+    sel = ['landuse"~"^(grass|recreation_ground|cemetery|village_green|commercial|retail|industrial|garages)$',
+           'leisure"~"^(park|pitch|playground|garden|golf_course|sports_centre)$', 'amenity"="parking']
+    parts = ''.join(f'way["{s}"]({bb});relation["{s}"]({bb});' for s in sel)
+    data = get('https://overpass-api.de/api/interpreter?' + urllib.parse.urlencode({'data': f'[out:json][timeout:180];({parts});out tags geom;'}))
+    open(path, 'wb').write(data)
+
+
 if __name__ == '__main__':
     only = None
     if '--only' in sys.argv: only = tuple(map(int, sys.argv[sys.argv.index('--only') + 1].split(',')))
-    fetch_osm(); print('osm ok', flush=True)
+    fetch_osm(); fetch_landuse(); print('osm ok', flush=True)
     if '--osm-only' in sys.argv: sys.exit()
     for tx, tz in TILE_SET:
         if only and (tx, tz) != only: continue

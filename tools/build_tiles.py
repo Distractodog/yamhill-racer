@@ -153,6 +153,20 @@ for e in osm:
     elif t.get('natural') == 'water' and e['type'] == 'way':
         if in_map(pts[:, 0], pts[:, 1], 100).any(): water_polys.append(pts)
 log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys))
+# town ground (fetch_tiles.py fetch_landuse): green = parks / lawns / pitches / cemeteries, grey = parking + lots
+GREEN_LU = {'grass', 'recreation_ground', 'cemetery', 'village_green', 'park', 'pitch', 'playground', 'garden',
+            'golf_course', 'sports_centre'}
+lu_green, lu_grey, lu_lots = [], [], []      # lots: industrial / commercial zones (grey only where bare or paved)
+_lu = os.path.join(RAW, 'osm_landuse.json')
+for e in (json.load(open(_lu))['elements'] if os.path.exists(_lu) else []):
+    t = e.get('tags', {}); kind = t.get('landuse') or t.get('leisure') or t.get('amenity')
+    rings = [e['geometry']] if e.get('geometry') else [m['geometry'] for m in e.get('members', []) if m.get('role') == 'outer' and m.get('geometry')]
+    for g in rings:
+        if len(g) < 3: continue
+        wx, wz = lonlat_to_world(np.array([q['lon'] for q in g]), np.array([q['lat'] for q in g]))
+        if not in_map(wx, wz, 50).any(): continue
+        (lu_green if kind in GREEN_LU else lu_grey if kind == 'parking' else lu_lots).append(np.stack([wx, wz], 1))
+log('land use polygons: green', len(lu_green), 'parking', len(lu_grey), 'lots', len(lu_lots))
 
 # ---------------------------------------------------------------- 2. campus: trails + ponds from Ethan's map
 # These come from the original single-map pipeline (old 2048 px satellite frame, same world origin).
@@ -448,6 +462,8 @@ del _ghs, _gx, _gz
 REF = np.array([(92, 112, 62), (112, 116, 76), (168, 150, 104), (112, 94, 74)], np.float32)
 OPEN = np.array([(118, 172, 70), (146, 166, 82), (212, 186, 112), (156, 116, 80)], np.float32)
 SURF_COL = {1: (64, 96, 50), 5: (104, 92, 66), 6: (196, 196, 190), 7: (200, 86, 66)}
+LAWN, LOT = np.array((124, 166, 74), np.float32), np.array((148, 149, 145), np.float32)   # town lawns / paved lots
+TOWN_DENSITY = 0.06                   # share of ground under buildings (smoothed over ~60 m) that counts as town
 TEXN = 2048
 
 
@@ -535,6 +551,27 @@ for tx, tz in TILES:
     land = ndimage.median_filter(land, size=(9, 9, 1))
     s2 = np.asarray(Image.fromarray(surf).resize((TEXN, TEXN), Image.NEAREST))
     col = land
+    # ---- towns: dry yellow lawns -> green, grey paved lots -> grey; OSM parks green and parking grey anywhere
+    def lu_mask(polys):
+        im = Image.new('L', (TEXN, TEXN), 0); d = ImageDraw.Draw(im); k = TEXN / TILE
+        for q in polys:
+            if q[:, 0].max() < rx0 or q[:, 0].min() > rx1 or q[:, 1].max() < rz0 or q[:, 1].min() > rz1: continue
+            d.polygon([((x - rx0) * k, (z - rz0) * k) for x, z in q], fill=255)
+        return np.asarray(im) > 0
+    bd = ndimage.gaussian_filter(bld_m[core][::4, ::4].astype(np.float32), 15)             # 4 m cells, ~60 m
+    town = np.asarray(Image.fromarray((bd > TOWN_DENSITY).astype(np.uint8) * 255).resize((TEXN, TEXN), Image.BILINEAR)) > 127
+    lots = lu_mask(lu_lots)
+    if town.any() or lots.any():
+        sharp = np.asarray(Image.fromarray(sat.astype(np.uint8)).filter(ImageFilter.GaussianBlur(3))).astype(np.float32)[core]
+        sharp = np.asarray(Image.fromarray(sharp.astype(np.uint8)).resize((TEXN, TEXN), Image.BILINEAR)).astype(np.float32)
+        mx, mn = sharp.max(2), sharp.min(2)
+        paved = (mx - mn < 0.13 * mx) & (sharp.mean(2) > 105)
+        paved = ndimage.binary_closing(ndimage.binary_opening(paved, iterations=4), iterations=2)      # no small specks
+        col[town & (land == OPEN[2]).all(2)] = LAWN
+        col[(town | lots) & paved] = LOT
+        del sharp, mx, mn, paved
+    col[lu_mask(lu_green)] = LAWN
+    col[lu_mask(lu_grey)] = LOT
     for c, rgb in SURF_COL.items(): col[s2 == c] = np.array(rgb, np.float32)
     tone = ndimage.gaussian_filter(rng.standard_normal((TEXN // 8, TEXN // 8)).astype(np.float32), 4)
     col *= 1 + ndimage.zoom(tone / (tone.std() + 1e-6), 8, order=1)[:TEXN, :TEXN, None] * 0.05
