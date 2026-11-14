@@ -86,12 +86,13 @@ if rim:                               # round map: shade everything beyond the r
     draw.ellipse([cx - rr, cz - rr, cx + rr, cz + rr], outline=(194, 243, 255), width=max(2, int(round(30 / DRAW_MPP))))
 out = img.resize((int(W * DRAW_MPP / OUT_MPP), int(H * DRAW_MPP / OUT_MPP)), Image.LANCZOS)
 dst = ASSETS / 'minimap.jpg'
-quality = 30
-while True:                            # 5 m/px is the sharpness; drop quality until the file is under 3 MB
-    out.save(dst, quality=quality, optimize=True)
-    if dst.stat().st_size <= 3_000_000 or quality <= 20: break
-    quality -= 2
+quality = 82
+out.save(dst, quality=quality, subsampling=0, optimize=True)
 meta = {'extent': world['extent'], 'mpp': OUT_MPP, 'size': list(out.size)}
 if rim: meta['rim'] = {'cx': rim['cx'], 'cz': rim['cz'], 'r': rim['r']}
+tiles.clear()  # release parsed road geometry before baking each detailed tile
+print('Overview saved:', dst.stat().st_size, 'bytes', flush=True)
+from build_minimap_detail import bake_details
+meta['detail'] = bake_details(world, ASSETS)
 (ASSETS / 'minimap.json').write_text(json.dumps(meta))
 print(dst, out.size, f'{dst.stat().st_size / 1e6:.2f} MB', 'q', quality)

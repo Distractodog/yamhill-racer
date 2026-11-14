@@ -23,13 +23,13 @@ try {
  await page.waitForFunction(()=>document.querySelector('[data-z="directions"]').getAttribute('aria-pressed')==='true',{timeout:20000});
  const destination=data.nodes.find(p=>p[0]>3500 && p[0]<3900 && p[1]>1300 && p[1]<1500);
  await mapClick(...destination); await page.waitForFunction(()=>game.directions.active,{timeout:10000});
- console.log('Route',await page.evaluate(()=>({distance:game.directions.active.distance,points:game.directions.active.points.length,hud:document.querySelector('#directions-hud').textContent})));
+ console.log('Route',await page.evaluate(()=>({distance:game.directions.active.distance,points:game.directions.active.points.length,hud:document.querySelector('#minimap .mm-route').textContent})));
  await page.screenshot({path:out+'/directions-map.png'});
  await page.evaluate(()=>game.minimap.toggle(false)); await new Promise(r=>setTimeout(r,1000));
  await page.screenshot({path:out+'/directions-driving.png'});
  const perf=await page.evaluate(async()=>{const measure=()=>new Promise(resolve=>{const times=[];let prev=performance.now();function tick(now){times.push(now-prev);prev=now;if(times.length<180)requestAnimationFrame(tick);else{times.sort((a,b)=>a-b);resolve({median:times[90],p95:times[171],slow:times.filter(t=>t>20).length});}}requestAnimationFrame(tick);});const withRoute=await measure();game.directions.clear();const withoutRoute=await measure();return {withRoute,withoutRoute};});
  console.log('Frame timing',perf);
  await page.evaluate(()=>{game.car.grounded=false;game.directions.begin();});
- assert.match(await page.$eval('#directions-hud',e=>e.textContent),/Drive onto a road/);
+ assert.match(await page.$eval('#minimap .mm-route',e=>e.textContent),/Start on a road/);
  assert.deepEqual(errors,[]); console.log('Browser checks passed; no page errors');
 } finally {await browser.close();}

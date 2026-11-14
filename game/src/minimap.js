@@ -1,3 +1,4 @@
+import { createMapDetail } from './minimapdetail.js';
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
 // The full map zooms (scroll / pinch / + −, around the pointer) and pans (drag). A click drops a pin
 // (click it again, 📍 or P to clear); pin.js guides you to it.
@@ -21,6 +22,7 @@ export async function createMinimap(base = './assets/') {
   const img = new Image();
   img.src = base + 'minimap.jpg';
   await img.decode();
+  const detail = createMapDetail(meta, base);
   const [ex0, ez0] = meta.extent, mpp = meta.mpp;
   const toPx = (x, z) => [(x - ex0) / mpp, (z - ez0) / mpp];   // world metres → map image pixels
   const rim = meta.rim || null;
@@ -46,8 +48,15 @@ export async function createMinimap(base = './assets/') {
     '<div class="fm-zoom"><button data-z="in" title="Zoom in (+)">+</button><button data-z="out" title="Zoom out (−)">−</button>' +
     '<button data-z="fit" title="Whole map (0)">⤢</button><button data-z="car" title="Centre on car">◎</button>' +
     '<button data-z="directions" title="Road directions" aria-label="Road directions">↱</button><button data-z="unpin" title="Remove the pin (P)">📍</button><button data-z="close" title="Close (M)">✕</button></div>';
+  const routeBadge = '<div class="mm-route" hidden><span></span><button type="button" aria-label="Clear directions" title="Clear directions">✕</button></div>';
+  corner.insertAdjacentHTML('beforeend', routeBadge);
+  full.insertAdjacentHTML('beforeend', routeBadge);
   const css = document.createElement('style');
-  css.textContent = `#fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
+  css.textContent = `#minimap .mm-route, #fullmap .mm-route { position:absolute; bottom:8px; left:8px; right:8px; display:flex; align-items:center; justify-content:space-between; gap:6px; padding:5px 7px; border-radius:7px; background:#10251fee; color:#fff; font:600 12px/1.3 system-ui; }
+    #fullmap .mm-route { left:calc(3vw + 12px); right:auto; bottom:calc(3vh + 12px); max-width:min(420px,70vw); font-size:14px; }
+    #minimap .mm-route[hidden], #fullmap .mm-route[hidden] { display:none; }
+    #minimap .mm-route button, #fullmap .mm-route button { position:static; flex:0 0 20px; width:20px; height:20px; border:0; border-radius:4px; background:transparent; color:#fff; font:16px/1 system-ui; cursor:pointer; padding:0; }
+    #fullmap { cursor: default; } #fullmap canvas { cursor: grab; touch-action: none; }
     #fullmap canvas.drag { cursor: grabbing; }
     #fullmap.spawn-picker .fm-hint { top: 20px; padding: 12px 20px; border-radius: 12px; background: #10251fee; font-size: 18px; font-weight: 700; text-align: center; width: min(700px, 75vw); }
     #fullmap .fm-zoom { position: absolute; right: calc(3vw + 12px); top: calc(3vh + 12px); display: flex; flex-direction: column; gap: 6px; }
@@ -64,17 +73,18 @@ export async function createMinimap(base = './assets/') {
   const cc = corner.querySelector('canvas'), fc = full.querySelector('canvas');
   const cctx = cc.getContext('2d'), fctx = fc.getContext('2d');
 
-  let directionMode = false, directionBegin = null, directionChoose = null, directions = null;
+  let directionMode = false, directionBegin = null, directionChoose = null, directionClear = null, directions = null;
   let open = false, viewM = 600, spawnPicker = null;
   const normalHint = full.querySelector(".fm-hint").textContent;
   // full map view: zoom 1 = whole map fits; (vx, vy) = image pixel at the centre of the canvas
-  const MAX_ZOOM = 12;           // the picture is 5 m per pixel: much closer is just blur
+  const MAX_ZOOM = meta.detail ? 32 : 12; // close views use 1 m/pixel imagery
   let zoom = 1, vx = img.width / 2, vy = img.height / 2, carPx = [vx, vy];
   const toggle = v => {
     if (spawnPicker && v !== true) return;
     open = v ?? !open; full.classList.toggle('open', open); corner.classList.toggle('hidden', open);
     if (open) { zoom = 1; vx = img.width / 2; vy = img.height / 2; }       // always opens on the whole map
   };
+  for (const panel of [corner, full]) panel.querySelector('.mm-route button').addEventListener('click', e => { e.stopPropagation(); directionClear?.(); });
   corner.addEventListener('click', () => toggle(true));
   full.addEventListener('click', e => { if (e.target === full) toggle(false); });   // the dark border closes it
 
@@ -232,6 +242,10 @@ export async function createMinimap(base = './assets/') {
       cctx.imageSmoothingQuality = 'high';
       const cox = W / 2 - px * s, coy = H / 2 - py * s;
       cctx.drawImage(img, cox, coy, img.width * s, img.height * s);
+      cctx.save();
+      if (rim) { const [rx, ry, rr] = rimAt(cox, coy, s); cctx.beginPath(); cctx.arc(rx, ry, rr, 0, Math.PI * 2); cctx.clip(); }
+      detail.draw(cctx, cox, coy, s);
+      cctx.restore();
       strokeRim(cctx, cox, coy, s, d);
       const cmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [W / 2 + (a - px) * s, H / 2 + (b - py) * s]; };
       drawOverlay(cctx, cmap, d);
@@ -256,6 +270,7 @@ export async function createMinimap(base = './assets/') {
       if (rim) { const [rx, ry, rr] = rimAt(ox, oy, s); fctx.beginPath(); fctx.arc(rx, ry, rr, 0, Math.PI * 2); fctx.clip(); }
       fctx.imageSmoothingQuality = 'high';
       fctx.drawImage(img, ox, oy, img.width * s, img.height * s);
+      detail.draw(fctx, ox, oy, s);
       for (const l of LABELS) { const [lx, ly] = toPx(l.x, l.z); label(fctx, l.name, ox + lx * s, oy + ly * s, 15 * d); }
       const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
       drawOverlay(fctx, fmap, d);
@@ -284,7 +299,13 @@ export async function createMinimap(base = './assets/') {
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
   return { update, toggle,
-    setDirectionHandlers(begin, choose) { directionBegin=begin; directionChoose=choose; },
+    setDirectionHandlers(begin, choose, clear) { directionBegin=begin; directionChoose=choose; directionClear=clear; },
+    setDirectionsStatus(text) {
+      for (const panel of [corner, full]) {
+        const badge=panel.querySelector('.mm-route'); badge.hidden=!text;
+        badge.querySelector('span').textContent=text || '';
+      }
+    },
     setDirections(points) { directions=points; },
     setDirectionMode(value) {
       directionMode=value;
