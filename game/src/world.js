@@ -8,6 +8,7 @@ import { roadLOD, roadBatches, buildJunctions } from './roads.js';
 import { mergeRoadBatches, placeRoadBlock } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import { placeCampus } from './campusmodel.js';
+import { placeLandmarks } from './landmarksmodel.js';
 import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
 import { addProps, propGeometries, showProps } from './propsmodel.js';
 import { addCampusItems, campusItemGeometries, showCampusItems } from './campusitemsmodel.js';
@@ -204,11 +205,15 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     out.treeMats = treeMats;
     // buildings: planned town blocks, plus the hand-made campus
-    const cGeos = [], cells = new Map(), roads = roadContext(td.renderRoads);
+    const cGeos = [], lGeos = [], cells = new Map(), roads = roadContext(td.renderRoads);
     let planned = 0;
     for (const b of td.buildings) {
       if (b.campusPart) {      // hand-made campus building (campus.js), drawn once from its first footprint
         if (b.campus) { placeCampus(g, out.campusLods, cGeos, b.campus, td.terrainAt, campusMat); yield 'buildings'; }
+        continue;
+      }
+      if (b.landmarkPart) {   // hand-made landmark (landmarks.js), drawn once from its first footprint
+        if (b.landmark) { placeLandmarks(lGeos, b.landmark, td.terrainAt); yield 'buildings'; }
         continue;
       }
       if (!b.pts || b.pts.length < 3) continue;
@@ -239,6 +244,10 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     if (cGeos.length) {
       const cm = new THREE.Mesh(mergeGeometries(cGeos), campusMat); cm.name = 'campus'; cm.castShadow = cm.receiveShadow = true; g.add(cm);
       cGeos.forEach(x => x.dispose());
+    }
+    if (lGeos.length) {
+      const lm = new THREE.Mesh(mergeGeometries(lGeos), campusMat); lm.name = 'landmarks'; lm.castShadow = lm.receiveShadow = true; g.add(lm);
+      lGeos.forEach(x => x.dispose());
     }
     yield* addProps(g, out.propLods, td, propGeos, propMat);
     yield* addCampusItems(g, out.campusItemLods, td, campusItemGeos, propMat);

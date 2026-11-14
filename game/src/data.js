@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { sidewalkSides, KERB } from './roads.js';
 import { applyCampus } from './campus.js';
+import { applyLandmarks } from './landmarks.js';
 
 // road / trail strips and junction pieces: surface class per kind. Heights come baked from the build
 // (tools/roadnet.py): each strip point has a centre-line height y and a cross slope c (height per metre to the left).
@@ -164,6 +165,7 @@ export function makeTileData(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) {
     pondId, pondLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
     heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
   td.buildings = applyCampus(td);           // Delphian campus: hand-made models replace the OSM blocks (campus.js)
+  td.buildings = applyLandmarks(td);        // landmarks.js replaces the OSM block under each landmark
   return td;
 }
 
