@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { partPts } from './campus.js';
 import { addEntranceDressing } from './campusprops.js';
+import { addCourtyardDressing } from './campuscourt.js';
 
 const D2R = Math.PI / 180;
 // palette colours are sRGB (as picked from photos); vertex colours are linear
@@ -156,11 +157,43 @@ function baysOn(m, edge, part, floor, ground, top) {
   }
 }
 
+const ARCH_GLASS = [[0.22, 0.32, 0.48], [0.32, 0.40, 0.36], [0.42, 0.30, 0.28], [0.28, 0.34, 0.42]];
+
+// Pointed arches: a tall pane up to the spring line, then a triangle. The lancet is the
+// narrower arch at the south end of the row. Far copies keep the plain rectangular grid.
+function pointedOn(m, e, w, floor, top, fixed) {
+  const n = fixed || Math.max(1, Math.floor((e.L - 2 * w.margin) / w.every) + 1);
+  const span = (n - 1) * (fixed ? e.L / (n + 0.4) : w.every), s0 = (e.L - span) / 2;
+  let lancet = -1, best = -1e9;
+  if (w.lancet && !fixed) {
+    for (let i = 0; i < n; i++) {
+      const s = s0 + i * w.every, dot = (e.p[0] + e.ux * s) * w.lancet[0] + (e.p[1] + e.uz * s) * w.lancet[1];
+      if (dot > best) { best = dot; lancet = i; }
+    }
+  }
+  const face = [e.ox, 0, e.oz], step = fixed ? e.L / (n + 0.4) : w.every;
+  for (let i = 0; i < n; i++) {
+    const narrow = i === lancet, ww = narrow ? w.w * 0.62 : w.w, hh = narrow ? w.h * 0.86 : w.h;
+    const s = s0 + i * step, yb = floor + w.sill, yt = yb + hh;
+    if (yt > top - 0.25 || yb < floor) continue;
+    const spring = yb + hh * 0.66, o = 0.04;
+    const at = (ds, y) => [e.p[0] + e.ux * (s + ds) + e.ox * o, y, e.p[1] + e.uz * (s + ds) + e.oz * o];
+    const col = ARCH_GLASS[i % ARCH_GLASS.length];
+    m.quad(at(-ww / 2, yb), at(ww / 2, yb), at(ww / 2, spring), at(-ww / 2, spring), col, face);
+    m.tri(at(-ww / 2, spring), at(ww / 2, spring), at(0, yt), col, face);
+  }
+}
+
 function windowsOn(m, pts, part, floor, ground, top, far) {
   const w = part.win; if (!w) return;
   const es = edges(pts), front = !far && w.bays ? frontEdge(es, w.bays.face) : null;
+  const arch = !far && w.pointed ? frontEdge(es, w.face) : null;
+  const arch2 = !far && w.pointed && w.face2 ? frontEdge(es, w.face2) : null;
   const o = 0.05;
   for (const e of es) {
+    if (e === arch) { pointedOn(m, e, w, floor, top, 0); continue; }
+    if (e === arch2) { pointedOn(m, e, w, floor, top, 2); continue; }
+    if (w.pointed) continue;
     if (e === front) continue;
     const n = Math.floor((e.L - 2 * w.margin) / w.every) + 1; if (n < 1 || e.L < w.w + 2 * w.margin) continue;
     const span = (n - 1) * w.every, s0 = (e.L - span) / 2;
@@ -285,5 +318,5 @@ export function placeCampus(group, lods, geos, building, ground, mat) {
   for (const part of building.parts) for (const p of partPts(part)) { cx += p[0]; cz += p[1]; n++; }
   group.add(near, far);
   lods.push({ near, far, cx: cx / n, cz: cz / n });
-  if (building.name === 'Main Building') addEntranceDressing(group, ground);
+  if (building.name === 'Main Building') { addEntranceDressing(group, ground); addCourtyardDressing(group, ground); }
 }
