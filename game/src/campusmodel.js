@@ -3,6 +3,7 @@
 // faces, rooftop units, stairs). One flat-shaded, vertex-coloured BufferGeometry per building.
 import * as THREE from 'three';
 import { partPts } from './campus.js';
+import { addEntranceDressing } from './campusprops.js';
 
 const D2R = Math.PI / 180;
 // palette colours are sRGB (as picked from photos); vertex colours are linear
@@ -183,15 +184,18 @@ function doorsOn(m, pts, part, floor) {
   const E = edges(pts);
   for (const d of part.doors || []) {
     const e = E[d.edge % E.length], s = e.L * d.t;
-    const put = (w, h, off, col) => {
-      const cx = e.p[0] + e.ux * s + e.ox * off, cz = e.p[1] + e.uz * s + e.oz * off;
+    const put = (w, h, off, col, shift = 0) => {
+      const cx = e.p[0] + e.ux * (s + shift) + e.ox * off, cz = e.p[1] + e.uz * (s + shift) + e.oz * off;
       m.quad([cx - e.ux * w / 2, floor, cz - e.uz * w / 2], [cx + e.ux * w / 2, floor, cz + e.uz * w / 2],
              [cx + e.ux * w / 2, floor + h, cz + e.uz * w / 2], [cx - e.ux * w / 2, floor + h, cz - e.uz * w / 2], col, [e.ox, 0, e.oz]);
     };
     if (d.frame) {   // a raised stone surround: front + its sides
       const f = d.frame, t = 0.35;
       box(m, { c: [e.p[0] + e.ux * s + e.ox * t / 2, e.p[1] + e.uz * s + e.oz * t / 2], L: f.w, W: t, a: Math.atan2(e.uz, e.ux) / D2R, y0: -0.6, y1: f.h, color: f.color }, floor);
-      put(d.w, d.h, t + 0.04, d.color);
+      if (d.leaves === 2) {
+        put(d.w, d.h, t + 0.04, d.color, -d.w / 2 - 0.05);
+        put(d.w, d.h, t + 0.04, d.color, d.w / 2 + 0.05);
+      } else put(d.w, d.h, t + 0.04, d.color);
     } else put(d.w, d.h, 0.04, d.color);
   }
 }
@@ -281,4 +285,5 @@ export function placeCampus(group, lods, geos, building, ground, mat) {
   for (const part of building.parts) for (const p of partPts(part)) { cx += p[0]; cz += p[1]; n++; }
   group.add(near, far);
   lods.push({ near, far, cx: cx / n, cz: cz / n });
+  if (building.name === 'Main Building') addEntranceDressing(group, ground);
 }
