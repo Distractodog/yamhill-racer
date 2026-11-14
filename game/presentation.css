@@ -2,20 +2,16 @@
 :root { --yr-ink: #122b26; --yr-paper: #f8efdc; --yr-gold: #eac17c; --yr-orange: #ef8e58; --yr-muted: #b8c8bd; }
 body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 #menu-bar { align-items: center; gap: 6px; }
-.menu-brand { color: var(--yr-paper); background: var(--yr-ink); border: 1px solid #eac17c50; border-radius: 8px; padding: 10px 12px; font-size: 18px; font-weight: 950; letter-spacing: -1px; box-shadow: 0 4px 20px #0003; }
-.menu-brand span { font-size: 9px; font-weight: 700; letter-spacing: 1.4px; vertical-align: 2px; }
 #menu-bar .menu-button, #settings-panel .menu-button { background: #122b26f2; border-color: #f8efdc35; border-radius: 8px; color: var(--yr-paper); }
 #menu-bar .menu-button:hover, #menu-bar .menu-button[aria-expanded='true'] { background: #294d3e; border-color: var(--yr-gold); }
 #menu-bar .menu-button:disabled { opacity: .5; cursor: wait; }
 #hud { padding: 17px 22px 14px; min-width: 190px; border: 1px solid #f8efdc35; border-radius: 15px; background: linear-gradient(125deg,#102a25f2,#18362cdd); box-shadow: 0 8px 28px #0003; text-shadow: none; }
-#hud::before { content: 'YAMHILL / TELEMETRY'; display: block; color: var(--yr-gold); font-size: 9px; font-weight: 800; letter-spacing: 2px; margin-bottom: 8px; }
 #speed { color: var(--yr-paper); font-size: clamp(40px,5vw,64px); font-weight: 850; letter-spacing: -3px; }
 #speed small { color: var(--yr-muted); font-size: 13px; letter-spacing: .4px; margin-left: 9px; }
 #info { color: #d1ddd3; font-size: 11px; max-width: 340px; line-height: 1.5; }
 #minimap { border-color: #f8efdcba; box-shadow: 0 8px 24px #0004; }
 #fullmap { z-index: 24; }
 #fullmap.spawn-picker { background: #102b28f5; }
-#fullmap.spawn-picker::after { content: 'YAMHILL RACER  /  CHOOSE YOUR START'; position: absolute; bottom: 13px; left: 50%; transform: translateX(-50%); color: #f8efdc9c; font-size: 10px; font-weight: 800; letter-spacing: 2px; pointer-events: none; white-space: nowrap; }
 #settings-panel { color: var(--yr-paper); background: #132e27fa; border-color: #eac17c55; border-radius: 13px; padding: 22px; }
 #settings-panel .panel-heading h2 { font-size: 24px; letter-spacing: -.5px; }
 #settings-panel .panel-note { font-size: 11px; color: #b1c1b6; border-top: 1px solid #ffffff19; padding-top: 14px; }
@@ -33,8 +29,6 @@ body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI'
 .welcome-landscape { height: 125px; position: relative; margin: 0 -30px 22px; overflow: hidden; background: radial-gradient(circle at 76% 44%,#f5dfad 0 22px,transparent 23px),linear-gradient(#6d9398,#cbb48d); }
 .welcome-landscape::before, .welcome-landscape::after { content: ''; position: absolute; inset: 30px -20px -30px; background: #385b52; clip-path: polygon(0 80%,20% 12%,34% 44%,52% 0,72% 50%,90% 15%,100% 70%,100% 100%,0 100%); }
 .welcome-landscape::after { background: #163f33; transform: translate(20px,40px) scale(1.2); }
-.welcome-landscape span { position: absolute; top: 16px; left: 30px; z-index: 1; color: #173c34; font-weight: 800; font-size: 10px; letter-spacing: 2px; }
-#welcome .welcome-eyebrow { color: var(--yr-gold); font-size: 10px; font-weight: 800; letter-spacing: 2.6px; margin-bottom: 8px; }
 #welcome h2 { font-size: clamp(36px,6vw,51px); font-weight: 900; color: var(--yr-paper); letter-spacing: -2px; line-height: 1; margin-bottom: 14px; }
 #welcome h2 em { font-weight: 400; font-family: Georgia,serif; }
 #welcome p { font-size: 13px; line-height: 1.7; }
@@ -45,8 +39,6 @@ body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI'
 #welcome label { font-size: 11px; }
 #loading { background: radial-gradient(ellipse at bottom,#2a5943,#102b27); color: var(--yr-paper); font-size: 17px; letter-spacing: .3px; }
 #ch-menu.ch-panel, #ch-done.ch-panel, #veh-menu { background: #142f27f5; border: 1px solid #eac17c55; color: var(--yr-paper); border-radius: 16px; z-index: 25; }
-#ch-menu .ch-finish-label, #ch-done .ch-finish-label { color: var(--yr-gold); font-size: 10px; font-weight: 800; letter-spacing: 2.5px; margin-bottom: 8px; }
-#ch-menu .ch-intro { color: #bdcdbf; font-size: 13px; margin: -4px 0 14px; }
 #ch-menu .ch-item { background: #ffffff07; border: 1px solid #ffffff20; padding: 12px; }
 #ch-menu .ch-item.sel { border-color: var(--yr-gold); background: #eac17c16; }
 #ch-menu .ch-item .ch-meta { float: none; display: block; color: #e7c68a; margin: 5px 0; font-size: 11px; }
@@ -70,6 +62,6 @@ body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI'
 #ch-hud .ch-name { color: var(--yr-gold); }
 @keyframes result-arrive { from { opacity: 0; margin-top: 12px; } to { opacity: 1; margin-top: 0; } }
 @media (prefers-reduced-motion: reduce) { #ch-done.ch-panel { animation: none; } }
-@media (max-width: 700px) { #menu-bar { max-width: calc(100vw - 175px); flex-direction: row; flex-wrap: wrap; align-content: flex-start; } .menu-brand { width: 100%; box-sizing: border-box; } .menu-brand span { display: none; } #menu-bar .menu-button { padding: 7px 9px; font-size: 11px; } #hud { min-width: 150px; padding: 12px 16px; } #hud::before { font-size: 8px; } #settings-panel { top: 145px; max-height: calc(100dvh - 160px); } #ch-hud { top: auto; bottom: 20px; left: auto; right: 16px; transform: none; } #ch-hud .ch-time { font-size: 28px; } }
+@media (max-width: 700px) { #menu-bar { max-width: calc(100vw - 175px); flex-direction: row; flex-wrap: wrap; align-content: flex-start; } #menu-bar .menu-button { padding: 7px 9px; font-size: 11px; } #hud { min-width: 150px; padding: 12px 16px; } #settings-panel { top: 145px; max-height: calc(100dvh - 160px); } #ch-hud { top: auto; bottom: 20px; left: auto; right: 16px; transform: none; } #ch-hud .ch-time { font-size: 28px; } }
 
 [data-preset='rain'] .atmosphere-swatch { background: linear-gradient(#889b9e 60%, #46534a 60%); }

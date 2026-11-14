@@ -273,7 +273,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     const unlocked = rewards.complete(ch, t);
     blip(880, 0.12); setTimeout(() => blip(1320, 0.3), 130);
     beam.visible = false; minimap.setOverlay?.(null); split.style.opacity = 0; splitT = 0;
-    done.innerHTML = `<div class="ch-finish-label">FINISH LINE</div><h2>${ch.name}</h2>
+    done.innerHTML = `<h2>${ch.name}</h2>
       <div class="ch-big">${fmtTime(t)}</div>
       ${isBest ? `<div class="ch-new">${prev ? `New best! ${fmtDelta(t - prev.time)}` : 'First time set!'}</div>`
                : `<div>Best ${fmtTime(prev.time)} · ${fmtDelta(t - prev.time)}</div>`}
@@ -333,7 +333,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // ---- menu
   function renderMenu() {
     let lastV = null;
-    menu.innerHTML = `<div class="ch-finish-label">YAMHILL MOTOR CLUB</div><h2>Pick your next run</h2><p class="ch-intro">Set a time. Earn your colors.</p><div class="reward-collection">${rewards.list().map(r => `<span class="reward-chip${r.unlocked ? ' unlocked' : ''}" title="${r.description}">${r.unlocked ? '✓' : r.completed + '/' + r.total} ${r.name}</span>`).join('')}</div>` + list.map((c, i) => {
+    menu.innerHTML = `<h2>Races</h2><div class="reward-collection">${rewards.list().map(r => `<span class="reward-chip${r.unlocked ? ' unlocked' : ''}" title="${r.description}">${r.unlocked ? '✓' : r.completed + '/' + r.total} ${r.name}</span>`).join('')}</div>` + list.map((c, i) => {
       const v = c.vehicle || 'car', head = v !== lastV ? `<div class="ch-group">${VICON[v]} ${VNAME[v]}</div>` : ''; lastV = v;
       return head + `<button class="ch-item${i === sel ? ' sel' : ''}" data-i="${i}"><b>${VICON[v]} ${c.name}</b>
         <span class="ch-meta">${(c.length / 1000).toFixed(1)} km · best ${fmtTime(best[c.id]?.time)}</span>

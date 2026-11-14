@@ -12,7 +12,7 @@ export function createGarage({ cosmetics, vehicles, onOpen = () => {}, onClose =
   if (!button) { button = document.createElement('button'); button.id = 'garage-button'; button.className = 'menu-button'; button.textContent = 'Garage'; (document.getElementById('menu-bar') || document.body).append(button); }
   button.disabled = false;
   const dialog = document.createElement('section'); dialog.id = 'cosmetic-garage'; dialog.hidden = true; dialog.setAttribute('role','dialog'); dialog.setAttribute('aria-modal','true'); dialog.setAttribute('aria-labelledby','garage-title');
-  dialog.innerHTML = `<div class="garage-shell"><header><div><p class="garage-eyebrow">YOUR RIDE · YOUR STYLE</p><h2 id="garage-title">The garage</h2></div><button type="button" class="garage-close" aria-label="Close garage">✕</button></header>
+  dialog.innerHTML = `<div class="garage-shell"><header><div><h2 id="garage-title">Garage</h2></div><button type="button" class="garage-close" aria-label="Close garage">✕</button></header>
     <nav class="garage-tabs" aria-label="Customize vehicle">${Object.entries(NAMES).map(([k,n])=>`<button type="button" data-kind="${k}" aria-pressed="false">${n}</button>`).join('')}</nav>
     <div class="garage-layout"><div class="garage-preview"><div class="garage-canvas"></div><p class="garage-preview-help">Drag to turn · scroll to zoom</p><div class="garage-condition"></div><button type="button" class="garage-wash">Wash & repair</button></div>
     <form class="garage-controls"><h3>Paint & finish</h3><div class="garage-colors">${[['body','Body'],['trim','Trim'],['wheels','Wheels'],['helmet','Helmet'],['jacket','Jacket & pants'],['gloves','Gloves']].map(([key,label])=>`<label data-role="${key}"><span>${label}</span><input type="color" name="${key}" aria-label="${label} color"></label>`).join('')}</div>
@@ -75,7 +75,7 @@ export function createGarage({ cosmetics, vehicles, onOpen = () => {}, onClose =
       b.addEventListener('click',()=>{const saved=cosmetics.set(kind,{livery:livery.id});message(saved?'Saved to this browser.':'Browser storage is unavailable; changes last until you reload.');});
     }
     dialog.querySelectorAll('[data-load]').forEach(b=>b.disabled=!presets[kind]?.[+b.dataset.load]);
-    const wear=cosmetics.getWear(kind);dialog.querySelector('.garage-condition').textContent=wear.dirt>.1?'Trail dust · ready for a wash':wear.scuff>.1?'A few scuffs · repair in the wash':wear.wet>.1?'Wet finish':'Fresh from the garage';
+    const wear=cosmetics.getWear(kind);dialog.querySelector('.garage-condition').textContent=wear.dirt>.1?'Dusty':wear.scuff>.1?'Scuffed':wear.wet>.1?'Wet finish':'Clean';
     preview();
     if (focusedLivery) list.querySelector(`[data-livery="${focusedLivery}"]`)?.focus();
   }

@@ -3,7 +3,6 @@
 #cosmetic-garage *{box-sizing:border-box}
 #cosmetic-garage .garage-shell{width:min(1060px,100%);border:1px solid #ffffff20;background:#12251f;border-radius:22px;box-shadow:0 24px 80px #0008;overflow:hidden}
 #cosmetic-garage header{display:flex;align-items:center;justify-content:space-between;padding:22px 28px 12px}
-#cosmetic-garage .garage-eyebrow{color:#b9db82;font-size:10px;font-weight:800;letter-spacing:.16em;margin:0 0 3px}
 #cosmetic-garage h2{font-size:30px;letter-spacing:-.035em;margin:0}
 #cosmetic-garage button,#cosmetic-garage input,#cosmetic-garage select{font:inherit;color:inherit}
 #cosmetic-garage button{background:#ffffff0b;border:1px solid #ffffff25;border-radius:9px;padding:9px 13px;cursor:pointer}

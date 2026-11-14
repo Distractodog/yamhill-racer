@@ -38,7 +38,7 @@ export function createSettings() {
     if (!ready) return;
     if (current === view) { close(); return; }
     beforeOpen(); returnFocus = trigger; current = view;
-    title.textContent = view === 'tuning' ? 'Vehicle tuning' : view === 'atmosphere' ? 'Chase the light' : 'How to play';
+    title.textContent = view === 'tuning' ? 'Vehicle tuning' : view === 'atmosphere' ? 'Atmosphere' : 'How to play';
     tuning.hidden = view !== 'tuning'; help.hidden = view !== 'help'; atmosphereContent.hidden = view !== 'atmosphere'; panel.hidden = false;
     settingsButton.setAttribute('aria-expanded', String(view === 'tuning'));
     helpButton.setAttribute('aria-expanded', String(view === 'help'));
