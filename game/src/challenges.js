@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
 import { makeTrack } from './track.js';
 import { createGhost } from './ghost.js';
+import { checkpointStart, drivingWrongWay } from './raceguidance.js';
 
 const BEST_KEY = 'yr-best-1';
 const POST_H = 7, COUNTDOWN = 3;
@@ -160,7 +161,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   // state: 'idle' | 'placing' | 'countdown' | 'running' | 'finished'
   let ch = null, arches = [], state = 'idle', t = 0, cd = 0, next = 1, splits = [], splitT = 0, sel = 0, result = null;
-  let menuOpen = false, placeToken = 0;
+  let menuOpen = false, placeToken = 0, returning = false, wrongWayTime = 0;
   const lastPos = new THREE.Vector2(), curPos = new THREE.Vector2();
   let lastY = 0, curY = 0;
 
@@ -204,20 +205,33 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   }
 
   // place the car on the start line once the tiles there have streamed in
-  async function placeCar(x, z, yaw) {
+  async function placeCar(x, z, yaw, requireLoaded = false) {
     const token = ++placeToken;
     for (let k = 0; k < 80 && !(world.loadedAt(x, z) && world.pendingTiles() === 0); k++) {
       car.pos.set(x, car.pos.y, z); car.vel.set(0, 0, 0); car._lastLoaded = null;
       await new Promise(r => setTimeout(r, 150));
       if (token !== placeToken) return false;
     }
+    if (token !== placeToken || (requireLoaded && !world.loadedAt(x, z))) return false;
     car.reset(x, z, yaw); car.safe = []; car._lastLoaded = null;
     return true;
   }
 
+  async function returnToCheckpoint() {
+    if (returning) return;
+    returning = true; wrongWayTime = 0;
+    const run = ch, token = placeToken + 1, p = checkpointStart(ch, next);
+    car.glide?.cancel();
+    const placed = await placeCar(p.x, p.z, p.yaw, true);
+    if (ch !== run || state !== 'running' || placeToken !== token) return;
+    returning = false;
+    if (!placed) { split.textContent = 'Checkpoint is still loading — try R again'; split.style.opacity = 1; splitT = 2.5; return; }
+    track?.reset(); lastPos.set(car.pos.x, car.pos.z); curPos.copy(lastPos); lastY = curY = car.pos.y;
+  }
+
   async function start(i) {
     ghost.stop();
-    ch = list[i]; sel = i; result = null;
+    ch = list[i]; sel = i; result = null; returning = false; wrongWayTime = 0;
     closeMenu(); done.style.display = 'none';
     vehicles?.switchTo(ch.vehicle || 'car');
     car.glide?.cancel();
@@ -239,7 +253,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   function quit() {
     ghost.stop();
-    placeToken++; state = 'idle'; ch = null; clearArches();
+    returning = false; wrongWayTime = 0; placeToken++; state = 'idle'; ch = null; clearArches();
     if (vehicles) vehicles.jet.respawn = null;
     hud.style.display = 'none'; count.style.display = 'none'; done.style.display = 'none'; split.style.opacity = 0;
     minimap.setOverlay?.(null);
@@ -299,6 +313,8 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       const g = ch.gates[next], dist = g ? Math.hypot(g.x - car.pos.x, g.z - car.pos.z) : 0;
       sub = `${next === n ? 'Finish' : `${g?.y !== undefined ? 'Ring' : 'Checkpoint'} ${next}/${n - 1}`} · ${dist < 1000 ? Math.round(dist) + ' m' : (dist / 1000).toFixed(1) + ' km'}`;
       if (g?.y !== undefined) { const dy = g.y - car.pos.y; sub += ` · ${Math.abs(dy) < 8 ? 'level' : (dy > 0 ? '↑ ' : '↓ ') + Math.round(Math.abs(dy)) + ' m'}`; }
+      if (returning) sub = 'Returning to checkpoint…';
+      else if (wrongWayTime >= 1) sub += ' · WRONG WAY · turn around';
       const b = best[ch.id]; if (b) sub += ` · best ${fmtTime(b.time)}`;
     } else if (state === 'finished') sub = 'Finished';
     hud.innerHTML = `<div class="ch-name">${ch.name}</div><div class="ch-time">${fmtTime(t)}</div><div class="ch-sub">${sub}</div>`;
@@ -321,6 +337,11 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // capture phase: runs before the map's own Esc handler, so Esc with the full map open only closes the map
   addEventListener('keydown', e => {
     if (e.gameUI) return;
+    if (e.code === 'KeyR' && state === 'running' && ch.vehicle !== 'jet') {
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (!e.repeat) returnToCheckpoint();
+      return;
+    }
     if (e.repeat) return;
     if (e.code === 'KeyG' && car.glide && (state === 'placing' || state === 'countdown' || state === 'running')) {
       car.glide.cancel(); car.glide.say('No glider in races', 1.8);
@@ -344,7 +365,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     best: () => best, start, quit, openMenu, closeMenu,
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
-      if (state !== 'countdown' && state !== 'running') return;
+      if (returning || (state !== 'countdown' && state !== 'running')) return;
       // Also fold a wing opened before the race or through another control path.
       if (car.glide?.active) { car.glide.cancel(); car.glide.say('No glider in races', 1.8); }
       if (!track) return;
@@ -354,7 +375,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     get track() { return track; },
     // hold the car on the line during the countdown (and while the menu is open)
     holdInput(input) {
-      const hold = state === 'placing' || state === 'countdown' || menuOpen;
+      const hold = returning || state === 'placing' || state === 'countdown' || menuOpen;
       if (hold) { input.throttle = 0; input.brake = 0; input.handbrake = true; input.steer = 0; input.lean = false; }
       if (input.jet) input.jet.hold = hold;             // jet: brakes on (you can run the throttle up)   // no brake: at a standstill it means reverse
     },
@@ -382,8 +403,9 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       } else if (state === 'running') {
         t += dt;
         ghost.update(t, car);
+        wrongWayTime = !returning && track && drivingWrongWay(car.vel, ch.track, track.index) ? wrongWayTime + dt : 0;
         // a teleport (R reset) is not a crossing: only count normal movement
-        if (curPos.distanceTo(lastPos) < 40 && crossed(ch.gates[next])) passGate();
+        if (!returning && curPos.distanceTo(lastPos) < 40 && crossed(ch.gates[next])) passGate();
       }
       if (splitT > 0 && (splitT -= dt) <= 0) split.style.opacity = 0;
       if (state !== 'idle') renderHud();
