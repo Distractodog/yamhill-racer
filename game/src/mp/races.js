@@ -33,6 +33,10 @@ export function createRaces({ challenges, car }) {
       draw(); inEl.style.display = 'block';
       inTimer = setInterval(() => { left = Math.max(0, left - 1); draw(); }, 1000);
     },
+    notice(text) {                                      // brief message in the invite corner
+      clearInterval(inTimer); inEl.innerHTML = `<h3>${esc(text)}</h3>`; inEl.style.display = 'block';
+      inTimer = setTimeout(() => { inEl.style.display = 'none'; }, 3000);
+    },
     lobby(d) {
       if (!d) { outEl.style.display = 'none'; return; }
       const label = { wait: 'waiting…', accept: '✓ accepted', decline: '✗ declined' };

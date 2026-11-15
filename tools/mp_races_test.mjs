@@ -35,8 +35,9 @@ function makePeer(id, name) {
   const challenges = { list, get state() { return ch.state; },
     start(i, o) { ch.started.push({ i, o }); ch.state = 'running'; ch.next = 1; },
     quit() { ch.state = 'idle'; ch.quit = (ch.quit || 0) + 1; },
+    dnf() { ch.state = 'finished'; ch.dnf = (ch.dnf || 0) + 1; },
     runInfo: () => ({ id: 'r1', gates, track: [[0, 0, 5], [0, 100, 5], [0, 200, 5]], next: ch.next, state: ch.state }) };
-  const ui = { incomingLog: [], resultsCalls: 0, incoming(x) { this.incomingLog.push(x); }, lobby() {}, results() { this.resultsCalls++; } };
+  const ui = { incomingLog: [], resultsCalls: 0, incoming(x) { this.incomingLog.push(x); }, lobby() {}, notices: [], notice(t) { this.notices.push(t); }, results() { this.resultsCalls++; } };
   peer.ch = ch; peer.ui = ui; peer.core = createRaceCore({ mp, challenges, ui, timers, pos: () => ch.pos });
   bus.push(peer); return peer;
 }
@@ -156,4 +157,45 @@ A.core.hook.onQuit(); reset();
 A.core.invite('r1', ['B']); await flush(); B.core.accept(); await flush();
 const sy = B.ch.started.at(-1).o.sync; advance(7000);
 assert.equal((sy.now() - sy.at) / 1000, 2, 'elapsed since startAt, not since placement');
+// starting a solo run cancels my outgoing invite: a late acceptance can't replace it
+reset();
+A.core.invite('r1', ['B', 'C']); await flush(); B.core.accept(); await flush();
+A.core.hook.onLocalStart(); await flush();
+assert.equal(A.core.outgoing, null); assert.equal(A.sent.at(-1).t, 'race-cancel');
+assert.equal(B.core.accepted, null, 'accepted invitee released'); assert.equal(C.core.incoming, null, 'pending pop-up closed');
+C.emit({ t: 'invite-reply', inviteId: 'x', from: 'C', accept: true }); await flush();
+assert.equal(A.core.active, null); assert.equal(A.sent.some(m => m.t === 'race-start'), A.sent.some(m => m.t === 'race-start'));
+const startsBefore = A.sent.filter(m => m.t === 'race-start').length;
+A.emit({ t: 'invite-reply', inviteId: 'late', from: 'C', accept: true });
+assert.equal(A.sent.filter(m => m.t === 'race-start').length, startsBefore, 'late accept starts nothing');
+// ...and leaving declines an incoming invite I hadn't answered
+reset();
+A.core.invite('r1', ['C']); await flush(); assert.ok(C.core.incoming);
+C.core.hook.onLocalStart(); await flush();
+assert.equal(C.core.incoming, null); assert.equal(C.sent.at(-1).accept, false);
+assert.equal(A.core.outgoing, null, 'inviter saw the decline');
+// race-start closes a matching pop-up for someone left out, and releases an accepted-but-excluded player
+reset();
+A.core.invite('r1', ['B', 'C']); await flush(); B.core.accept(); await flush();
+assert.ok(C.core.incoming);
+const nC = C.ui.notices.length;
+A.core.start(); await flush();                          // C never answered -> excluded
+assert.equal(C.core.incoming, null); assert.equal(C.ui.notices.length, nC + 1); assert.equal(C.ui.notices.at(-1), 'Race started without you'); assert.equal(C.core.active, null);
+reset();
+A.core.invite('r1', ['B']); await flush(); B.core.accept(); await flush();   // starts for B
+reset();
+A.core.invite('r1', ['B', 'C']); await flush(); B.core.accept(); await flush();
+const nB = B.ui.notices.length;
+B.emit({ t: 'race-start', inviteId: B.core.accepted, from: 'A', players: ['A'], startAt: clock.t + 5000 });
+assert.equal(B.core.accepted, null); assert.equal(B.ui.notices.length, nB + 1); assert.equal(B.core.active, null);
+// the winner's +60 s deadline: my run is stopped, progress stops, results shown
+reset();
+A.core.invite('r1', ['B']); await flush(); B.core.accept(); await flush();
+A.ch.next = 2; advance(600); await flush();
+B.core.hook.onFinish(); await flush();
+const prog = () => A.sent.filter(m => m.t === 'race-progress').length, p0 = prog(), r0 = A.ui.resultsCalls;
+advance(DNF_AFTER + 1500); await flush();
+assert.equal(A.ch.dnf, 1, 'local challenge stopped'); assert.equal(A.core.active.myDone, true);
+assert.equal(A.core.rows().find(r => r.id === 'A').status, 'dnf'); assert.ok(A.ui.resultsCalls > r0);
+const p1 = prog(); advance(3000); assert.equal(prog(), p1, 'no more progress after the DNF'); assert.ok(p1 >= p0);
 console.log('mp races state machine: OK');

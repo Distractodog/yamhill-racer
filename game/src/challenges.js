@@ -294,6 +294,22 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     mpHook?.onFinish?.(t);
   }
 
+  // multiplayer: the winner's 60 s deadline passed — end my run as a DNF and show the results panel (mp/races.js fills it)
+  function dnf() {
+    if (state !== 'placing' && state !== 'countdown' && state !== 'running') return;
+    ghost.stop(); returning = false; wrongWayTime = 0; placeToken++; state = 'finished';
+    beam.visible = false; count.style.display = 'none'; minimap.setOverlay?.(null); split.style.opacity = 0; splitT = 0;
+    done.innerHTML = `<h2>${ch.name}</h2>
+      <div class="ch-big">DNF</div>
+      <div id="ch-mp-results"></div>
+      <div class="ch-actions"><button data-action="retry">Race again</button><button data-action="races">Choose race</button><button data-action="roam">Free roam</button></div>
+      <div class="ch-hint">Enter retry · J challenges · Esc free roam</div>`;
+    done.querySelector('[data-action="retry"]').addEventListener('click', () => start(sel));
+    done.querySelector('[data-action="races"]').addEventListener('click', openMenu);
+    done.querySelector('[data-action="roam"]').addEventListener('click', quit);
+    done.style.display = 'block';
+  }
+
   // ---- checkpoint crossing: the car's path this frame crosses the arch line between the posts
   function crossed(g) {
     const cx = Math.cos(g.yaw), cz = -Math.sin(g.yaw);       // across the road (local x)
@@ -385,7 +401,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   return {
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
     set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, track: ch.track, route: ch.route, next, state, t },
-    rewards, best: () => best, start, quit, openMenu, closeMenu,
+    dnf, rewards, best: () => best, start, quit, openMenu, closeMenu,
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
       if (returning || (state !== 'countdown' && state !== 'running')) return;

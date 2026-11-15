@@ -127,9 +127,13 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     settle();
   }
   function onRaceStart(m) {
-    if (m.from === mp.me.id || !m.players?.includes(mp.me.id) || accepted !== m.inviteId) return;
-    setAccepted(null);
-    begin(m);
+    if (m.from === mp.me.id) return;
+    const pending = incoming?.inviteId === m.inviteId, waiting = accepted === m.inviteId;
+    if (!pending && !waiting) return;
+    if (pending) clearIncoming();                       // the start settles the invitation: close its pop-up
+    if (waiting) setAccepted(null);
+    if (!m.players?.includes(mp.me.id)) { ui.notice?.('Race started without you'); return; }
+    if (waiting) begin(m);
   }
 
   // ---------------------------------------------------------------- the race itself
@@ -137,6 +141,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     const i = list.findIndex(c => c.id === raceId);
     if (i < 0 || active?.inviteId === inviteId) return;
     if (incoming) clearIncoming();
+    if (challenges.state !== 'idle') challenges.quit?.();      // leave any earlier run first (its hook cancels/clears the old race)
     active = { inviteId, raceId, players, startAt, progress: new Map(), finished: new Map(), out: new Set(), firstFinishAt: null, myDone: false };
     if (!tick) tick = timers.setInterval(onTick, PROGRESS_MS);
     challenges.start(i, { mp: true, sync: { at: startAt, now: () => mp.now() } });
@@ -150,7 +155,15 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   }
   function onTick() {
     if (!active) { timers.clearInterval(tick); tick = null; return; }
-    if (!active.myDone) return sendProgress();
+    if (!active.myDone) {
+      if (isLate(mp.now())) {               // the winner's +60 s deadline passed: my DNF is final, stop my run
+        active.myDone = true;
+        challenges.dnf?.();
+        ui.results?.(rows());
+        return;
+      }
+      return sendProgress();
+    }
     ui.results?.(rows());
     if (rows().every(r => r.status !== 'racing')) { timers.clearInterval(tick); tick = null; }
   }
@@ -191,7 +204,9 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
 
   // challenges.js hook callbacks
   function leave() {                        // I left (Esc, new run, vehicle switch): tell the others unless I'd finished
-    setAccepted(null);                      // a solo run (or leaving) forgets an accepted-but-unstarted invite
+    setAccepted(null);                      // a solo run (or leaving) forgets an accepted-but-unstarted invite,
+    if (outgoing) cancelInvite();           // cancels invitations I sent,
+    if (incoming) reply(false);             // and declines one I hadn't answered: a late acceptance can't replace this run
     if (!active) return;
     if (!active.myDone) mp.send({ t: 'race-cancel', inviteId: active.inviteId });
     active = null;
