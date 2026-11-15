@@ -1,6 +1,7 @@
 // Director-only browser capture. Start the game server separately and use the heavy gate.
 // node tools/bridge_shots.mjs /tmp/bridges-audit.json /tmp/bridge-shots --rows 1,2,BR-003
 // Also accepts a JSON array of selected audit row objects. No browser is opened for --help.
+// URL precedence: --url, YR_URL, then http://127.0.0.1:8173/.
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -9,7 +10,7 @@ const usage = 'Usage: node tools/bridge_shots.mjs <audit.json> <output-folder> [
 if (args.includes('--help')) { console.log(usage); process.exit(0); }
 if (args.length < 2) throw new Error(usage);
 const [input, out] = args;
-let selection, url = 'http://127.0.0.1:8173/';
+let selection, url = process.env.YR_URL || 'http://127.0.0.1:8173/';
 for (let i = 2; i < args.length; i += 2) {
   if (!args[i + 1]) throw new Error(usage);
   if (args[i] === '--rows') selection = args[i + 1].split(',');
@@ -55,9 +56,19 @@ try {
     Object.defineProperty(navigator, 'getGamepads', { value: () => [] });
   });
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.game, { timeout: 120000 });
+  await page.waitForFunction(() => window.game?.sessionSpawn, { timeout: 120000 });
+  if (await page.evaluate(() => window.game.sessionSpawn.blocked)) {
+    await page.waitForSelector('#fullmap.open canvas', { visible: true, timeout: 30000 });
+    const spawnMap = await page.$('#fullmap canvas');
+    const box = await spawnMap.boundingBox();
+    if (!box) throw new Error('Spawn map has no visible bounds');
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForFunction(() => !window.game.sessionSpawn.blocked, { timeout: 120000 });
+  }
   await page.evaluate(() => {
     const g = window.game;
+    document.getElementById('welcome-start')?.click();
+    g.garage?.close(); g.challenges.quit(); g.minimap.toggle(false);
     window.bridgeCapture = { render: g.renderer.render, step: g.car.step, shot: null, frames: [], last: null };
     const s = window.bridgeCapture;
     // Hold the exact crossing instead of allowing physics to return to an old loaded tile.
