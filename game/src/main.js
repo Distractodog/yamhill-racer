@@ -15,6 +15,7 @@ import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
 import { Glider, BIKE_GLIDER } from './glider.js';
 import { createGliderColors } from './glidercolors.js';
+import { mp } from './mp/net.js';
 import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
@@ -105,6 +106,8 @@ const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
 const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });
 const gliderColors = createGliderColors({ car: glider, bike: bikeGlider });
+mp.setVehicleSource(() => ({ vehicle: car, kind: vehicles.current.kind,
+  colors: cosmetics.get(vehicles.current.kind), glider: gliderColors.get(vehicles.current.kind) || {} }));
 const garage = createGarage({ cosmetics, vehicles, gliderColors, rewards: challenges.rewards,
   canOpen: () => !sessionSpawn.blocked && challenges.state === 'idle',
   onOpen: () => { settings.closeWelcome(); settings.close(); vehicles.close(); challenges.closeMenu(); minimap.toggle(false); clearKeys(); },
