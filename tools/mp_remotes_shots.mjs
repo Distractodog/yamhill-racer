@@ -11,9 +11,10 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
+import { GAME_URL, RELAY_URL, startGame, holdCar, watchErrors } from './lib/startgame.mjs';
 
 const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : d; };
-const GAME = opt('--game', process.env.YR_URL || 'http://127.0.0.1:8173/'), RELAY = opt('--relay', process.env.YR_MP_RELAY || 'ws://127.0.0.1:8787');
+const GAME = opt('--game', GAME_URL), RELAY = opt('--relay', RELAY_URL);
 const OUT = args[0] || 'mp-remotes-shots';
 fs.mkdirSync(OUT, { recursive: true });
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -41,28 +42,13 @@ async function open(label) {
   const ctx = await browser.createBrowserContext();                 // own localStorage → own player id / code
   const page = await ctx.newPage();
   await page.setViewport({ width: 1280, height: 760 });
-  page.on('pageerror', e => { errors.push(`${label}: ${e.message}`); console.log(`PAGE ERROR (${label})`, e.message); });
+  watchErrors(page, label, errors);
   page.on('console', m => { if (m.type() === 'error' && !/favicon/.test(m.location()?.url || '')) console.log(`console error (${label})`, m.text()); });
-  await page.evaluateOnNewDocument(relay => { window.YR_MP_RELAY = relay; try { Object.defineProperty(navigator, 'getGamepads', { value: () => [] }); } catch {} }, RELAY);
-  await page.goto(GAME, { waitUntil: 'load', timeout: 120000 });
-  await page.waitForFunction(() => window.game?.sessionSpawn, { timeout: 120000 });
-  if (await page.evaluate(() => game.sessionSpawn.blocked)) {        // pick the spawn through the visible map, like a player
-    await page.waitForSelector('#fullmap.open canvas', { visible: true, timeout: 30000 });
-    const box = await (await page.$('#fullmap canvas')).boundingBox();
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    await page.waitForFunction(() => !game.sessionSpawn.blocked, { timeout: 120000 });
-  }
-  await page.evaluate(() => { document.getElementById('welcome-start')?.click(); game.garage?.close(); game.minimap.toggle(false); });
+  await startGame(page, { url: GAME, relay: RELAY });     // spawn map at campus, tiles loaded
   return page;
 }
 // put this page's vehicle at (x, z) facing yaw, once the ground there has streamed in
-const place = (page, x, z, yaw, kind) => page.evaluate(async (x, z, yaw, kind) => {
-  const g = game; if (kind) g.vehicles.switchTo(kind);
-  const car = g.vehicles.current, sleep = ms => new Promise(r => setTimeout(r, ms));
-  const t0 = performance.now();
-  while (!g.world.loadedAt(x, z) || g.world.pendingTiles() > 0) { car.pos.set(x, car.pos.y, z); car._lastLoaded = null; if (performance.now() - t0 > 60000) throw Error('ground did not load'); await sleep(100); }
-  car.reset(x, z, yaw); car.vel.set(0, 0, 0); car.safe = [];
-}, x, z, yaw, kind);
+const place = (page, x, z, yaw, kind) => holdCar(page, { x, z, yaw, kind });
 const remotesOf = page => page.evaluate(() => game.remotes.list());
 const shot = async (page, name, clip) => { const file = path.join(OUT, name + '.png'); await page.screenshot({ path: file, clip }); console.log('  shot', file); };
 

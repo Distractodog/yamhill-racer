@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import puppeteer from 'puppeteer-core';
-const GAME = process.env.YR_URL || 'http://127.0.0.1:8173/', RELAY = process.env.YR_MP_RELAY || 'ws://127.0.0.1:8787';
+import { RELAY_URL, startGame, watchErrors } from './lib/startgame.mjs';
 const out = process.argv[2];
 if (out) await mkdir(out, { recursive: true });
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
@@ -13,17 +13,11 @@ try {
   const pages = await Promise.all(contexts.map(c => c.newPage()));
   const [host, guest] = pages;
   await Promise.all(pages.map(async (page, i) => {
-    page.on('pageerror', error => errors.push(error.message));
+    watchErrors(page, i ? 'guest' : 'host', errors);
     await page.setViewport({ width: 1280, height: 800 });
-    await page.evaluateOnNewDocument((index, relay) => {
-      window.YR_MP_RELAY = relay;
-      localStorage.setItem('yr-welcome-hidden-1', '1');
-      localStorage.setItem('yr-mp-name-1', index ? 'Guest' : 'Host');
-    }, i, RELAY);
-    await page.goto(GAME, { waitUntil: 'load' });
-    await page.waitForFunction(() => window.game?.multiplayer && !document.getElementById('loading'), { timeout: 120000 });
-    // Close any initial spawn card before exercising the MP dialog.
-    await page.keyboard.press('Escape');
+    // past the spawn map (it covers the menu bar) and the welcome card, tiles loaded
+    await startGame(page, { relay: RELAY_URL, storage: { 'yr-mp-name-1': i ? 'Guest' : 'Host' } });
+    await page.waitForFunction(() => window.game?.multiplayer);
   }));
   const saved = page => page.evaluate(() => Object.fromEntries(['yr-tuning-2', 'yr-tuning-bike-1', 'yr-tuning-jet-1', 'yr-atmosphere-1'].map(key => [key, localStorage.getItem(key)])));
   const current = page => page.evaluate(() => ({ tuning: structuredClone(game.multiplayer.tuning), atmosphere: game.atmosphere.preset }));

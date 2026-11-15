@@ -1,19 +1,24 @@
 // Browser test for multiplayer races (director runs it; needs Chrome, the local relay and the game server):
 //   node tools/mp_race_test.mjs [shotDir]      (YR_URL = game, default http://127.0.0.1:8173/; YR_MP_RELAY default ws://127.0.0.1:8787)
-// Starts server/local.mjs and tools/serve.py itself on those ports, opens two isolated pages (host + guest),
+// Starts server/local.mjs and tools/serve.py on those ports unless already running, opens two isolated pages (host + guest),
 // invites, accepts, checks the synced GO (within 100 ms on the relay clock), then teleports each car through the gates
 // (host first, guest 2 s later) and checks the results order.  Exit code 1 on failure.
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import { connect } from 'node:net';
+import { GAME_URL as GAME, RELAY_URL as RELAY, startGame, watchErrors } from './lib/startgame.mjs';
 
 const shots = process.argv[2] || '/tmp/yr-mp-race';
 mkdirSync(shots, { recursive: true });
-const GAME = process.env.YR_URL || 'http://127.0.0.1:8173/', RELAY = process.env.YR_MP_RELAY || 'ws://127.0.0.1:8787';
 const port = url => String(new URL(url).port);
-const procs = [spawn('node', ['server/local.mjs', port(RELAY)], { stdio: 'inherit' }), spawn('python3', ['tools/serve.py', port(GAME), 'game'], { stdio: 'ignore' })];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const portOpen = p => new Promise(r => { const s = connect(+p, '127.0.0.1'); s.once('connect', () => { s.destroy(); r(true); }); s.once('error', () => r(false)); });
+const procs = [];                                               // reuse servers that are already running on those ports
+if (!(await portOpen(port(RELAY)))) procs.push(spawn('node', ['server/local.mjs', port(RELAY)], { stdio: 'inherit' }));
+if (!(await portOpen(port(GAME)))) procs.push(spawn('python3', ['tools/serve.py', port(GAME), 'game'], { stdio: 'ignore' }));
 let failed = 0;
+const pageErrors = [];
 const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${extra}`); if (!ok) failed++; };
 
 const browser = await puppeteer.launch({
@@ -23,10 +28,8 @@ async function open(name) {
   const ctx = await browser.createBrowserContext();            // separate localStorage = separate player id
   const page = await ctx.newPage();
   await page.setViewport({ width: 1100, height: 700 });
-  page.on('pageerror', e => { console.log(name, 'PAGE ERROR', e.message); failed++; });
-  await page.evaluateOnNewDocument((n, relay) => { window.YR_MP_RELAY = relay; localStorage.setItem('yr-mp-name-1', n); localStorage.setItem('yr-welcome-hidden-1', '1'); }, name, RELAY);
-  await page.goto(GAME, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.game, { timeout: 90000 });
+  watchErrors(page, name, pageErrors);
+  await startGame(page, { url: GAME, relay: RELAY, storage: { 'yr-mp-name-1': name } });   // past the spawn map, tiles loaded
   return page;
 }
 try {
@@ -72,5 +75,6 @@ try {
   check('results: host 1st, guest 2nd', order.length === 2 && /Hosty/.test(order[0]) && /Guesty/.test(order[1]));
   await host.screenshot({ path: `${shots}/host-results.png` });
 } catch (e) { console.log('ERROR', e); failed++; }
+check('no page errors', pageErrors.length === 0, `(${pageErrors.length})`);
 await browser.close(); procs.forEach(p => p.kill());
 process.exit(failed ? 1 : 0);
