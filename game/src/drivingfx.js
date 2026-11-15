@@ -31,9 +31,16 @@ export class DrivingFX {
   }
   update(dt, car) {
     if (!Number.isFinite(dt) || dt <= 0) return;
-    dt=Math.max(0,Math.min(.1,dt));this.clock+=dt;this.tick+=dt;this.trailTick+=dt;this.hitCooldown-=dt;
+    this.drive(dt, car); this.advance(dt);
+  }
+  // one vehicle's own share of the state, so several can take turns through drive (mp/remotes.js swaps it in)
+  static vehicleState() { return { tick: 0, trailTick: 0, hitCooldown: 0, lastTips: [null, null], lastPos: new THREE.Vector3(), kind: null }; }
+  // what one vehicle adds this frame; own = false (another player's vehicle) keeps everyone else's particles on a switch
+  drive(dt, car, own = true) {
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    dt=Math.max(0,Math.min(.1,dt));this.tick+=dt;this.trailTick+=dt;this.hitCooldown-=dt;
     const changed=this.kind!==car.kind || this.lastPos.distanceToSquared(car.renderPos)>250000;
-    if(changed){this.lastTips=[null,null];this.trailLife.fill(0);this.life.fill(0);this.kind=car.kind;}
+    if(changed){this.lastTips=[null,null];if(own){this.trailLife.fill(0);this.life.fill(0);}this.kind=car.kind;}
     this.lastPos.copy(car.renderPos);
     const speed=car.vel.length();
     if(car.hit>3 && this.hitCooldown<=0 && speed>3){
@@ -58,6 +65,11 @@ export class DrivingFX {
         if(prev)prev.copy(this.p);else this.lastTips[side]=this.p.clone();
       }
     }
+  }
+  // particles and trails age: once per frame, however many vehicles drove
+  advance(dt) {
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    dt=Math.max(0,Math.min(.1,dt));this.clock+=dt;
     for(let i=0;i<COUNT;i++){
       this.life[i]-=dt;this.alpha[i]=Math.max(0,this.life[i]/(this.maxLife[i]||1))*.65;
       if(this.life[i]<=0)continue;

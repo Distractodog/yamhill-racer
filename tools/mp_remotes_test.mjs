@@ -124,11 +124,12 @@ assert.equal(byId('a').body, '#1188ff', 'their own colours'); assert.equal(byId(
 assert.equal(byId('a').host, true);
 const remoteRoot = id => group.children.filter(o => o.name === 'mp-remote')[[...R.list()].findIndex(r => r.id === id)];
 const drawCalls = root => { let n = 0; root.traverseVisible(o => { if (o.isMesh) n++; }); return n; };
-assert.ok(drawCalls(remoteRoot('a')) <= 2, `near car is ≤ 2 draw calls (${drawCalls(remoteRoot('a'))})`);
+assert.equal(drawCalls(remoteRoot('a')), 0, 'near: no stand-in block');
+assert.ok(drawCalls(R.model('a')) <= 5, `near car is ≤ 5 draw calls: body + 4 wheels (${drawCalls(R.model('a'))})`);
 // skin change: colour follows, mesh rebuilt
 mp.emit('skin', { t: 'skin', from: 'a', skin: skin('car', '#ff00aa') });
 frame(); assert.equal(byId('a').body, '#ff00aa');
-let found = false; remoteRoot('a').traverseVisible(o => { if (o.isMesh && o.geometry.attributes.color) { const a = o.geometry.attributes.color, c = new THREE.Color('#ff00aa'); for (let i = 0; i < a.count && !found; i++) found = Math.abs(a.getX(i) - c.r) + Math.abs(a.getY(i) - c.g) + Math.abs(a.getZ(i) - c.b) < 1e-4; } });
+let found = false; R.model('a').traverseVisible(o => { if (o.isMesh && o.geometry.attributes.color) { const a = o.geometry.attributes.color, c = new THREE.Color('#ff00aa'); for (let i = 0; i < a.count && !found; i++) found = Math.abs(a.getX(i) - c.r) + Math.abs(a.getY(i) - c.g) + Math.abs(a.getZ(i) - c.b) < 1e-4; } });
 assert.ok(found, 'rebuilt body carries the new paint');
 // switch vehicle to the jet, then glide on the bike
 send('a', 0, 0, { v: 'jet' }); for (let i = 0; i < 12; i++) frame();
@@ -137,7 +138,7 @@ assert.equal(byId('a').kind, 'jet');
 const flameOf = root => { let f = null; root.traverse(o => { if (o.isMesh && o.material.blending === THREE.AdditiveBlending) f = o; }); return f; };
 const flameLength = speed => {
   for (let i = 0; i < 12; i++) { if (i % 4 === 0) send('a', 0, 0, { v: 'jet', vel: [0, 0, speed] }); frame(); }
-  scene.updateMatrixWorld(true); const f = flameOf(remoteRoot('a'));
+  scene.updateMatrixWorld(true); const f = flameOf(R.model('a'));
   return f.visible ? new THREE.Vector3().setFromMatrixColumn(f.matrixWorld, 2).length() : 0;
 };
 const slowFlame = flameLength(20), fastFlame = flameLength(250);
@@ -145,7 +146,7 @@ assert.ok(slowFlame > 0 && fastFlame > slowFlame * 1.5, `flame world length foll
 assert.equal(flameLength(0), 0, 'no flame standing still');
 for (let i = 0; i < 30; i++) { if (i % 4 === 0) send('b', 5, 0, { v: 'bike', glide: true, y: 20 }); frame(); }
 assert.equal(byId('b').glide, true);
-const glider = remoteRoot('b').children.find(o => o.isMesh && o.material.side === THREE.DoubleSide);
+const glider = R.model('b').children.find(o => o.isMesh && o.material.side === THREE.DoubleSide);
 assert.ok(glider?.visible, 'glider open while gliding');
 const sail = new THREE.Color('#123456'), gc = glider.geometry.attributes.color;
 let wing = false; for (let i = 0; i < gc.count && !wing; i++) wing = Math.abs(gc.getX(i) - sail.r) < 1e-4 && Math.abs(gc.getZ(i) - sail.b) < 1e-4;
@@ -158,7 +159,7 @@ send('c', 0, 900); for (let i = 0; i < 10; i++) { if (i % 4 === 0) send('c', 0, 
 const cRoot = remoteRoot('c');
 assert.deepEqual([byId('c').far, byId('c').tag, byId('c').name], [true, false, 'Cara']);
 assert.equal(drawCalls(cRoot), 1, 'far = one block');
-assert.equal(cRoot.children.filter(o => o.type === 'Group').length, 0, 'no full model built while far');
+assert.equal(R.model('c'), null, 'no full model built while far');
 send('c', 0, TAG_HIDE - 50); for (let i = 0; i < 12; i++) { if (i % 4 === 0) send('c', 0, TAG_HIDE - 50); frame(); }
 assert.deepEqual([byId('c').far, byId('c').tag], [true, true], 'tag back inside 400 m, still the block past 220 m');
 send('c', 0, 30); for (let i = 0; i < 20; i++) { if (i % 4 === 0) send('c', 0, 30); frame(); }
@@ -178,7 +179,7 @@ calls.length = 0; markerFn(ctx, (x, z) => [100 + x * 10, 100 + z * 10], 1, 'full
 assert.equal(calls.filter(c => c[0] === 'dot').length, 2, 'full map skips Cara off-screen');
 // leave / roster / closed / dispose clean up
 const before = group.children.length;
-mp.emit('left', { t: 'left', id: 'c' }); assert.equal(R.count, 2); assert.equal(group.children.length, before - 2, 'mesh + tag removed');
+mp.emit('left', { t: 'left', id: 'c' }); assert.equal(R.count, 2); assert.equal(group.children.length, before - 3, 'stand-in, tag and model removed');
 mp.emit('roster', { t: 'roster', players: roster.filter(p => p.id !== 'b') }); assert.deepEqual(R.list().map(r => r.id), ['a']);
 mp.emit('joined', { t: 'joined', player: { id: 'd', name: 'Dee' } }); assert.equal(R.count, 2);
 mp.emit('closed', { t: 'closed', reason: 'no-host' }); assert.equal(R.count, 0); assert.equal(group.children.length, 0, 'closed clears all');
@@ -215,7 +216,8 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   console.log(`16 remotes: update ${(total / N).toFixed(3)} ms avg, ${worst.toFixed(3)} ms worst; 16 states + update ${per15.toFixed(3)} ms; ${nearN} near / ${16 - nearN} far; ${calls16} visible meshes+tags`);
   assert.equal(vis.filter(r => r.visible).length, 16);
   assert.ok(total / N < 0.5, 'update well under 1 ms per frame in Node');
-  assert.ok(calls16 <= 16 * 3 + 2, `draw calls stay small (${calls16})`);
+  // animated up close: car / bike = body + wheels (5), jet = body, 4 control surfaces, 3 legs, 3 wheels, flame (12)
+  assert.ok(calls16 <= 16 * 8 + 4, `draw calls stay small (${calls16})`);
   R2.dispose();
 }
 console.log('PASS mp remotes: parse/buffer, interpolate/extrapolate/hold/teleport, late-state blend + snap, stale, bake, roster/state/skin/vehicle/glider lifecycle, far stand-in, tags, map dots, cleanup, 16-remote cost');

@@ -20,6 +20,49 @@ export function defaultRelay(win = globalThis.window) {
   return !win?.location || host === '127.0.0.1' || host === 'localhost' ? LOCAL_RELAY : DEPLOYED_RELAY;
 }
 
+// The few extra numbers other players need to animate this vehicle the way its driver sees it (mp/remotes.js reads
+// them back with the same names; anything missing there falls back to a guess from the motion). Short keys, rounded,
+// zeros left out:
+//   st steer · th throttle (the jet: its lever) · br brake · hb handbrake · dr drifting · sl slip · la / lo sideways /
+//   forward acceleration (body roll / pitch) · sf surface · w per-wheel spring compression in cm (-1 = in the air) ·
+//   ws per-wheel surface (only when one differs from sf) · ow skimming water · wd water depth ·
+//   bike: ln lean · pr pitch rate · wl wheelie · jet: md mode g|a|c · gr gear out 0..1 · jc [pitch, roll, yaw] stick
+const r1 = x => Math.round(x * 10) / 10, r2 = x => Math.round(x * 100) / 100;
+export function animState(v) {
+  const a = {}; if (!v) return a;
+  const inp = v.input || {}, kind = v.kind;
+  const put = (k, x, round = r2) => { if (Number.isFinite(x)) { x = round(x); if (x) a[k] = x; } };
+  put('st', v.steer);
+  put('th', kind === 'jet' ? v.throttle : inp.throttle);
+  if (kind !== 'jet') { put('br', inp.brake); if (inp.handbrake) a.hb = 1; }
+  if (v.drifting) a.dr = 1;
+  put('sl', v.slip); put('la', v.latAcc, r1); put('lo', v.lonAcc, r1);
+  put('sf', v.surface, Math.round);
+  if (Array.isArray(v.wheels) && v.wheels.length) {
+    a.w = v.wheels.map(w => w.contact && Number.isFinite(w.comp) ? Math.round(w.comp * 100) : -1);
+    if (v.wheels.some(w => (w.surf | 0) !== (a.sf || 0))) a.ws = v.wheels.map(w => w.surf | 0);
+  }
+  if (v.onWater) a.ow = 1;
+  put('wd', v.waterDepth);
+  if (kind === 'bike') { put('ln', v.lean); put('pr', v.pitchRate, r1); if (v.wheelie) a.wl = 1; }
+  if (kind === 'jet') {
+    a.md = v.mode === 'air' ? 'a' : v.mode === 'crashed' ? 'c' : 'g';
+    put('gr', v.gear);
+    const J = inp.jet; if (J && (J.pitch || J.roll || J.yaw)) a.jc = [r2(J.pitch || 0), r2(J.roll || 0), r2(J.yaw || 0)];
+  }
+  return a;
+}
+
+// The tuning other players' copies of this vehicle are drawn with (what Car / Bike syncMesh read from `t`): car rl
+// spring rest length, sl steering lock; bike tr suspension travel. Sent in the skin, so only when it changes.
+export function animTuning(v) {
+  const t = v?.t, out = {}, r3 = x => Math.round(x * 1000) / 1000;
+  const put = (k, x) => { if (Number.isFinite(x)) out[k] = r3(x); };
+  if (t && v.kind === 'car') { put('rl', t.restLength); put('sl', t.steerLock); }
+  if (t && v.kind === 'bike') put('tr', t.travel);
+  return out;
+}
+
 export class Net {
   constructor({ WebSocketImpl = globalThis.WebSocket, storage = storageDefault(), relay,
     clock = () => Date.now(), timers = globalThis } = {}) {
@@ -137,7 +180,8 @@ export class Net {
   }
   _skin(sample = this._source()) {
     const kind = sample?.kind || sample?.vehicle?.kind || 'car';
-    return { vehicle: kind, colors: sample?.colors || {}, glider: sample?.glider || {} };
+    const tune = animTuning(sample?.vehicle);
+    return { vehicle: kind, colors: sample?.colors || {}, glider: sample?.glider || {}, ...(Object.keys(tune).length ? { tune } : {}) };
   }
   _tick() {
     if (!this.inGame) return;
@@ -148,7 +192,9 @@ export class Net {
     const p = vehicle.pos, q = vehicle.quat, vel = vehicle.vel;
     if (!p || !q || !vel) return;
     const state = { t: 'state', v: skin.vehicle, p: [p.x, p.y, p.z], q: [q.x, q.y, q.z, q.w],
-      vel: [vel.x, vel.y, vel.z], glide: !!vehicle.glide?.active, ts: this.now() };
+      grounded: !!vehicle.grounded, mode: vehicle.kind === 'jet' ? vehicle.mode : undefined,
+      ghostUntil: Number.isFinite(vehicle.ghostUntil) ? vehicle.ghostUntil : 0,
+      vel: [vel.x, vel.y, vel.z], glide: !!vehicle.glide?.active, ts: this.now(), ...animState(vehicle) };
     if ([...state.p, ...state.q, ...state.vel].every(Number.isFinite)) this.send(state);
   }
   _write(msg) {

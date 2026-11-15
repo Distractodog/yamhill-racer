@@ -15,35 +15,45 @@ const GLIDING = { throttle: 0, brake: 0 };
 const GEARS = [0, 55, 100, 145, 190, 235, 300];   // km/h at the top of each gear
 const BIKE_GEARS = [0, 35, 65, 95, 130, 170, 260];   // dirt bike: shorter gears, revs higher
 
+// decoded recordings per audio context, so other players' engines (mp/remotes.js) share them with yours
+const recordings = new WeakMap();
+function recording(ctx, name) {
+  let m = recordings.get(ctx); if (!m) recordings.set(ctx, m = new Map());
+  if (!m.has(name)) m.set(name, fetch(new URL(`../assets/audio/engine_${name}.wav`, import.meta.url)).then(r => r.arrayBuffer()).then(b => ctx.decodeAudioData(b)));
+  return m.get(name);
+}
+
 export class CarAudio {
-  constructor() { this.ctx = null; this.gear = 1; }
+  // opts (another player's engine, mp/remotes.js): ctx = an existing AudioContext, out = node to play into, volume
+  constructor(opts = {}) { this.ctx = null; this.gear = 1; this.opts = opts; this.sources = []; }
 
   start() {
     if (this.ctx) { this.ctx.resume(); return; }
     let ctx;
-    try { ctx = new AudioContext(); } catch { return; }
+    try { ctx = this.opts.ctx || new AudioContext(); } catch { return; }
     this.ctx = ctx;
-    const master = ctx.createGain(); master.gain.value = 0.55; master.connect(ctx.destination);
+    const master = ctx.createGain(); master.gain.value = this.opts.volume ?? 0.55; master.connect(this.opts.out || ctx.destination);
+    this.master = master;
     // engine: recorded loops -> per-layer gain -> tone filter -> engine gain
     this.engFilter = ctx.createBiquadFilter(); this.engFilter.type = 'lowpass'; this.engFilter.frequency.value = 2500; this.engFilter.Q.value = 0.7;
     const body = ctx.createBiquadFilter(); body.type = 'peaking'; body.frequency.value = 160; body.gain.value = 4; body.Q.value = 0.8;
     this.engGain = ctx.createGain(); this.engGain.gain.value = 0;
     this.engFilter.connect(body).connect(this.engGain).connect(master);
     this.layers = [];
-    const base = new URL('../assets/audio/', import.meta.url);
     for (const [name, hz] of LAYERS) {
       const layer = { hz, src: null, gain: ctx.createGain() };
       layer.gain.gain.value = 0; layer.gain.connect(this.engFilter);
       this.layers.push(layer);
-      fetch(new URL(`engine_${name}.wav`, base)).then(r => r.arrayBuffer()).then(b => ctx.decodeAudioData(b)).then(buf => {
+      recording(ctx, name).then(buf => {
+        if (this.ctx !== ctx) return;                    // stopped meanwhile
         const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-        src.connect(layer.gain); src.start(0, Math.random() * buf.duration); layer.src = src;
+        src.connect(layer.gain); src.start(0, Math.random() * buf.duration); layer.src = src; this.sources.push(src);
       }).catch(e => console.warn('engine sound', name, e));
     }
     // noise source shared by tyres / gravel / wind
     const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    const noise = () => { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.start(); return s; };
+    const noise = () => { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.start(); this.sources.push(s); return s; };
     const band = (type, f, q, out) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; const g = ctx.createGain(); g.gain.value = 0; noise().connect(b).connect(g).connect(out); return g; };
     this.squeal = band('bandpass', 1500, 6, master);
     this.crunch = band('lowpass', 420, 1, master);
@@ -55,7 +65,14 @@ export class CarAudio {
     const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 400;
     const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 8; bp.frequency.value = 1200;
     this.whine = ctx.createGain(); this.whine.gain.value = 0; this.whineOsc = o;
-    o.connect(bp).connect(this.whine).connect(master); o.start();
+    o.connect(bp).connect(this.whine).connect(master); o.start(); this.sources.push(o);
+  }
+
+  // silence for good (another player's engine that is no longer needed); start() builds it again
+  stop() {
+    if (!this.ctx) return;
+    for (const s of this.sources) try { s.stop(); } catch {}
+    this.master.disconnect(); this.sources = []; this.ctx = null;
   }
 
   update(car, input, dt) {
