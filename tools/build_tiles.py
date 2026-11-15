@@ -9,13 +9,13 @@ from each tile's own satellite / tree-height data.
 
 Per tile, game/assets/tiles/<tx>_<tz>/:
   height.bin    float32 (HN+2*HM)^2 heights on a 4 m grid: the tile's 501^2 vertices plus HM vertices of margin
-  surface.bin   uint8 2000^2 surface classes at 1 m (0 grass, 1 forest floor, 5 pond bed, 6 building pad, 7 track)
+  surface.bin   uint8 2000^2 surface classes at 1 m (0 grass, 1 forest floor, 5 pond / river bed, 6 building pad, 7 track)
   ground.png    2048^2 stylised ground colours
   (written packed by default — height.bin.gz, surface.bin.gz, ponds.bin.gz, tile.json.gz, trees.bin.gz, ground.webp, see tilefmt.py;
    v3 quantizes heights within 1 cm and tree positions within 2 cm, preserving raster bytes;
    YR_PACK=0 writes the plain files above)
   trees.bin     float32 [x, z, height, broadleaf] per tree
-  tile.json     buildings, road/trail strips (render + physics pieces), ponds
+  tile.json     buildings, road/trail strips (render + physics pieces), ponds, river pools (`rivers`, tools/rivers.py)
 game/assets/world.json: tile size, list of tiles, spawn, height grid info.
 """
 import json, math, os, sys, time
@@ -27,7 +27,7 @@ from skimage.morphology import skeletonize
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
-import mapdata, align, roadnet, tilefmt
+import mapdata, align, roadnet, tilefmt, rivers
 from fetch_tiles import TILE, MARGIN, TX, TZ, TILE_SET, HSTEP, CX, CY, K, R
 import fetch_tiles
 RIM_R = 22500                                     # drivable radius of the round map (m)
@@ -125,7 +125,7 @@ ROAD_W = {'motorway': 18, 'trunk': 17, 'primary': 16, 'secondary': 15, 'tertiary
 SERVICE_W = {'alley': 5, 'driveway': 5, 'parking_aisle': 6, 'drive-through': 5}
 FLAT_DRIVEWAY = 30.0                 # driveways shorter than this and all parking aisles: flat paving (flat: true)
 PAVED = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street'}
-road_paths, buildings, water_polys = [], [], []
+road_paths, buildings, water_polys, river_lines = [], [], [], []
 for e in osm:
     t = e.get('tags', {}); geo = e.get('geometry')
     if not geo: continue
@@ -154,6 +154,10 @@ for e in osm:
         buildings.append({'pts': pts[:-1], 'h': round(hgt, 1)})
     elif t.get('natural') == 'water' and e['type'] == 'way':
         if in_map(pts[:, 0], pts[:, 1], 100).any(): water_polys.append(pts)
+    elif 'waterway' in t and e['type'] == 'way':
+        for run in keep_in_map(pts, 100):
+            rv = rivers.from_osm(t, run)
+            if rv: river_lines.append(rv)
 if os.path.isfile(os.path.join(RAW, 'footprints.geojson')):
     import footprints
     from shapely.geometry import LineString as _LS, Polygon as _PG
@@ -169,7 +173,7 @@ if os.path.isfile(os.path.join(RAW, 'footprints.geojson')):
         else: _kept.append(b)
     log('imported footprints:', len(buildings) - _n_osm, 'kept', len(buildings) - _n_osm - _dropped, '· dropped on roads', _dropped)
     buildings = _kept
-log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys))
+log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys), 'river/stream lines', len(river_lines))
 # town ground (fetch_tiles.py fetch_landuse): green = parks / lawns / pitches / cemeteries, grey = parking + lots
 GREEN_LU = {'grass', 'recreation_ground', 'cemetery', 'village_green', 'park', 'pitch', 'playground', 'garden',
             'golf_course', 'sports_centre'}
@@ -491,10 +495,16 @@ planes, plane_y = roadnet.profiles(nodes, edges, J, _hfun(gh), lambda x, z: floa
                                    lambda x, z: (float(_hfun(_gx)(x, z)[0]), float(_hfun(_gz)(x, z)[0])))
 log('roads matched to an overlapping bigger road:', roadnet.harmonize(edges, J))
 juncs = roadnet.junction_rings(J, edges, planes, plane_y)
-# pond beds are never carved; the 1-cell rim around them can be, as long as it stays above that pond's water
-_lv = np.array([-np.inf] + [p['level'] for p in ponds_g], np.float32)
+# rivers + streams: pools stepping down each line, bed carved, banks kept dry (tools/rivers.py); after the road
+# heights (so roads don't dip into them), before the road carve (which fills them back in under culverts)
+RIVER_ID0 = len(ponds_g) + 1
+river_levels, river_wet = rivers.build(gh, GX0, GZ0, HSTEP, river_lines, pond_gid,
+                                       np.array([-np.inf] + [p['level'] for p in ponds_g]), RIVER_ID0, log)
+# pond beds are never carved; the 1-cell rim around them can be, as long as it stays above that pond's water.
+# River pools are free to carve (a road over a stream fills it in).
+_lv = np.array([-np.inf] + [p['level'] for p in ponds_g] + [-np.inf] * len(river_levels), np.float32)
 _protect = ndimage.maximum_filter(_lv[pond_gid], size=3) + 0.15
-_protect[pond_gid > 0] = np.inf
+_protect[(pond_gid > 0) & (pond_gid < RIVER_ID0)] = np.inf
 nv, mx = roadnet.carve(gh, GX0, GZ0, HSTEP, edges, juncs, _protect)
 log(f'roads carved: {nv} height vertices moved (max {mx:.1f} m), junction pieces {len(juncs)}')
 del _ghs, _gx, _gz
@@ -573,6 +583,7 @@ for tx, tz in TILES:
         ia0, ia1 = max(sa.start, hi0), min(sa.stop, hi0 + HN); ja0, ja1 = max(sb.start, hj0), min(sb.stop, hj0 + HN)
         if ia1 <= ia0 or ja1 <= ja0: continue
         wet_h[ia0 - hi0:ia1 - hi0, ja0 - hj0:ja1 - hj0] |= wet[ia0 - sa.start:ia1 - sa.start, ja0 - sb.start:ja1 - sb.start]
+    wet_h |= river_wet[hi0:hi0 + HN, hj0:hj0 + HN]
     wet_core = np.asarray(Image.fromarray(wet_h.astype(np.uint8) * 255).resize((TILE, TILE), Image.BILINEAR)) > 100
 
     # ---- surface classes (core, 1 m)
@@ -633,6 +644,7 @@ for tx, tz in TILES:
     gx = np.clip(gx, rx0 + 0.01, rx1 - 0.01); gz = np.clip(gz, rz0 + 0.01, rz1 - 0.01)
     px = np.clip((gx - (rx0 - M)).astype(int), 0, SAT_N - 1); pz = np.clip((gz - (rz0 - M)).astype(int), 0, SAT_N - 1)
     path_d = ndimage.distance_transform_edt(~path_m); bld_d = ndimage.distance_transform_edt(~bld_m)
+    water_m[M:M + TILE, M:M + TILE] |= wet_core                      # no trees in rivers either
     keep = tree[pz, px] & (path_d[pz, px] > 1.2) & (bld_d[pz, px] > 4) & ~water_m[pz, px]
     edge = ndimage.binary_dilation(tree, iterations=3) & ~tree
     keep |= edge[pz, px] & (rng.random(gx.size) < 0.12) & (path_d[pz, px] > 3) & (bld_d[pz, px] > 6) & ~water_m[pz, px]
@@ -657,16 +669,18 @@ for tx, tz in TILES:
     pr = tile_rect(tx, tz, pad=40)
     tj = [jn for jn in juncs if rx0 <= jn['c'][0] < rx1 and rz0 <= jn['c'][1] < rz1]
     pj = [jn for jn in juncs if any(pr[0] <= q[0] <= pr[2] and pr[1] <= q[1] <= pr[3] for q in jn['ring'])]
-    # ---- ponds touching this tile
-    tponds = {}
+    # ---- ponds + river pools touching this tile
+    tponds, trivers = {}, {}
     for k in np.unique(pid_pad[pid_pad > 0]):
-        tponds[int(k)] = ponds_g[k - 1]['level']
+        if k < RIVER_ID0: tponds[int(k)] = ponds_g[k - 1]['level']
+        else: trivers[int(k)] = river_levels[k - RIVER_ID0]
     tilefmt.write_bytes(out, 'tile.json', json.dumps({'tx': tx, 'tz': tz, 'buildings': [{'pts': np.round(b['pts'], 2).tolist(), 'h': b['h']} for b in tb
                                                    if rx0 <= b['pts'][:, 0].mean() < rx1 and rz0 <= b['pts'][:, 1].mean() < rz1],
-               'paths': render, 'physPaths': phys, 'junctions': tj, 'physJunctions': pj, 'ponds': tponds}).encode(), PACK)
+               'paths': render, 'physPaths': phys, 'junctions': tj, 'physJunctions': pj, 'ponds': tponds,
+               **({'rivers': trivers} if trivers else {})}).encode(), PACK)
     tilefmt.write_bytes(out, 'ponds.bin', pid_pad.astype(np.uint16).tobytes(), PACK)
     world_tiles.append([tx, tz])
-    log(f'tile {tx},{tz}: trees {len(T)}, buildings {len(tb)}, strips {len(render)}, ponds {len(tponds)} ({time.time() - t1:.0f}s)')
+    log(f'tile {tx},{tz}: trees {len(T)}, buildings {len(tb)}, strips {len(render)}, ponds {len(tponds)}, river pools {len(trivers)} ({time.time() - t1:.0f}s)')
 
 # ---------------------------------------------------------------- 7. world.json
 json.dump({'tile': TILE, 'hstep': HSTEP, 'hn': HN, 'hm': HM, 'surfN': TILE, 'tiles': world_tiles,
