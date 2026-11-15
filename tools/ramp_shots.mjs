@@ -1,5 +1,6 @@
 // Director-only browser check; existing server required. Run behind the heavy gate.
 // node tools/ramp_shots.mjs /tmp/ramps-audit.json /tmp/ramp-shots [--ids RJ-001,RJ-002]
+// YR_URL overrides the default game server at http://127.0.0.1:8173/.
 import puppeteer from 'puppeteer-core';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -30,15 +31,25 @@ try {
   await page.setViewport({ width: 1280, height: 760 });
   page.on('pageerror', e => { errors.push(e.message); console.error('PAGE ERROR', e.message); });
   await page.evaluateOnNewDocument(() => localStorage.setItem('yr-welcome-hidden-1', '1'));
-  await page.goto('http://127.0.0.1:8173/', { waitUntil: 'load' });
-  await page.waitForFunction(() => window.game, { timeout: 120000 });
+  await page.goto(process.env.YR_URL || 'http://127.0.0.1:8173/', { waitUntil: 'load', timeout: 120000 });
+  await page.waitForFunction(() => window.game?.sessionSpawn, { timeout: 120000 });
+  if (await page.evaluate(() => window.game.sessionSpawn.blocked)) {
+    await page.waitForSelector('#fullmap.open canvas', { visible: true, timeout: 30000 });
+    const box = await (await page.$('#fullmap canvas')).boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForFunction(() => !window.game.sessionSpawn.blocked, { timeout: 120000 });
+  }
+  await page.evaluate(() => {
+    document.getElementById('welcome-start')?.click();
+    const g = window.game;
+    g.garage?.close(); g.challenges.quit(); g.minimap.toggle(false);
+  });
   // Override only this page's renderer.render: after the game's own camera update,
   // pin a survey camera and vehicle and render the normal scene. Streaming still runs.
   await page.evaluate(() => {
     const g = window.game;
-    // Survey mode keeps spawn physics paused but removes its full-map overlay.
-    g.minimap.pickSpawn(null);
-    g.minimap.toggle(false);
+    // Startup is complete; freeze vehicle physics for the fixed survey views.
+    g.car.step = () => {};
     const render = g.renderer.render.bind(g.renderer);
     window.rampSurvey = { active: false, intervals: [], last: 0 };
     g.renderer.render = (scene, camera) => {

@@ -1,6 +1,6 @@
 # Ramp / merge / split audit
 
-OSM geometry inventory for the current world manifest. Visual review is pending; no screenshot was run by this worker.
+OSM geometry inventory for the current world manifest. The director accepts this geometry-based audit because no newer OSM export with node IDs exists. Visual review is pending; no screenshot was run by this worker.
 
 Manifest scope: **468 tiles**, 6498 source road ways, 42 link ways with a vertex in-map; 0 incomplete road geometries skipped.
 
@@ -17,12 +17,12 @@ Manifest scope: **468 tiles**, 6498 source road ways, 42 link ways with a vertex
 - **RJ-002**, (3566.91, 2382.8), shared vertex coord:45.0895932,-123.3955976: Salmon River Highway (OR 18), two-way, lanes=2; 18.15° right exit, nearest same-name/ref, similarly directed merge 402.7 m away (shared vertex coord:45.0883400,-123.4004069). Two total lanes supports one each way; **right exit, so it fails the requested left-exit detail**.
 - **RJ-003**, (21049.86, -10017.31), shared vertex coord:45.2009183,-123.1730610: East McMinnville Bypass (OR 18), two-way, lanes=2; 12.22° right exit, nearest same-name/ref, similarly directed merge 697.0 m away (shared vertex coord:45.1991958,-123.1815889). Two total lanes supports one each way; **right exit, so it fails the requested left-exit detail**.
 
-**Requested left exit not found in the supplied cache.** These are the closest right-exit alternatives. Row 1 is the strongest geometry/tag candidate, not a confirmed identification of the owner’s screenshot. Proximity is straight-line distance with main travel headings within 60°, not proof that the merge feeds the same carriageway or travel direction.
+**Requested left exit not found in the supplied cache.** The director will ask the owner to locate that spot. These are the closest right-exit alternatives. Row 1 is the strongest geometry/tag candidate, not a confirmed identification of the owner’s screenshot. Proximity is straight-line distance with main travel headings within 60°, not proof that the merge feeds the same carriageway or travel direction.
 
 ## Method and limitations
 
-- The supplied OSM cache has no node IDs (only way geometry). Shared vertices are exact 7-decimal latitude/longitude keys (`coord:lat,lon`), not invented OSM node IDs. Coincident but topologically distinct nodes cannot be distinguished: this inventory needs a node-ID export to prove shared-node topology. No distance tolerance is used.
-- The cache contains only 42 link ways (30 trunk, 8 tertiary, 2 primary, 2 secondary), fewer than the brief’s older 66-way inventory. Iterating all 468 manifest tiles does not establish that this cache covers them: the known western Hwy 18 examples are absent. A current region export is needed to certify whole-map completeness.
+- The supplied OSM cache has no node IDs (only way geometry). Shared vertices are exact 7-decimal latitude/longitude keys (`coord:lat,lon`), not invented OSM node IDs. Coincident but topologically distinct nodes cannot be distinguished: shared-node topology remains unproven, and the director accepts this exact-coordinate method for RJ-0. No distance tolerance is used.
+- The cache contains only 42 link ways (30 trunk, 8 tertiary, 2 primary, 2 secondary), fewer than the brief’s older 66-way inventory. Iterating all 468 manifest tiles does not establish that this cache covers them: the known western Hwy 18 examples are absent. Source completeness remains a limitation of the accepted audit; no newer export is available.
 - Projection matches `build_tiles.py`: Mercator minus the NAIP extent centre, scaled by cosine of the centre latitude; z points south.
 - Use the actual manifest tile union, not its bounding rectangle. All source road ways remain available for shared-node topology; only meets inside a tile are emitted.
 - Match the builder’s drivable highway classes. A pair qualifies when exactly one way is `_link`, or either way has `junction=*` or legal one-way travel. Link/link and non-link pairs can therefore enter through the second rule.
@@ -40,7 +40,7 @@ python3 tools/ramp_audit.py --raw <main-checkout>/data/raw --json /tmp/ramps-aud
 node tools/ramp_shots.mjs /tmp/ramps-audit.json /tmp/ramp-shots
 ```
 
-The script writes driver and overhead PNGs for every row plus `results.json` (page errors, frame timings, failures). Optional `--ids RJ-001,RJ-002` selects rows. Update each verdict after opening both PNGs. The worker only syntax-checked this script; screenshot coverage, page errors, FPS and visual verdicts are **NOT VERIFIED**.
+The script writes driver and overhead PNGs for every row plus `results.json` (page errors, frame timings, failures). Optional `--ids RJ-001,RJ-002` selects rows; `YR_URL` overrides the default game server URL. Startup clicks the spawn map when blocked and waits until spawn selection completes before capturing views. Update each verdict after opening both PNGs. The worker only syntax-checked this script; screenshot coverage, page errors, FPS and visual verdicts are **NOT VERIFIED**.
 
 Survey frame timings include the extra camera/streaming override and are diagnostic only, not a game performance baseline.
 
