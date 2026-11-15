@@ -1,15 +1,18 @@
-// Vehicle garage: the car, the dirt bike and the jet, which one you're in, and the V picker.
+// Vehicle garage: the car, the dirt bike, the jet, the jet ski and the speedboat, which one you're in, and the V picker.
 // `player` is a stand-in that always points at the vehicle you're in, so code that was handed "the car" once
 // (challenges, pin guide, effects, sound, camera) follows a switch without knowing about it.
 import { Car } from './car.js';
 import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
+import { Boat, JETSKI, SPEEDBOAT, findBank } from './boat.js';
 import { activeProxy } from './vehicle.js';
 
 export const VEHICLES = [
   { kind: 'car', icon: '🏎️', name: 'Car', help: 'W/S drive · A/D steer · Space handbrake · G glider' },
   { kind: 'bike', icon: '🏍️', name: 'Dirt bike', help: 'W/S ride · A/D steer · Shift wheelie · Space rear-brake slide · in the air W/S lean · G glider' },
   { kind: 'jet', icon: '✈️', name: 'Jet', help: 'W/S throttle · ↑/↓ pitch (↓ = nose up) · ←/→ roll · A/D rudder + nose wheel · Space brakes' },
+  { kind: 'jetski', icon: '🌊', name: 'Jet ski', help: 'Starts on the nearest river or pond · W throttle · S brake / reverse · A/D steer · R back to the water' },
+  { kind: 'boat', icon: '🚤', name: 'Speedboat', help: 'Starts on the nearest river or pond · W throttle · S brake / reverse · A/D steer · R back to the water' },
 ];
 export const vehicleInfo = kind => VEHICLES.find(v => v.kind === kind) || VEHICLES[0];
 
@@ -32,7 +35,8 @@ const CSS = `
 
 export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE }, jetTuning = { ...JET }, canSwitch = () => true }) {
   const car = new Car(world, tuning), bike = new Bike(world, bikeTuning), jet = new Jet(world, jetTuning);
-  const all = { car, bike, jet };
+  const jetski = new Boat(world, JETSKI), boat = new Boat(world, SPEEDBOAT);
+  const all = { car, bike, jet, jetski, boat };
   let cur = car, sel = 0, open = false;
   scene.add(car.mesh);
   const player = activeProxy(() => cur);
@@ -42,13 +46,30 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   function switchTo(kind, { place = true } = {}) {
     const next = all[kind]; if (!next) return false;
     if (next === cur) return true;
+    const fromBoat = cur instanceof Boat, toBoat = next instanceof Boat;
+    if (fromBoat) cur.launching = null;          // cancels a boat's hold (on its way to a launch spot / back to land)
     const p = cur.pos.clone(), yaw = cur.heading(), sp = cur.vel.length();
     const agl = p.y - world.heightAt(p.x, p.z);
+    // leaving a boat for a land vehicle: on the nearest bank, facing away from the water. No dry bank loaded near (the
+    // boat is still on its way to a launch spot): back where you were before picking the boat; if that ground has
+    // streamed out meanwhile, the boat (hidden) holds there until it's loaded, then this switch runs again.
+    let land = null;
+    if (place && fromBoat && !toBoat) {
+      const back = cur.cameFrom, atBack = back && Math.hypot(p.x - back[0], p.z - back[1]) < 1;   // a hold there just ended
+      land = (atBack ? back : findBank(world, p.x, p.z)) || back || null;
+      if (land && !world.loadedAt(land[0], land[1])) {
+        const boat = cur;
+        boat.holdAt({ x: land[0], z: land[1], y: land[3] }, () => { if (cur === boat) switchTo(kind); }, { away: true });
+        return true;
+      }
+    }
+    if (toBoat) next.cameFrom = fromBoat ? cur.cameFrom : [p.x, p.z, yaw, p.y];
     cur.glide?.cancel?.();
     scene.remove(cur.mesh);
     next.safe = cur.safe.slice();
     next._lastLoaded = cur._lastLoaded;
-    if (place) {
+    if (land) next.reset(land[0], land[1], land[2]);
+    else if (place) {
       if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
       else next.reset(p.x, p.z, yaw);
     }
@@ -69,7 +90,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
       `<button class="veh-item${i === sel ? ' sel' : ''}${v.kind === cur.kind ? ' cur' : ''}" data-k="${v.kind}">
         <span class="veh-icon">${v.icon}</span><span><div class="veh-name">${v.name}</div><div class="veh-help">${v.help}</div></span>
         <span class="veh-key">${i + 1}</span></button>`).join('') +
-      `<div class="veh-hint">1 / 2 / 3, ↑/↓ + Enter or click · V or Esc to close${canSwitch() ? '' : ' · switching ends the race you\'re in'}</div>`;
+      `<div class="veh-hint">1–${VEHICLES.length}, ↑/↓ + Enter or click · V or Esc to close${canSwitch() ? '' : ' · switching ends the race you\'re in'}</div>`;
     menu.querySelectorAll('.veh-item').forEach(b => b.addEventListener('click', () => pick(b.dataset.k)));
   }
   function pick(kind) { close(); if (kind !== cur.kind) { if (!canSwitch(kind)) return; switchTo(kind); } }
@@ -84,11 +105,11 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     if (e.code === 'Escape') close();
     else if (e.code === 'ArrowDown' || e.code === 'ArrowUp') { sel = (sel + (e.code === 'ArrowDown' ? 1 : VEHICLES.length - 1)) % VEHICLES.length; render(); }
     else if (e.code === 'Enter') pick(VEHICLES[sel].kind);
-    else if (/^(Digit|Numpad)[1-3]$/.test(e.code)) pick(VEHICLES[+e.code.slice(-1) - 1].kind);
+    else if (/^(Digit|Numpad)[1-9]$/.test(e.code) && VEHICLES[+e.code.slice(-1) - 1]) pick(VEHICLES[+e.code.slice(-1) - 1].kind);
   }, true);
 
   return {
-    player, all, car, bike, jet, switchTo, show, close,
+    player, all, car, bike, jet, jetski, boat, switchTo, show, close,
     get current() { return cur; }, get open() { return open; },
     onSwitch(f) { listeners.push(f); },
   };

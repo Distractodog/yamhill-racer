@@ -5,7 +5,8 @@ let activeKeyboard = null;
 // Registered during module evaluation, before settings/vehicle/race capture handlers.
 if (typeof addEventListener === 'function') addEventListener('keydown', e => activeKeyboard?.(e), true);
 const PRESET_KEY = 'yr-garage-presets-1';
-const NAMES = { car: 'Car', bike: 'Dirt bike', jet: 'Jet' };
+const NAMES = { car: 'Car', bike: 'Dirt bike', jet: 'Jet', jetski: 'Jet ski', boat: 'Speedboat' };
+const RIDERS = ['bike', 'jetski', 'boat'], NO_WHEELS = ['jet', 'jetski', 'boat'];   // which kinds show rider / wheel colours
 export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen = () => {}, onClose = () => {}, canOpen = () => true, rewards = null }) {
   const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./garage.css', import.meta.url).href; document.head.append(link);
   let button = document.getElementById('garage-button');
@@ -73,10 +74,10 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
     const config=cosmetics.get(kind);
     dialog.querySelectorAll('[data-kind]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.kind===kind)));
     for(const [name,value] of Object.entries(config)){const field=dialog.querySelector(`[name="${name}"]`);if(field)field.value=value;}
-    for(const role of ['jacket','gloves'])dialog.querySelector(`[data-role="${role}"]`).hidden=kind!=='bike';
+    for(const role of ['jacket','gloves'])dialog.querySelector(`[data-role="${role}"]`).hidden=!RIDERS.includes(kind);
     dialog.querySelector('[data-role="helmet"]').hidden=kind==='jet';
-    dialog.querySelector('[name="wheelStyle"]').closest('label').hidden=kind==='jet';
-    dialog.querySelector('[data-role="wheels"]').hidden=kind==='jet';
+    dialog.querySelector('[name="wheelStyle"]').closest('label').hidden=NO_WHEELS.includes(kind);
+    dialog.querySelector('[data-role="wheels"]').hidden=NO_WHEELS.includes(kind);
     const list=dialog.querySelector('.garage-liveries');list.replaceChildren();
     for(const livery of LIVERIES){
       const b=document.createElement('button');b.type='button';b.dataset.livery=livery.id;

@@ -318,7 +318,8 @@ function updateCamera(dt) {
   // follow the hill's overall slope (sampled 8 m ahead and behind), not the car's bounce over each ground
   // triangle – copying every little pitch and bob is what made the view shake at speed
   const rp = car.renderPos, hx = Math.sin(camYaw), hz = Math.cos(camYaw);
-  const slope = Math.atan2(world.terrainAt(rp.x + hx * 8, rp.z + hz * 8) - world.terrainAt(rp.x - hx * 8, rp.z - hz * 8), 16);
+  // (boats: cam.flat – the water is level; the river bed and banks under it would tilt the view)
+  const slope = vc.flat ? 0 : Math.atan2(world.terrainAt(rp.x + hx * 8, rp.z + hz * 8) - world.terrainAt(rp.x - hx * 8, rp.z - hz * 8), 16);
   const airborne = !car.grounded && car.airTime > 0.2;
   const pathPitch = Math.atan2(car.vel.y, hs + 1);                   // gliding: look along the glide path
   camPitch += ((gl ? pathPitch * 0.8 : airborne ? camPitch : slope * 0.6) - camPitch) * Math.min(1, dt * 3);
