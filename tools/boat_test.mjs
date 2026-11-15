@@ -1,0 +1,184 @@
+// Headless jet ski + speedboat drives (game/src/boat.js) on the committed tiles round Sheridan: the big pond south-east
+// of town and the South Yamhill at Bridge Street. No rendering. Prints numbers, exits nonzero on a failed check.
+//   node tools/boat_test.mjs            V=1 prints a line every 0.5 s of each run
+// Checks per boat: floats and bobs at rest, accelerates to its top speed (jet ski ~100, speedboat ~120 km/h), gets on
+// the plane (hull lifts, bow-up hump on the way), turns (jet ski: tighter and leans more), crosses its own wake, slows
+// in shallow water, runs under the bridge, beaches on the bank (slides to a stop), pushes back in with S, R puts it
+// back on the water, and reset() on land finds the nearest water. No NaN anywhere.
+import fs from 'fs';
+import { makeWorld, makeTileData } from '../game/src/data.js';
+import { readTileData } from '../game/src/tilepack.js';
+import { Boat, JETSKI, SPEEDBOAT, findWater } from '../game/src/boat.js';
+
+const A = (process.env.YR_ASSETS || 'game/assets').replace(/\/?$/, '/');
+const WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
+const W = makeWorld(WJ);
+const ab = f => { const b = fs.readFileSync(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+for (const [tx, tz] of [[1, 1], [2, 1], [3, 1], [2, 0], [2, 2]]) {        // Sheridan and round it (memory: a few tiles only)
+  if (!WJ.tiles.some(([a, b]) => a === tx && b === tz)) continue;
+  const d = `${A}tiles/${tx}_${tz}/`;
+  W.add(makeTileData(WJ, tx, tz, await readTileData(async f => ab(d + f), WJ.packed)));
+}
+const DT = 1 / 120, POND = [4640, 2290], RIVER = [3700, 1344], LAND = [3694, 1230];
+const water = (x, z) => { const w = W.waterLevelAt(x, z); return w > W.terrainAt(x, z) ? w : -Infinity; };
+const depth = (x, z) => water(x, z) - W.terrainAt(x, z);
+let failed = 0;
+const check = (ok, what, detail = '') => { console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${what}${detail ? ' — ' + detail : ''}`); if (!ok) failed++; };
+const finite = b => [b.pos.x, b.pos.y, b.pos.z, b.vel.x, b.vel.y, b.vel.z, b.quat.x, b.quat.y, b.quat.z, b.quat.w].every(Number.isFinite);
+const kmh = b => Math.hypot(b.vel.x, b.vel.z) * 3.6;
+
+// drive `secs` (or until ctl returns true); per step ctl(t, input, boat). Returns stats.
+function drive(b, secs, ctl, label = '') {
+  const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+  const st = { nan: false, maxKmh: 0, t: 0, maxVy: 0, ys: [], maxLean: 0, maxPitch: 0, minYawRate: 0, maxYawRate: 0, maxAbove: -9, stopped: false };
+  for (let i = 0; i < secs / DT; i++) {
+    const t = i * DT; st.t = t;
+    if (ctl(t, inp, b, st)) break;
+    b.savePrev(); b.step(DT, inp);
+    if (!finite(b)) { st.nan = true; console.log('  NaN at', t.toFixed(2), label); break; }
+    st.maxKmh = Math.max(st.maxKmh, kmh(b)); st.maxVy = Math.max(st.maxVy, Math.abs(b.vel.y));
+    st.maxLean = Math.max(st.maxLean, Math.abs(b.lean)); st.maxPitch = Math.max(st.maxPitch, b.pitch);
+    const lv = water(b.pos.x, b.pos.z); if (lv > -Infinity) st.maxAbove = Math.max(st.maxAbove, b.pos.y - lv);
+    if (process.env.V && i % 60 === 0) console.log(`    ${label} ${t.toFixed(1).padStart(5)}s ${kmh(b).toFixed(0).padStart(4)} km/h ${b.mode} sup${b.onWater ? 'W' : '-'}${b.grounded ? 'G' : 'a'} y-lvl ${(b.pos.y - lv).toFixed(2)} pitch ${(b.pitch * 57.3).toFixed(1)}° lean ${(b.lean * 57.3).toFixed(1)}° yawRate ${b.yawRate.toFixed(2)} shallow ${b.shallow.toFixed(2)} at ${b.pos.x.toFixed(0)},${b.pos.z.toFixed(0)}`);
+  }
+  return st;
+}
+// from a water spot, a heading that crosses 25–120 m of water and then climbs a low bank (not a cliff, not off the map)
+function beachHeading(x, z, lv) {
+  let best = null;
+  for (let a = 0; a < Math.PI * 2; a += 0.05) {
+    let r = 0; while (r < 200 && water(x + Math.sin(a) * r, z + Math.cos(a) * r) > -Infinity) r += 1;
+    if (r < 25 || r > 120) continue;
+    const bx = x + Math.sin(a) * (r + 12), bz = z + Math.cos(a) * (r + 12), rise = W.heightAt(bx, bz) - lv;
+    let trees = 0; for (let k = 0; k <= 16; k += 4) W.treesNear(x + Math.sin(a) * (r + k), z + Math.cos(a) * (r + k), 4, () => trees++);
+    const houses = W.buildingsNear(bx, bz, 30).some(h => h.pts.some(([px, pz]) => Math.hypot(px - bx, pz - bz) < 30));
+    if (!W.loadedAt(bx, bz) || rise > 2.5 || trees || houses) continue;
+    if (!best || r > best[1]) best = [a, r, rise];
+  }
+  return best;
+}
+
+for (const P of [JETSKI, SPEEDBOAT]) {
+  console.log(`\n== ${P.name}`);
+  const b = new Boat(W, P), out = {};
+
+  // ---- at rest on the pond: floats on the water, bobs gently, stays put
+  b.reset(...POND);
+  const lv0 = water(b.pos.x, b.pos.z);
+  check(lv0 > -Infinity && depth(b.pos.x, b.pos.z) >= P.minDepth, 'reset on the pond puts it on open water', `at ${b.pos.x.toFixed(0)},${b.pos.z.toFixed(0)} depth ${depth(b.pos.x, b.pos.z).toFixed(2)} m`);
+  const x0 = b.pos.x, z0 = b.pos.z;
+  const rest = drive(b, 6, (t, i, bb, s) => { if (t > 1) s.ys.push(bb.pos.y - lv0); }, 'rest');
+  const mean = rest.ys.reduce((a, c) => a + c, 0) / rest.ys.length, sd = Math.sqrt(rest.ys.reduce((a, c) => a + (c - mean) ** 2, 0) / rest.ys.length);
+  check(Math.abs(mean) < 0.12 && sd > 0.003 && sd < 0.1, 'floats on the waterline and bobs gently', `mean ${mean.toFixed(3)} m, bob sd ${(sd * 100).toFixed(1)} cm`);
+  check(Math.hypot(b.pos.x - x0, b.pos.z - z0) < 1 && b.onWater, 'stays put at rest', `${Math.hypot(b.pos.x - x0, b.pos.z - z0).toFixed(2)} m`);
+
+  // ---- full throttle across the pond: top speed, on the plane, hump
+  b.reset(...POND);
+  let t80 = null, rise = 0, hump = 0;
+  const acc = drive(b, 14, (t, i, bb) => {
+    i.throttle = 1;
+    if (t80 === null && kmh(bb) >= 80) t80 = t;
+    if (kmh(bb) < P.planeKmh) hump = Math.max(hump, bb.pitch);
+    if (t > 8 && water(bb.pos.x, bb.pos.z) > -Infinity) rise = Math.max(rise, bb.pos.y - water(bb.pos.x, bb.pos.z));
+    return bb.mode !== 'water';
+  }, 'accel');
+  out.top = acc.maxKmh;
+  check(!acc.nan, 'no NaN accelerating');
+  check(Math.abs(acc.maxKmh - P.topSpeed) < P.topSpeed * 0.06, `top speed ~${P.topSpeed} km/h`, `${acc.maxKmh.toFixed(1)} km/h, 0–80 in ${t80?.toFixed(1)} s`);
+  check(hump > 0.04 && rise > P.rise * 0.6, 'bow comes up getting on the plane, hull lifts at speed', `hump ${(hump * 57.3).toFixed(1)}°, rise ${rise.toFixed(2)} m`);
+
+  // ---- full right lock at speed: turn radius, lean / bank, keeps some speed
+  b.reset(...POND);
+  let radius = [], spd = [];
+  const turn = drive(b, 12, (t, i, bb) => {
+    i.throttle = 1; i.steer = t > 3 ? 1 : 0;
+    if (t > 5) { radius.push(Math.hypot(bb.vel.x, bb.vel.z) / Math.max(1e-3, Math.abs(bb.yawRate))); spd.push(kmh(bb)); }
+    return bb.mode !== 'water';
+  }, 'turn');
+  const R = radius.reduce((a, c) => a + c, 0) / Math.max(1, radius.length), V = spd.reduce((a, c) => a + c, 0) / Math.max(1, spd.length);
+  out.radius = R; out.lean = turn.maxLean;
+  check(!turn.nan && radius.length > 240, 'turns on the pond without NaN (2 s+ of steady turn measured)', `${(radius.length * DT).toFixed(1)} s measured`);
+  check(b.yawRate < 0, 'D (steer right) turns right (yaw rate < 0)', `yaw rate ${b.yawRate.toFixed(2)} rad/s`);
+  console.log(`     radius ${R.toFixed(1)} m at ${V.toFixed(0)} km/h, max lean ${(turn.maxLean * 57.3).toFixed(1)}°`);
+
+  // ---- tight circles at medium speed: crosses its own wake (bumps), stays finite
+  b.reset(...POND);
+  const circ = drive(b, 14, (t, i, bb) => { i.throttle = kmh(bb) < 45 ? 1 : 0.3; i.steer = t > 2 ? -1 : 0; return bb.mode !== 'water'; }, 'circle');
+  b.reset(...POND);
+  const straight = drive(b, 6, (t, i, bb) => { i.throttle = kmh(bb) < 45 ? 1 : 0.3; return bb.mode !== 'water'; }, 'straight');
+  check(!circ.nan && circ.maxVy > straight.maxVy * 1.2, 'crossing its own wake bumps the hull', `max |vy| circling ${circ.maxVy.toFixed(2)} vs straight ${straight.maxVy.toFixed(2)} m/s`);
+
+  // ---- shallow water: hold it over a shallow spot (treadmill) and compare with deep water
+  let shallowAt = null;
+  for (let r = 0; r < 300 && !shallowAt; r += 2) for (let a = 0; a < 6.28 && !shallowAt; a += 0.1) {
+    const x = RIVER[0] + Math.sin(a) * r, z = RIVER[1] + Math.cos(a) * r, d = depth(x, z);
+    if (d > 0.12 && d < P.minDepth * 0.55) shallowAt = [x, z, d];
+  }
+  const tread = (x, z) => {
+    b.reset(...RIVER, -Math.PI / 2);
+    return drive(b, 8, (t, i, bb) => { i.throttle = 1; bb.pos.x = x; bb.pos.z = z; bb._lastLoaded = null; }, 'tread').maxKmh;
+  };
+  if (shallowAt) {
+    const deepKmh = tread(b.pos.x, b.pos.z), shallowKmh = tread(shallowAt[0], shallowAt[1]);
+    check(shallowKmh < deepKmh * 0.6, 'shallow water slows it', `${shallowKmh.toFixed(0)} km/h over ${shallowAt[2].toFixed(2)} m of water vs ${deepKmh.toFixed(0)} km/h in deep`);
+  } else check(false, 'found a shallow spot near the river');
+
+  // ---- along the South Yamhill under the Bridge Street deck (x ≈ 3590): stays on the water
+  b.reset(...RIVER, -Math.PI / 2);
+  check(Math.hypot(b.pos.x - RIVER[0], b.pos.z - RIVER[1]) < 30, 'reset on the South Yamhill keeps it there', `at ${b.pos.x.toFixed(0)},${b.pos.z.toFixed(0)}`);
+  b.reset(RIVER[0], RIVER[1], -Math.PI / 2);
+  b.yaw = -Math.PI / 2; b.pos.set(RIVER[0], water(...RIVER), RIVER[1]); b.setQuat(); b.afterReset();
+  const br = drive(b, 7, (t, i, bb) => { i.throttle = 1; return bb.pos.x < 3540 || bb.mode !== 'water'; }, 'bridge');
+  check(!br.nan && b.pos.x < 3580 && br.maxAbove < 0.8, 'runs under the Bridge Street deck on the water', `reached x ${b.pos.x.toFixed(0)}, max ${br.maxAbove.toFixed(2)} m above the water, ${br.maxKmh.toFixed(0)} km/h`);
+
+  // ---- beach it on the river bank, slide to a stop, push back in with S, R back to the water
+  b.reset(...RIVER, 0);
+  const lvR = water(b.pos.x, b.pos.z), bh = beachHeading(b.pos.x, b.pos.z, lvR);
+  if (!bh) { check(false, 'found a low bank to beach on'); continue; }
+  b.yaw = bh[0]; b.setQuat(); b.afterReset();
+  let beachKmh = null, beachAt = null;
+  const bch = drive(b, 20, (t, i, bb) => {
+    if (beachKmh === null && bb.mode === 'land') { beachKmh = kmh(bb); beachAt = [bb.pos.x, bb.pos.z, t]; }
+    i.throttle = beachKmh === null ? 1 : 0;
+    return beachKmh !== null && kmh(bb) < 0.2 && t - beachAt[2] > 0.5;
+  }, 'beach');
+  const slid = beachAt ? Math.hypot(b.pos.x - beachAt[0], b.pos.z - beachAt[1]) : 0;
+  check(!bch.nan && beachKmh !== null, 'drives up the bank and beaches', `${bh[1]} m run, bank ${bh[2].toFixed(1)} m up, beached at ${beachKmh?.toFixed(0)} km/h`);
+  check(beachAt && kmh(b) < 0.2 && b.mode === 'land' && b.grounded, 'slides to a stop on land', `slid ${slid.toFixed(1)} m in ${beachAt ? (bch.t - beachAt[2]).toFixed(1) : '-'} s, ${b.hudInfo()}`);
+  const settled = drive(b, 2, () => false, 'parked');
+  check(kmh(b) < 0.5 && !settled.nan, 'stays beached with no input', `${kmh(b).toFixed(2)} km/h`);
+  const back = drive(b, 25, (t, i, bb) => { i.brake = 1; return bb.onWater && bb.mode === 'water'; }, 'reverse');
+  check(!back.nan && b.onWater, 'S pushes it back into the water', `after ${back.t.toFixed(1)} s`);
+  // back out a bit more, swing round, go
+  let waterKmh = 0;
+  const away = drive(b, 12, (t, i, bb) => {
+    const out = t < 3; i.brake = out ? 1 : 0; i.throttle = out ? 0 : 1; i.steer = out ? 0 : t < 5 ? 1 : 0;
+    if (bb.onWater && bb.mode === 'water') waterKmh = Math.max(waterKmh, kmh(bb));
+    return t > 4 && bb.mode === 'land';                         // the river is narrow: stop when it reaches a bank again
+  }, 'relaunch');
+  check(!away.nan && waterKmh > 25, 'backs out, swings round and drives off again on the water', `${waterKmh.toFixed(0)} km/h on the water`);
+  // beach it again, then R
+  b.reset(...RIVER, 0); b.yaw = bh[0]; b.setQuat(); b.afterReset();
+  drive(b, 20, (t, i, bb) => { i.throttle = 1; return bb.mode === 'land' && kmh(bb) < 3; }, 'beach2');
+  b.waterSafe.push([RIVER[0], RIVER[1], 0]);
+  b.resetToSafe(); drive(b, 1, () => false);
+  check(b.onWater && depth(b.pos.x, b.pos.z) >= P.minDepth, 'R puts it back on the water', `at ${b.pos.x.toFixed(0)},${b.pos.z.toFixed(0)}`);
+
+  // ---- picking it on land: starts on the nearest water that is big enough
+  b.reset(...LAND, 0);
+  const dLand = Math.hypot(b.pos.x - LAND[0], b.pos.z - LAND[1]);
+  drive(b, 1, () => false);
+  check(b.onWater && depth(b.pos.x, b.pos.z) >= P.minDepth && dLand < 200, 'reset on land starts it on the nearest open water', `${dLand.toFixed(0)} m away, depth ${depth(b.pos.x, b.pos.z).toFixed(2)} m`);
+  const t0 = performance.now(); const none = findWater(W, -9000, -9000, { radius: 1400 });
+  check(none === null, 'no water loaded nearby: findWater gives up cleanly', `${(performance.now() - t0).toFixed(0)} ms`);
+  P._out = out;
+}
+const [J, S] = [JETSKI._out, SPEEDBOAT._out];
+if (J && S) {
+  console.log('\n== jet ski vs speedboat');
+  check(J.radius < S.radius * 0.75, 'jet ski turns much tighter than the speedboat', `radius ${J.radius.toFixed(0)} vs ${S.radius.toFixed(0)} m`);
+  check(J.lean > S.lean * 2, 'jet ski leans into turns, speedboat banks a little', `${(J.lean * 57.3).toFixed(0)}° vs ${(S.lean * 57.3).toFixed(0)}°`);
+  check(S.top > J.top, 'speedboat is faster flat out', `${S.top.toFixed(0)} vs ${J.top.toFixed(0)} km/h`);
+}
+console.log(failed ? `\nFAIL boat_test: ${failed} check(s) failed` : '\nPASS boat_test');
+process.exit(failed ? 1 : 0);
