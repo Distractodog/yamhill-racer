@@ -67,7 +67,10 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
   const x0 = tx * T - T / 2, z0 = tz * T - T / 2;             // tile corner (core)
   const gx0 = x0 - HM * HS, gz0 = z0 - HM * HS;               // height grid origin (includes margin)
   const H = new Float32Array(hbuf), surf = new Uint8Array(sbuf), trees = new Float32Array(tbuf);
+  // river pools (tools/rivers.py) are water like ponds: same id grid, levels in tile.json `rivers`. waterLevel has both;
+  // pondLevel stays the real ponds only (drive.mjs's pond test picks the biggest one)
   const pondId = new Uint16Array(pbuf), pondLevel = tile.ponds || {};
+  const waterLevel = tile.rivers ? { ...pondLevel, ...tile.rivers } : pondLevel;
 
   // terrain height exactly as the mesh triangles interpolate it (split along the b-c diagonal)
   function terrainAt(x, z) {
@@ -86,7 +89,7 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
     const j = Math.round((x - gx0) / HS), i = Math.round((z - gz0) / HS);
     if (i < 0 || j < 0 || i >= NN || j >= NN) return -Infinity;
     const k = pondId[i * NN + j]; if (!k) return -Infinity;
-    const lv = pondLevel[k]; return lv !== undefined && terrainAt(x, z) < lv ? lv : -Infinity;
+    const lv = waterLevel[k]; return lv !== undefined && terrainAt(x, z) < lv ? lv : -Infinity;
   }
 
   // strips + junction pieces: physics uses the padded sets (they can reach over the tile edge), drawing the exact ones
@@ -183,7 +186,7 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
   yield 'tiledata';
   const td = { tx, tz, x0, z0, gx0, gz0, NN, hs: HS, H, surf, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
     sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
-    pondId, pondLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
+    pondId, pondLevel, waterLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
     heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
   applyTrack(td);                           // running track north of the gym: level ground + surface (campustrack.js)
   td.buildings = applyCampus(td);           // Delphian campus: hand-made models replace the OSM blocks (campus.js)

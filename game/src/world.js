@@ -176,16 +176,22 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     // road / trail strips
     for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) g.add(yield* placeRoadBlockSteps(td, stripMat, batch, roadLODSteps));   // one near + far pair per block
     for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
-    // ponds: a flat quad per height cell inside a pond
-    const wpos = [];
+    // ponds + river pools: a quad per height cell touching one. Each corner sits at its own pool's level (a corner
+    // outside any pool: the highest one next to it), so a river's stepped pools join into one smooth surface
+    const wpos = [], lvAt = (a, b) => { const k = td.pondId[(a + HM) * NN + (b + HM)]; return k ? td.waterLevel[k] : undefined; };
+    const cornerY = (a, b) => {
+      const y = lvAt(a, b); if (y !== undefined) return y;
+      let m = -Infinity;
+      for (let da = -1; da <= 1; da++) for (let db = -1; db <= 1; db++) { const v = lvAt(a + da, b + db); if (v !== undefined && v > m) m = v; }
+      return m;
+    };
     for (let i = 0; i < HN - 1; i++) {
       if (i % 100 === 99) yield 'pond';
       for (let j = 0; j < HN - 1; j++) {
-      const id = (a, b) => td.pondId[(a + HM) * NN + (b + HM)];
-      const k = id(i, j) || id(i, j + 1) || id(i + 1, j) || id(i + 1, j + 1);
-      if (!k || td.pondLevel[k] === undefined) continue;
-      const y = td.pondLevel[k], x0 = td.x0 + j * HS, z0 = td.z0 + i * HS, x1 = x0 + HS, z1 = z0 + HS;
-      wpos.push(x0, y, z0, x0, y, z1, x1, y, z0, x1, y, z0, x0, y, z1, x1, y, z1);
+      if (lvAt(i, j) === undefined && lvAt(i, j + 1) === undefined && lvAt(i + 1, j) === undefined && lvAt(i + 1, j + 1) === undefined) continue;
+      const a = cornerY(i, j), b = cornerY(i, j + 1), c = cornerY(i + 1, j), d = cornerY(i + 1, j + 1);
+      const x0 = td.x0 + j * HS, z0 = td.z0 + i * HS, x1 = x0 + HS, z1 = z0 + HS;
+      wpos.push(x0, a, z0, x0, c, z1, x1, b, z0, x1, b, z0, x0, c, z1, x1, d, z1);
     } }
     if (wpos.length) {
       const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wpos, 3)); wg.computeVertexNormals();
