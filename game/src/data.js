@@ -4,6 +4,7 @@
 // to the tile that contains the point.
 import * as THREE from 'three';
 import { sidewalkSides, KERB } from './roads.js';
+import { roadHalfWidth, roadEdge, triangleHeight } from './ramps.js';
 import { applyCampus } from './campus.js';
 import { applyTrack } from './campustrack.js';
 import { campusDrive } from './campusdrive.js';
@@ -35,14 +36,24 @@ export function trunkRadius(h, broad) { return broad ? 0.25 + h * 0.015 : 0.3 + 
 // polyline -> strip samples every <= STEP m with left-pointing unit normals, heights and cross slopes
 export function prepRoad(p, id) {
   const K = PATH_KINDS[p.kind]; if (!K) return null;
-  const pts = p.pts, yc = p.yc || pts.map(() => [0, 0]), xs = [], zs = [], ys = [], cs = [];
+  const pts = p.pts, yc = p.yc || pts.map(() => [0, 0]), xs = [], zs = [], ys = [], cs = [], ss = [];
+  let distance = 0;
   for (let i = 0; i < pts.length - 1; i++) {
     const [ax, az] = pts[i], [bx, bz] = pts[i + 1], [ay, ac] = yc[i], [by, bc] = yc[i + 1];
     const L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(L / STEP));
-    for (let k = 0; k < n; k++) {
-      const t = k / n; xs.push(ax + (bx - ax) * t); zs.push(az + (bz - az) * t); ys.push(ay + (by - ay) * t); cs.push(ac + (bc - ac) * t);
+    const fractions = Array.from({ length: n }, (_, k) => k / n);
+    if (p.widen) {
+      for (const [, s0, s1] of p.widen) for (const s of [s0, s1]) {
+        if (s > distance && s < distance + L) fractions.push((s - distance) / L);
+      }
+      fractions.sort((a, b) => a - b);
     }
+    for (const t of p.widen ? [...new Set(fractions)] : fractions) {
+      ss.push(distance + L * t); xs.push(ax + (bx - ax) * t); zs.push(az + (bz - az) * t); ys.push(ay + (by - ay) * t); cs.push(ac + (bc - ac) * t);
+    }
+    distance += L;
   }
+  ss.push(distance);
   const e = pts.length - 1; xs.push(pts[e][0]); zs.push(pts[e][1]); ys.push(yc[e][0]); cs.push(yc[e][1]);
   const n = xs.length; if (n < 2) return null;
   const lx = new Float32Array(n), lz = new Float32Array(n);
@@ -54,7 +65,7 @@ export function prepRoad(p, id) {
   // road class data (tile.json from builds with road classes; absent on older tiles)
   const sw = sidewalkSides(p.sidewalk);
   return { id, kind: p.kind, hw: p.w / 2, cls: K.cls, x: xs, z: zs, y: ys, c: cs, lx, lz, n,
-    bridge: p.bridge, osm: p.cls, flat: !!p.flat, oneway: !!p.oneway, sw, hasSidewalk: !!(sw[0] || sw[1]), stop: p.stop };
+    bridge: p.bridge, s: ss, widen: p.widen, link: (p.cls || '').split(':')[0].endsWith('_link'), osm: p.cls, flat: !!p.flat, oneway: !!p.oneway, sw, hasSidewalk: !!(sw[0] || sw[1]), stop: p.stop };
 }
 
 // ---------------------------------------------------------------- one tile
@@ -108,7 +119,8 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
     if ((work += p.pts.length) > 1500) { work = 0; yield 'tiledata'; }
     const r = prepRoad(p, roads.length); if (!r) continue; roads.push(r);
     for (let i = 0; i < r.n - 1; i++) {
-      const m = r.hw + 1 + Math.max(r.sw[0], r.sw[1]);
+      const hw = r.widen ? Math.max(roadHalfWidth(r, i, 1), roadHalfWidth(r, i, -1), roadHalfWidth(r, i + 1, 1), roadHalfWidth(r, i + 1, -1)) : r.hw;
+      const m = hw + 1 + Math.max(r.sw[0], r.sw[1]);
       addBox(Math.min(r.x[i], r.x[i + 1]) - m, Math.max(r.x[i], r.x[i + 1]) + m,
         Math.min(r.z[i], r.z[i + 1]) - m, Math.max(r.z[i], r.z[i + 1]) + m, r.id, i);
     }
@@ -146,6 +158,29 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
         continue;
       }
       const r = roads[id];
+      if (r.widen || r.link) {               // match the renderer's exact pavement triangles
+        const accept = (A, B, C, cls) => {
+          const h = triangleHeight(x, z, A, B, C);
+          if (h <= best || (r.bridge && yq < h - BRIDGE_CLIMB)) return;
+          best = h; lastCls = cls; lastBridge = !!r.bridge;
+          if (lastBridge) {
+            const ux = B[0] - A[0], uz = B[1] - A[1], uy = B[2] - A[2];
+            const vx = C[0] - A[0], vz = C[1] - A[1], vy = C[2] - A[2];
+            const det = ux * vz - uz * vx;
+            lastGx = (uy * vz - uz * vy) / det; lastGz = (ux * vy - uy * vx) / det;
+          }
+        };
+        const A = roadEdge(r, i, 1), B = roadEdge(r, i, -1);
+        const C = roadEdge(r, i + 1, -1), D = roadEdge(r, i + 1, 1);
+        accept(A, B, C, r.cls); accept(A, C, D, r.cls);
+        for (const side of [1, -1]) {
+          const sw = r.sw[side > 0 ? 0 : 1]; if (!sw) continue;
+          const A = roadEdge(r, i, side, 0, KERB), B = roadEdge(r, i, side, sw, KERB);
+          const C = roadEdge(r, i + 1, side, sw, KERB), D = roadEdge(r, i + 1, side, 0, KERB);
+          accept(A, B, C, 6); accept(A, C, D, 6);
+        }
+        continue;
+      }
       const ax = r.x[i], az = r.z[i], ex = r.x[i + 1] - ax, ez = r.z[i + 1] - az, L2 = ex * ex + ez * ez;
       if (L2 < 1e-4) continue;
       const u = ((x - ax) * ex + (z - az) * ez) / L2;
