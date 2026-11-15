@@ -15,7 +15,8 @@ Per tile, game/assets/tiles/<tx>_<tz>/:
    v3 quantizes heights within 1 cm and tree positions within 2 cm, preserving raster bytes;
    YR_PACK=0 writes the plain files above)
   trees.bin     float32 [x, z, height, broadleaf] per tree
-  tile.json     buildings, road/trail strips (render + physics pieces), ponds, river pools (`rivers`, tools/rivers.py)
+  tile.json     buildings, road/trail strips (render + physics pieces; `bridge`: true / 'truss' on bridge decks),
+                ponds, river pools (`rivers`, tools/rivers.py)
 game/assets/world.json: tile size, list of tiles, spawn, height grid info.
 """
 import json, math, os, sys, time
@@ -125,6 +126,10 @@ ROAD_W = {'motorway': 18, 'trunk': 17, 'primary': 16, 'secondary': 15, 'tertiary
 SERVICE_W = {'alley': 5, 'driveway': 5, 'parking_aisle': 6, 'drive-through': 5}
 FLAT_DRIVEWAY = 30.0                 # driveways shorter than this and all parking aisles: flat paving (flat: true)
 PAVED = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street'}
+# bridges (OSM bridge=*): a straight deck between the banks, not carved (roadnet.py); tile.json strips get `bridge`:
+# 'truss' for Sheridan Bridge (the 1939 Parker truss on Bridge Street) and anything tagged bridge:structure=truss
+BRIDGE_TAGS = {'yes', 'viaduct', 'movable', 'trestle', 'cantilever', 'covered'}
+TRUSS_WAYS = {163129655}
 road_paths, buildings, water_polys, river_lines = [], [], [], []
 for e in osm:
     t = e.get('tags', {}); geo = e.get('geometry')
@@ -142,6 +147,8 @@ for e in osm:
         attr = {'cls': h + (':' + svc if svc in SERVICE_W else ''), 'lanes': lanes,
                 'sidewalk': t.get('sidewalk') if t.get('sidewalk') in ('both', 'left', 'right', 'yes', 'separate') else None,
                 'oneway': t.get('oneway') in ('yes', '1', '-1') or t.get('junction') == 'roundabout'}
+        if t.get('bridge') in BRIDGE_TAGS:            # only on bridges, so other roads still merge as before
+            attr['bridge'] = 'truss' if e['id'] in TRUSS_WAYS or t.get('bridge:structure') == 'truss' else True
         w = SERVICE_W.get(svc, ROAD_W[h])
         for run in keep_in_map(pts):
             road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': w, 'pts': run, 'bridge': t.get('bridge') == 'yes',
@@ -173,7 +180,8 @@ if os.path.isfile(os.path.join(RAW, 'footprints.geojson')):
         else: _kept.append(b)
     log('imported footprints:', len(buildings) - _n_osm, 'kept', len(buildings) - _n_osm - _dropped, '· dropped on roads', _dropped)
     buildings = _kept
-log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys), 'river/stream lines', len(river_lines))
+log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys), 'river/stream lines', len(river_lines),
+    'bridges', sum(1 for r in road_paths if r['attr'].get('bridge')))
 # town ground (fetch_tiles.py fetch_landuse): green = parks / lawns / pitches / cemeteries, grey = parking + lots
 GREEN_LU = {'grass', 'recreation_ground', 'cemetery', 'village_green', 'park', 'pitch', 'playground', 'garden',
             'golf_course', 'sports_centre'}
@@ -376,7 +384,7 @@ nodes, edges = roadnet.compact(nodes, edges)
 # water: nudge / cut each edge (junction ends are kept unless the edge is cut there)
 fixed = []
 for e in edges:
-    for piece, (keep_a, keep_b) in fix_path(e):
+    for piece, (keep_a, keep_b) in (fix_path(e) if not roadnet.is_bridge(e) else [(e, (True, True))]):   # decks stay put
         a = e['a'] if keep_a else len(nodes)
         if not keep_a: nodes.append(piece['pts'][0].copy())
         b = e['b'] if keep_b else len(nodes)
@@ -410,6 +418,7 @@ for i, p in enumerate(paths):
     if a.get('sidewalk'): meta['sidewalk'] = a['sidewalk']
     if a.get('oneway'): meta['oneway'] = True
     if cls == 'service:parking_aisle' or (cls == 'service:driveway' and L < FLAT_DRIVEWAY): meta['flat'] = True
+    if a.get('bridge'): meta['bridge'] = a['bridge']
     if a.get('oneway') and _kd is not None:
         mine = np.nonzero(_owner == i)[0]; hits = 0
         for k in mine:
@@ -453,6 +462,7 @@ gh = ndimage.gaussian_filter(gh, 0.7)
 # smooth a little under every strip so cars don't catch air on 1-2 m lidar lumps
 _pimg = Image.new('L', (GHW, GHH), 0); _pd = ImageDraw.Draw(_pimg)
 for p in paths:
+    if roadnet.is_bridge(p): continue                       # the ground under a bridge keeps its shape
     tp = [((x - GX0) / HSTEP, (z - GZ0) / HSTEP) for x, z in p['pts']]
     _pd.line(tp, fill=255, width=max(2, int(round(p['w'] / HSTEP))), joint='curve')
 on_path = np.asarray(_pimg).astype(np.float32) / 255
@@ -507,6 +517,8 @@ _protect = ndimage.maximum_filter(_lv[pond_gid], size=3) + 0.15
 _protect[(pond_gid > 0) & (pond_gid < RIVER_ID0)] = np.inf
 nv, mx = roadnet.carve(gh, GX0, GZ0, HSTEP, edges, juncs, _protect)
 log(f'roads carved: {nv} height vertices moved (max {mx:.1f} m), junction pieces {len(juncs)}')
+nv, mx = roadnet.under_bridges(gh, GX0, GZ0, HSTEP, edges, _protect)
+log(f'bridge decks: {sum(map(roadnet.is_bridge, edges))} strips, ground lowered under them at {nv} vertices (max {mx:.1f} m)')
 del _ghs, _gx, _gz
 
 # ---------------------------------------------------------------- 6. per tile

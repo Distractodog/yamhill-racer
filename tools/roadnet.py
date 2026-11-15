@@ -13,6 +13,13 @@
   carve            moves the height grid under and beside every road to just below the road surface, then blends
                    back to the real ground, so terrain can never poke through a road
 
+Bridges (edge attr 'bridge', from OSM bridge=*): the deck is a straight line between its abutments, at the highest
+ground within 6 m of each end (the lidar is bare earth: under a bridge it shows the river / the road below); a bridge
+OSM splits mid-span stays one straight deck (deck_heights). Decks are not nudged off water, not smoothed into the
+ground and never carved under: under_bridges only lowers ground that pokes up into a deck, and carve never raises
+ground under a deck (the river or the road below stays). harmonize never matches a bridge with a road on another
+level, and a dead end of an ordinary road is never joined onto the middle of a bridge.
+
 Coordinates are world metres (x east, z south). Edge points are [x, z] in the graph and [x, z, y, c] once profiled:
 y = road height on the centre line, c = cross slope (height change per metre to the left of travel direction).
 """
@@ -28,6 +35,9 @@ FILLET = {'asphalt': 4.0, 'gravel': 3.5, 'trail': 2.5}
 
 
 def _key(p): return (round(float(p[0]), 2), round(float(p[1]), 2))
+
+
+def is_bridge(e): return bool(e.get('attr', {}).get('bridge'))
 
 
 def arclen(pts):
@@ -110,6 +120,7 @@ def snap_dead_ends(nodes, edges, extra={'trail': 10.0, 'gravel': 4.0, 'asphalt':
     S = np.array(S); tree = cKDTree(S[:, 2:4])
     splits = defaultdict(list)                    # edge -> [(s, node)]
     joins = []                                    # (edge, end, edge to join, s)
+    blen = {oj: arclen(o['pts'])[-1] for oj, o in enumerate(edges) if o is not None and is_bridge(o)}
     for n, l in enumerate(inc):
         if len(l) != 1: continue
         ei, end = l[0]; e = edges[ei]; P = nodes[n]
@@ -123,6 +134,7 @@ def snap_dead_ends(nodes, edges, extra={'trail': 10.0, 'gravel': 4.0, 'asphalt':
             o = edges[oj]; d = np.hypot(S[k, 2] - P[0], S[k, 3] - P[1])
             if d > o['w'] / 2 + extra[e['kind']]: continue
             if d > 1 and np.dot([S[k, 2] - P[0], S[k, 3] - P[1]], t) / d > 0.3: continue   # don't snap back over itself
+            if oj in blen and not is_bridge(e) and 4 <= S[k, 1] <= blen[oj] - 4: continue    # a road below a deck
             score = d - o['w'] / 2
             if best is None or score < best[0]: best = (score, oj, S[k, 1])
         if best: joins.append((ei, end, best[1], best[2]))
@@ -255,14 +267,58 @@ def _smoothstep(x):
     x = np.clip(x, 0, 1); return x * x * (3 - 2 * x)
 
 
+def deck_heights(nodes, edges, Hfun, reach=6.0):
+    """Deck height at every node on a bridge. Abutments (a bridge meeting an ordinary road, or a bridge end) take the
+    highest ground within `reach` m of them on the bridge; nodes between bridge edges (OSM splits a bridge mid-span
+    where a tag changes) are interpolated by length along the bridge, so the deck never dips to the river there."""
+    inc = incidence(nodes, edges)
+    B = [ei for ei, e in enumerate(edges) if is_bridge(e)]
+    on = sorted({edges[ei][k] for ei in B for k in ('a', 'b')})
+    if not on: return {}
+    def abut(n):                                                  # highest ground near n on its bridge edges
+        ys = []
+        for ei, end in inc[n]:
+            e = edges[ei]
+            if not is_bridge(e): continue
+            op = oriented(e, end); cum = arclen(op); r = min(reach, cum[-1] / 4)
+            q = at_s(op, np.linspace(0, r, max(2, int(math.ceil(r)) + 1)), cum)
+            ys.append(float(Hfun(q[:, 0], q[:, 1]).max()))
+        return max(ys)
+    fixed = {n: abut(n) for n in on if len(inc[n]) == 1 or any(not is_bridge(edges[ei]) for ei, _ in inc[n])}
+    parent = {n: n for n in on}                                   # bridge pieces: a piece with no abutment at all
+    def find(a):                                                  # (a loop of bridge ways) keeps its own ground
+        while parent[a] != a: parent[a] = parent[parent[a]]; a = parent[a]
+        return a
+    for ei in B: parent[find(edges[ei]['a'])] = find(edges[ei]['b'])
+    anchored = {find(n) for n in fixed}
+    fixed.update({n: abut(n) for n in on if find(n) not in anchored})
+    free = [n for n in on if n not in fixed]; idx = {n: k for k, n in enumerate(free)}
+    y = dict(fixed)
+    if free:                                                      # each free node: length-weighted mean of its neighbours
+        A = np.zeros((len(free), len(free))); b = np.zeros(len(free))
+        for ei in B:
+            e = edges[ei]; w = 1.0 / max(arclen(e['pts'])[-1], 1.0)
+            for p, o in ((e['a'], e['b']), (e['b'], e['a'])):
+                if p not in idx or p == o: continue
+                A[idx[p], idx[p]] += w
+                if o in idx: A[idx[p], idx[o]] -= w
+                else: b[idx[p]] += w * fixed[o]
+        y.update(zip(free, np.linalg.lstsq(A, b, rcond=None)[0].tolist()))
+    return y
+
+
 def profiles(nodes, edges, J, Hfun, Hsmooth, grad, blend=18.0, sigma=6.0, max_grade=0.08):
     """Each edge's smooth height along its length; junction planes fitted to the roads meeting there; then each
     edge pinned to its junction planes near its ends, trimmed and resampled every <= 2 m."""
+    deck = deck_heights(nodes, edges, Hfun)
     for e in edges:                                               # free profile: terrain smoothed along the road
         pts = e['pts']; cum = arclen(pts); L = cum[-1]
         s = np.linspace(0, L, max(2, int(math.ceil(L)) + 1)); ds = s[1] - s[0]
         q = at_s(pts, s, cum)[:, :2]
-        free = ndimage.gaussian_filter1d(Hfun(q[:, 0], q[:, 1]), max(0.5, sigma / max(ds, 1e-3)), mode='nearest')
+        if is_bridge(e):                                          # deck: straight from abutment to abutment
+            free = deck[e['a']] + (deck[e['b']] - deck[e['a']]) * s / max(L, 1e-6)
+        else:
+            free = ndimage.gaussian_filter1d(Hfun(q[:, 0], q[:, 1]), max(0.5, sigma / max(ds, 1e-3)), mode='nearest')
         e['_prof'] = (cum, L, s, q, free)
     planes = {}
     for j in J:                                                   # plane fit (ridge: slope pulled toward flat)
@@ -367,11 +423,12 @@ def junction_rings(J, edges, planes, plane_y):
 # ---------------------------------------------------------------- carve the terrain
 def carve(gh, gx0, gz0, hstep, edges, juncs, protect, drop=0.1, inner=6.0, outer=10.0):
     """Grid heights under / next to roads set to just below the road surface, blended back to the ground.
-    protect: per grid vertex, the lowest height carving may set (-inf = free, inf = never touched; pond rims)."""
+    protect: per grid vertex, the lowest height carving may set (-inf = free, inf = never touched; pond rims).
+    Bridge decks are skipped, and ground under a deck is only ever lowered (the river / road below stays open)."""
     X, Z, Y, C, NX, NZ, HW, GX, GZ = [], [], [], [], [], [], [], [], []
     for e in edges:
         o = e['out']; cum = arclen(o); L = cum[-1]
-        if L < 0.5: continue                                       # swallowed by its junctions (not drawn either)
+        if L < 0.5 or is_bridge(e): continue                       # swallowed by its junctions / a deck
         s = np.linspace(0, L, max(2, int(math.ceil(L / 3)) + 1)); q = at_s(o, s, cum)
         tg = np.gradient(q[:, :2], axis=0) if len(q) > 2 else np.repeat(q[1:2, :2] - q[0:1, :2], len(q), 0)
         tg /= np.maximum(np.hypot(*tg.T), 1e-9)[:, None]
@@ -404,6 +461,11 @@ def carve(gh, gx0, gz0, hstep, edges, juncs, protect, drop=0.1, inner=6.0, outer
     m = ndimage.binary_dilation(m, iterations=int(math.ceil(reach / hstep)) + 1)
     vi, vj = np.nonzero(m)
     vx, vz = gx0 + vj * hstep, gz0 + vi * hstep
+    under = np.zeros(len(vi), bool)                             # under a bridge deck
+    DP, _, DHW = _deck_samples(edges)
+    if len(DP):
+        dd, dk = cKDTree(DP).query(np.column_stack([vx, vz]), distance_upper_bound=DHW.max(), workers=-1)
+        under = dd <= DHW[np.minimum(dk, len(DP) - 1)]
     old = gh[vi, vj].copy(); new = old.copy(); use = np.zeros(len(vi), bool)
     for c0 in range(0, len(vi), 60000):                         # in chunks (k neighbours per vertex)
         sl = slice(c0, c0 + 60000); px, pz = vx[sl], vz[sl]
@@ -427,6 +489,7 @@ def carve(gh, gx0, gz0, hstep, edges, juncs, protect, drop=0.1, inner=6.0, outer
         o = old[sl]
         blend = np.where(np.isfinite(soft), soft, o) * (1 - w) + o * w
         new[sl] = np.where(np.isfinite(hard), hard, np.where(np.isfinite(soft), blend, o))
+        new[sl] = np.where(under[sl], np.minimum(new[sl], o), new[sl])
         fl = protect[vi[sl], vj[sl]]
         new[sl] = np.maximum(new[sl], np.where(np.isfinite(fl), fl, -np.inf))       # rims: no lower than the floor
         use[sl] = np.isfinite(eb) & (eb < inner + outer) & (fl < np.inf)
@@ -435,9 +498,44 @@ def carve(gh, gx0, gz0, hstep, edges, juncs, protect, drop=0.1, inner=6.0, outer
     return len(vi), float(np.abs(new - old).max()) if len(vi) else 0.0
 
 
+def _deck_samples(edges, step=1.0, side=1.5):
+    """Bridge decks every `step` m: points, the deck's lowest height across its width (+ `side` m), half-widths."""
+    P, Y, HW = [], [], []
+    for e in edges:
+        if not is_bridge(e): continue
+        o = e['out']; cum = arclen(o)
+        if cum[-1] < 0.5: continue
+        q = at_s(o, np.linspace(0, cum[-1], max(2, int(cum[-1] / step) + 1)), cum); hw = e['w'] / 2 + side
+        P.append(q[:, :2]); Y.append(q[:, 2] - np.abs(q[:, 3]) * hw); HW.append(np.full(len(q), hw))
+    if not P: return np.zeros((0, 2)), np.zeros(0), np.zeros(0)
+    return np.vstack(P), np.concatenate(Y), np.concatenate(HW)
+
+
+def under_bridges(gh, gx0, gz0, hstep, edges, protect=None, below=0.35):
+    """Under a bridge deck the ground stays as it is (river, road below), except where it would poke up into the
+    deck (abutments, bumps): there it is lowered to `below` m under the deck. Returns (vertices lowered, max drop)."""
+    P, Y, HW = _deck_samples(edges)
+    if not len(P): return 0, 0.0
+    H, Wd = gh.shape; r = int(math.ceil(HW.max() / hstep)) + 1
+    ci, cj = np.round((P[:, 1] - gz0) / hstep).astype(int), np.round((P[:, 0] - gx0) / hstep).astype(int)
+    di, dj = [a.ravel() for a in np.mgrid[-r:r + 1, -r:r + 1]]
+    vi, vj = (ci[:, None] + di).ravel(), (cj[:, None] + dj).ravel()
+    ok = (vi >= 0) & (vi < H) & (vj >= 0) & (vj < Wd)
+    lin = np.unique(vi[ok].astype(np.int64) * Wd + vj[ok]); vi, vj = lin // Wd, lin % Wd
+    dist, k = cKDTree(P).query(np.column_stack([gx0 + vj * hstep, gz0 + vi * hstep]), workers=-1)
+    m = dist <= HW[k]
+    if protect is not None: m &= protect[vi, vj] < np.inf                   # pond beds are never touched
+    vi, vj, top = vi[m], vj[m], Y[k[m]] - below
+    low = gh[vi, vj] > top
+    drop = gh[vi[low], vj[low]] - top[low]
+    gh[vi[low], vj[low]] = top[low]
+    return int(low.sum()), float(drop.max()) if len(drop) else 0.0
+
+
 def harmonize(edges, J):
     """Where two strips overlap side by side (ramps merging, roads doubled up in OSM), the lesser one takes the
-    bigger one's surface height there, so their tops meet instead of one floating over the other."""
+    bigger one's surface height there, so their tops meet instead of one floating over the other. A bridge and an
+    ordinary road are never matched (an overpass and the road under it keep their own heights)."""
     prio = lambda e: (RANK[e['kind']], e['w'], arclen(e['out'])[-1])
     P, Y, C, NX, NZ, HW, EI = [], [], [], [], [], [], []
     for ei, e in enumerate(edges):
@@ -448,6 +546,7 @@ def harmonize(edges, J):
         HW.append(np.full(len(o), e['w'] / 2)); EI.append(np.full(len(o), ei))
     P, Y, C, NX, NZ, HW, EI = map(np.concatenate, (P, Y, C, NX, NZ, HW, EI))
     tree = cKDTree(P); pr = [prio(e) for e in edges]; changed = 0
+    br = [is_bridge(e) for e in edges]
     for ei, e in enumerate(edges):
         o = e['out']; n = len(o)
         if n < 3: continue
@@ -455,7 +554,7 @@ def harmonize(edges, J):
         for k, near in enumerate(tree.query_ball_point(o[:, :2], hw + 9.5)):
             for q in near:
                 f = EI[q]
-                if f == ei or pr[f] <= pr[ei]: continue
+                if f == ei or pr[f] <= pr[ei] or br[f] != br[ei]: continue      # a deck and a road under it
                 off = (o[k, 0] - P[q, 0]) * NX[q] + (o[k, 1] - P[q, 1]) * NZ[q]
                 along = abs((o[k, 0] - P[q, 0]) * NZ[q] - (o[k, 1] - P[q, 1]) * NX[q])
                 if along > 1.5: continue
