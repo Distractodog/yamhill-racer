@@ -10,6 +10,8 @@ export function createSettings() {
   const help = document.getElementById('help-content');
   const closeButton = document.getElementById('settings-close');
   let current = null, ready = false, changed = () => {}, beforeOpen = () => {}, returnFocus = null;
+  let external = null;
+  function closeExternal() { if (external) { const previous = external; external = null; previous.close(); changed(); } }
   // welcome card: shown once the map has loaded, unless "Don't show this again" was ticked (saved per browser)
   const WELCOME_KEY = 'yr-welcome-hidden-1';
   const welcome = document.getElementById('welcome'), welcomeHide = document.getElementById('welcome-hide');
@@ -36,6 +38,7 @@ export function createSettings() {
   }
   function show(view, trigger = view === 'tuning' ? settingsButton : view === 'atmosphere' ? atmosphereButton : helpButton) {
     if (!ready) return;
+    closeExternal();
     if (current === view) { close(); return; }
     beforeOpen(); returnFocus = trigger; current = view;
     title.textContent = view === 'tuning' ? 'Vehicle tuning' : view === 'atmosphere' ? 'Atmosphere' : 'How to play';
@@ -52,6 +55,17 @@ export function createSettings() {
   closeButton.addEventListener('click', close);
   addEventListener('keydown', e => {
     if (e.gameUI || !ready) return;
+    if (external) {
+      e.gameUI = true;
+      if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeExternal(); return; }
+      if (e.code === 'Tab') {
+        const items = [...external.panel.querySelectorAll('button, input, select, [tabindex="0"]')].filter(el => !el.disabled && el.getClientRects().length);
+        const first = items[0], last = items.at(-1);
+        if (e.shiftKey && (document.activeElement === first || !external.panel.contains(document.activeElement))) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && (document.activeElement === last || !external.panel.contains(document.activeElement))) { e.preventDefault(); first?.focus(); }
+      }
+      return;
+    }
     if (welcomeOpen) {
       // Enter / Esc / Space close the card (and do nothing else); game shortcuts close it and still work;
       // every other key is kept from the game so nothing drives while it's up
@@ -79,7 +93,8 @@ export function createSettings() {
     }
   }, true);
   return {
-    get open() { return current !== null || welcomeOpen; }, close, showWelcome, closeWelcome,
+    get open() { return current !== null || welcomeOpen || external !== null; }, close() { close(); closeExternal(); }, showWelcome, closeWelcome,
+    openExternal(panel, onClose) { closeExternal(); closeWelcome(); close(); beforeOpen(); external = { panel, close: onClose }; changed(); },
     get welcomeOpen() { return welcomeOpen; },
     bindAtmosphere(atmosphere, presets = atmosphere.presets) {
       const host = document.getElementById('atmosphere-presets');

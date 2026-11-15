@@ -122,6 +122,11 @@ function applyBinding(binding, config, wear) {
   if (kind === 'jet') for (const side of [-1,1]) add(1.35,1.05,side*2.6,.085,-1.15,-Math.PI/2);
 }
 
+// Another player's vehicle (mp/remotes.js): the same model and paint rules, in their colours (no wear, no unlock check).
+export function paintedModel(kind, colors) {
+  const model = BUILDERS[kind](); applyBinding(bindModel(model, kind), sanitizeCosmetics(colors, kind, () => true), { dirt: 0, scuff: 0, wet: 0 }); return model;
+}
+
 function browserStorage() { try { return globalThis.localStorage; } catch { return null; } }
 export function createCosmetics(vehicles, { isUnlocked = () => false, storage = browserStorage() } = {}) {
   let saved = {}; try { saved = JSON.parse(storage?.getItem(COSMETIC_KEY) || '{}'); } catch {}

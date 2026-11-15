@@ -15,12 +15,15 @@ import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
 import { Glider, BIKE_GLIDER } from './glider.js';
 import { createGliderColors } from './glidercolors.js';
+import { mp } from './mp/net.js';
 import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
 import { createSpawn } from './spawn.js';
 import { createSettings } from './settings.js';
+import { createMPMenu } from './mp/menu.js';
 import { makeRim } from './rim.js';
+import { createRemotes } from './mp/remotes.js';
 import { toggleUnits, onUnits, speedUnit, speedValue, fmtKmh } from './units.js';
 
 const sessionSpawn = createSpawn();
@@ -101,10 +104,14 @@ const audio = new CarAudio();
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 const challenges = await createChallenges({ scene, world, car, minimap, vehicles });
+import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
+const remotes = await createRemotes({ scene, camera, minimap });   // other players' vehicles, tags and map dots (multiplayer)
 document.getElementById('loading').remove();
 const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });
 const gliderColors = createGliderColors({ car: glider, bike: bikeGlider });
+mp.setVehicleSource(() => ({ vehicle: car, kind: vehicles.current.kind,
+  colors: cosmetics.get(vehicles.current.kind), glider: gliderColors.get(vehicles.current.kind) || {} }));
 const garage = createGarage({ cosmetics, vehicles, gliderColors, rewards: challenges.rewards,
   canOpen: () => !sessionSpawn.blocked && challenges.state === 'idle',
   onOpen: () => { settings.closeWelcome(); settings.close(); vehicles.close(); challenges.closeMenu(); minimap.toggle(false); clearKeys(); },
@@ -154,6 +161,7 @@ const clearKeys = () => { keys.clear(); letters.clear(); };
 settings.ready(clearKeys, () => {
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
+const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, gui, beforeOpen: () => garage.close() });
 addEventListener('keydown', e => {
   if (e.gameUI) return;
   keys.add(e.code);
@@ -391,6 +399,7 @@ function frame(now) {
   pinGuide.update(dt);
   directions.update(dt);
   rimRing?.update(car.renderPos);
+  remotes.update(dt);
   renderer.render(scene, camera);
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
@@ -423,3 +432,5 @@ sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim }
 window.game.sessionSpawn = sessionSpawn;
 
 Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX });
+Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
+window.game.remotes = remotes;

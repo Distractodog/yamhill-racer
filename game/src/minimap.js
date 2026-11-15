@@ -236,6 +236,7 @@ export async function createMinimap(base = './assets/') {
 
   // challenge route + checkpoints drawn over the map: { route: [[x, z]…], gates: [{x, z}…], next } or null
   let overlay = null;
+  let extraMarkers = null;   // (ctx, map, d, 'corner' | 'full') → draws more dots (multiplayer: mp/remotes.js)
   function drawOverlay(ctx, map, d) {      // map(x, z) → canvas px
     if (!overlay) return;
     const { route, gates, next } = overlay;
@@ -291,6 +292,7 @@ export async function createMinimap(base = './assets/') {
           cctx.strokeStyle = '#fff'; cctx.lineWidth = 1.6 * d; cctx.stroke();
         } else { drawPinLine(cctx, cmap, W / 2, H / 2, d); drawPin(cctx, a, b, 9 * d); }
       }
+      extraMarkers?.(cctx, cmap, d, 'corner');
       arrow(cctx, W / 2, H / 2, heading, 9 * d);
     } else {
       const d = fit(fc), W = fc.width, H = fc.height;
@@ -330,6 +332,7 @@ export async function createMinimap(base = './assets/') {
       const t = performance.now() / 1000, r = (10 + 8 * ((t * 1.2) % 1)) * d;
       fctx.beginPath(); fctx.arc(ox + px * s, oy + py * s, r, 0, Math.PI * 2);
       fctx.strokeStyle = `rgba(255,59,48,${1 - ((t * 1.2) % 1)})`; fctx.lineWidth = 2.5 * d; fctx.stroke();
+      extraMarkers?.(fctx, fmap, d, 'full');
       arrow(fctx, ox + px * s, oy + py * s, heading, 11 * d);
       if (pin) drawPin(fctx, ...fmap(pin.x, pin.z), 13 * d);
       fctx.restore();
@@ -369,5 +372,6 @@ export async function createMinimap(base = './assets/') {
       for (const command of ['close', 'unpin', 'car', 'directions']) full.querySelector(`[data-z="${command}"]`).hidden = !!callback;
       if (callback && !open) toggle(true);
     }, setOverlay: o => { overlay = o; }, get open() { return open; },
+    setExtraMarkers: f => { extraMarkers = f; },
     get pin() { return pin; }, setPin, onPin: f => pinListeners.push(f) };
 }
