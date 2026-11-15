@@ -16,6 +16,7 @@
   #menu-bar { position: fixed; top: 14px; left: 16px; display: flex; gap: 8px; z-index: 22; }
   .menu-button { border: 1px solid #ffffff35; border-radius: 10px; padding: 9px 13px; background: #142016e8;
     color: #fff; font: 600 13px system-ui, sans-serif; cursor: pointer; box-shadow: 0 3px 14px #0003; }
+  a.menu-button { text-decoration: none; display: inline-block; }
   .menu-button:hover, .menu-button[aria-expanded="true"] { background: #2f4133; border-color: #ffffff80; }
   button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid #ffd23f; outline-offset: 3px; }
   #settings-panel { position: fixed; top: 63px; left: 16px; width: min(390px, calc(100vw - 32px)); max-height: calc(100dvh - 85px);
@@ -83,6 +84,8 @@
   <button id="atmosphere-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Atmosphere</button>
   <button id="settings-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Settings</button>
   <button id="help-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>How to play?</button>
+  <a id="suggest-button" class="menu-button" href="https://docs.google.com/forms/d/e/1FAIpQLSdNfUHyjovfvr1_L-qWph_n1hvebvup8OjT9eWLDVinekBuJw/viewform"
+    target="_blank" rel="noopener" title="Opens a short form in a new tab">Want something added?</a>
 </nav>
 <section id="welcome" role="dialog" aria-labelledby="welcome-title" hidden>
   <div class="card">
