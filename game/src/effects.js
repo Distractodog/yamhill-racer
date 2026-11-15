@@ -6,7 +6,8 @@ const DUST = [ // per surface: rgb, how much it kicks up just from driving fast
   [[230, 240, 245], 1.0], [[235, 235, 235], 0], [[220, 140, 120], 0.2]];
 
 export class Effects {
-  constructor(scene) {
+  // shadows: false = no contact shadows (mp/remotes.js: other players' vehicles, which also need no document)
+  constructor(scene, { shadows = true } = {}) {
     // ---------------- tyre marks: ring buffer of quads
     this.MAX = 8000;
     const g = new THREE.BufferGeometry();
@@ -48,6 +49,7 @@ export class Effects {
     this.points.frustumCulled = false;
     scene.add(this.points);
     this.pI = 0;
+    if (!shadows) return;
 
     // ---------------- contact shadows: soft dark blobs on the ground under each tyre and the car
     const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -116,21 +118,28 @@ export class Effects {
     this.pGrav[i] = 1;
   }
 
-  update(dt, car) {
+  update(dt, car) { this.drive(dt, car); this.advance(dt); }
+  // one vehicle's own share of the state, so several can take turns through drive (mp/remotes.js swaps it in)
+  static vehicleState() { return { last: [null, null, null, null], skidT: [0, 0, 0, 0], brakeT: 0, launchT: 0, wasWet: false, kind: null }; }
+
+  // what one vehicle adds this frame (mp/remotes.js runs other players' vehicles through it too, then advance once)
+  drive(dt, car) {
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(car.renderQuat), yaw = Math.atan2(fwd.x, fwd.z);
     const W = car.world;
     const mw = car.mesh.userData.wheels;
-    mw.forEach((g, i) => {
-      const p = new THREE.Vector3(); g.holder.getWorldPosition(p);
-      this.placeBlob(this.tyreBlobs[i], p.x, p.z, yaw + (g.front ? g.holder.rotation.y : 0), p.y - g.r - W.heightAt(p.x, p.z, p.y), W, p.y);
-    });
-    for (let i = mw.length; i < this.tyreBlobs.length; i++) this.tyreBlobs[i].visible = false;   // bike: 2 tyres, jet: 3
+    if (this.bodyBlob) {
+      mw.forEach((g, i) => {
+        const p = new THREE.Vector3(); g.holder.getWorldPosition(p);
+        this.placeBlob(this.tyreBlobs[i], p.x, p.z, yaw + (g.front ? g.holder.rotation.y : 0), p.y - g.r - W.heightAt(p.x, p.z, p.y), W, p.y);
+      });
+      for (let i = mw.length; i < this.tyreBlobs.length; i++) this.tyreBlobs[i].visible = false;   // bike: 2 tyres, jet: 3
+    }
     if (car.kind !== this.kind) {                       // vehicle switched: blob size + fresh tyre marks
       this.kind = car.kind; const [bw, bl] = car.mesh.userData.blob || [2.4, 4.9];
-      this.bodyBlob.scale.set(bw / 2.4, 1, bl / 4.9); this.last = [null, null, null, null];
+      this.bodyBlob?.scale.set(bw / 2.4, 1, bl / 4.9); this.last = [null, null, null, null];
     }
     const rp = car.renderPos;
-    this.placeBlob(this.bodyBlob, rp.x, rp.z, yaw, rp.y - (car.kind === 'jet' ? 1.6 : 0.55) - W.heightAt(rp.x, rp.z, rp.y), W, rp.y);
+    if (this.bodyBlob) this.placeBlob(this.bodyBlob, rp.x, rp.z, yaw, rp.y - (car.kind === 'jet' ? 1.6 : 0.55) - W.heightAt(rp.x, rp.z, rp.y), W, rp.y);
     if (car.burning && car.mode === 'crashed') {        // jet wreck: black smoke
       for (let k = 0; k < 2; k++) if (Math.random() < dt * 30) {
         this.emit(car.pos, car.vel, 7, 1.5); const i = (this.pI + this.PN - 1) % this.PN;
@@ -177,6 +186,10 @@ export class Effects {
     if (wet && !this.wasWet && sp > 4) for (let k = 0; k < Math.min(60, 12 + sp); k++) this.splash(car.pos, car.vel, Math.min(1.4, sp / 25));
     if (car.waterDepth > 0 && sp > 1.5 && Math.random() < dt * 40) this.splash(car.pos, car.vel, 0.5);
     this.wasWet = wet;
+  }
+
+  // particles fly and fade: once per frame, however many vehicles drove
+  advance(dt) {
     for (let i = 0; i < this.PN; i++) {
       if (this.pLife[i] <= 0) { this.pAlpha[i] = 0; this.pSize[i] = 0; continue; }   // faded: not drawn at all
       this.pLife[i] -= dt;

@@ -472,10 +472,10 @@ export function buildJetModel() {
     for (const w of wheels) { w.leg.scale.y = Math.max(0.05, k); w.leg.visible = k > 0.06; }
   };
   // wreck look: blackened and the flame out
-  const mats = [white, orange];
+  const mats = [white, orange], WRECK = 0x3a3a3a;
   const base = mats.map(m => m.color.getHex());
   const wreck = on => {
-    mats.forEach((m, i) => m.color.setHex(on ? 0x3a3a3a : base[i]));
+    mats.forEach((m, i) => m.color.setHex(on ? WRECK : base[i]));
     // Crumpled airframe, bent controls and shattered canopy remain attached while tumbling.
     root.scale.set(on ? 1.15 : 1, on ? 0.65 : 1, on ? 0.78 : 1);
     canopy.visible = !on;
@@ -484,6 +484,7 @@ export function buildJetModel() {
     aileronL.rotation.z = on ? 1.1 : 0;
     aileronR.rotation.z = on ? -0.7 : 0;
   };
-  root.userData = { wheels, setGear, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, blob: [9.8, 13] };
+  // wreckMats / wreckColor / canopy: what wreck() changes, for copies with merged paint (mp/remotes.js)
+  root.userData = { wheels, setGear, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, canopy, wreckMats: mats, wreckColor: WRECK, blob: [9.8, 13] };
   return root;
 }
