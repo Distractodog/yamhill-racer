@@ -502,7 +502,7 @@ _ghs = ndimage.gaussian_filter(gh, 2.0)
 _gz, _gx = np.gradient(_ghs, HSTEP)
 J = roadnet.junction_layout(nodes, edges)
 planes, plane_y = roadnet.profiles(nodes, edges, J, _hfun(gh), lambda x, z: float(_hfun(_ghs)(x, z)[0]),
-                                   lambda x, z: (float(_hfun(_gx)(x, z)[0]), float(_hfun(_gz)(x, z)[0])))
+                                   lambda x, z: (float(_hfun(_gx)(x, z)[0]), float(_hfun(_gz)(x, z)[0])), log=log)
 log('roads matched to an overlapping bigger road:', roadnet.harmonize(edges, J))
 juncs = roadnet.junction_rings(J, edges, planes, plane_y)
 # rivers + streams: pools stepping down each line, bed carved, banks kept dry (tools/rivers.py); after the road

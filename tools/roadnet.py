@@ -18,12 +18,13 @@ ground within 6 m of each end (the lidar is bare earth: under a bridge it shows 
 OSM splits mid-span stays one straight deck (deck_heights). Decks are not nudged off water, not smoothed into the
 ground and never carved under: under_bridges only lowers ground that pokes up into a deck, and carve never raises
 ground under a deck (the river or the road below stays). harmonize never matches a bridge with a road on another
-level, and a dead end of an ordinary road is never joined onto the middle of a bridge.
+level, and a dead end of an ordinary road is never joined onto the middle of a bridge. A deck over another road is
+lifted to clear it by 5.8 m (clear_overpasses: a smooth hump spread along the deck and its approaches).
 
 Coordinates are world metres (x east, z south). Edge points are [x, z] in the graph and [x, z, y, c] once profiled:
 y = road height on the centre line, c = cross slope (height change per metre to the left of travel direction).
 """
-import math
+import heapq, math
 from collections import Counter, defaultdict
 import numpy as np
 from scipy import ndimage
@@ -307,7 +308,112 @@ def deck_heights(nodes, edges, Hfun, reach=6.0):
     return y
 
 
-def profiles(nodes, edges, J, Hfun, Hsmooth, grad, blend=18.0, sigma=6.0, max_grade=0.08):
+def _crosses(a, b):
+    """True if polylines a and b ([x, z] rows) cross or touch anywhere."""
+    p, r = a[:-1, None, :2], (a[1:] - a[:-1])[:, None, :2]
+    q, t = b[None, :-1, :2], (b[1:] - b[:-1])[None, :, :2]
+    cr = lambda u, v: u[..., 0] * v[..., 1] - u[..., 1] * v[..., 0]
+    den = cr(r, t); ok = np.abs(den) > 1e-9; den = np.where(ok, den, 1)
+    u, v = cr(q - p, t) / den, cr(q - p, r) / den
+    return bool((ok & (u >= 0) & (u <= 1) & (v >= 0) & (v <= 1)).any())
+
+
+def clear_overpasses(nodes, edges, clear=5.8, reach=80.0, kinds=('asphalt', 'gravel')):
+    """A deck over another road is lifted so its surface is at least `clear` m above that road (underside ~5 m):
+    a hump, flat over the road below, easing off as a half cosine of road distance (no kinks) along the rest of the
+    deck and up to `reach` m beyond each deck end, into every road met there. Works on the free profiles
+    (e['_prof']), before the junction planes are fitted, so planes and junction pieces follow it. Bridges over water
+    only keep their straight deck. Returns per lifted deck: (deck edge ids, lift m, steepest grade of the deck road
+    where lifted, taper m on each side, steepest grade of the lift alone)."""
+    inc = incidence(nodes, edges)
+    B = [ei for ei, e in enumerate(edges) if is_bridge(e)]
+    low = [ei for ei, e in enumerate(edges) if not is_bridge(e) and e['kind'] in kinds]
+    if not B or not low: return []
+    bdeg = Counter()
+    for ei in B: bdeg[edges[ei]['a']] += 1; bdeg[edges[ei]['b']] += 1
+    LP = np.vstack([edges[ei]['_prof'][3] for ei in low]); LY = np.concatenate([edges[ei]['_prof'][4] for ei in low])
+    LI = np.concatenate([np.full(len(edges[ei]['_prof'][3]), ei) for ei in low]); tree = cKDTree(LP)
+    lift, out, done = {}, [], set()
+    for b0 in B:
+        if b0 in done: continue
+        seq = []                                                  # the deck: bridge edges end to end, from one end
+        comp, stack = {b0}, [edges[b0]['a'], edges[b0]['b']]
+        while stack:
+            m = stack.pop()
+            for ei, _ in inc[m]:
+                if is_bridge(edges[ei]) and ei not in comp: comp.add(ei); stack += [edges[ei]['a'], edges[ei]['b']]
+        done |= comp
+        ends = sorted({edges[ei][k] for ei in comp for k in ('a', 'b') if bdeg[edges[ei][k]] == 1})
+        if len(ends) != 2 or any(bdeg[edges[ei][k]] > 2 for ei in comp for k in ('a', 'b')): continue   # branching / loop
+        n = ends[0]
+        while len(seq) < len(comp):
+            ei, end = next((ei, end) for ei, end in inc[n] if ei in comp and ei not in {x for x, _ in seq})
+            seq.append((ei, end == 0)); n = edges[ei]['b'] if end == 0 else edges[ei]['a']
+        U, off = {}, 0.0                                          # deck coordinate of every free-profile sample
+        for ei, f in seq:
+            _, L, s, _, _ = edges[ei]['_prof']; U[ei] = off + (s if f else L - s); off += L
+        touch = comp | {x for ei, _ in seq for k in ('a', 'b') for x, _ in inc[edges[ei][k]]}
+        need, at, cross = [], [], {}
+        for ei, _ in seq:
+            _, _, _, q, free = edges[ei]['_prof']; hw = edges[ei]['w'] / 2
+            for k, near in enumerate(tree.query_ball_point(q, hw + 10.0)):
+                for j in near:
+                    le = LI[j]
+                    if le in touch or np.hypot(*(q[k] - LP[j])) > hw + edges[le]['w'] / 2: continue
+                    if le not in cross:                           # the road below crosses the deck somewhere
+                        cross[le] = any(_crosses(edges[d]['pts'], edges[le]['pts']) for d, _ in seq)
+                    if cross[le]: need.append(LY[j] + clear - free[k]); at.append(U[ei][k])
+        if not need or max(need) <= 0: continue
+        H, u0, u1 = max(need), min(at), max(at)
+        below = {le for le, c in cross.items() if c}
+        # each side: road distance from the flat top, out through the deck end into every road beyond it (Dijkstra,
+        # through junctions: all roads at a lifted junction ease off alike); the taper ends `reach` m past the deck
+        # end, or sooner if it would reach a junction of the road below (that road is never lifted)
+        sides = []
+        for src, d0 in ((ends[0], u0), (n, off - u1)):
+            R = d0 + reach; dist = {src: d0}; heap = [(d0, src)]
+            while heap:
+                d, m = heapq.heappop(heap)
+                if d > dist.get(m, np.inf) or d > R: continue
+                for ei, end in inc[m]:
+                    if ei in comp or ei in below: continue
+                    o = edges[ei]['b'] if end == 0 else edges[ei]['a']; dn = d + edges[ei]['_prof'][1]
+                    if dn < dist.get(o, np.inf): dist[o] = dn; heapq.heappush(heap, (dn, o))
+            stop = [dist[m] for le in below for m in (edges[le]['a'], edges[le]['b']) if m in dist]
+            sides.append((dist, max(min([R] + stop), d0 + 1e-6)))
+        bell = lambda d, R: H * (1 + np.cos(np.pi * np.clip(d / R, 0, 1))) / 2
+        road = set()                                              # the deck road's approaches: straight on at each end
+        for m in (ends[0], n):
+            dk = next((ei, end) for ei, end in inc[m] if ei in comp)
+            td = oriented(edges[dk[0]], dk[1]); td = td[min(2, len(td) - 1), :2] - td[0, :2]
+            on = [(np.dot(td, oriented(edges[ei], end)[1, :2] - oriented(edges[ei], end)[0, :2]) /
+                   (np.linalg.norm(td) * np.linalg.norm(oriented(edges[ei], end)[1, :2] - oriented(edges[ei], end)[0, :2]) + 1e-9), ei)
+                  for ei, end in inc[m] if ei not in comp]
+            if on: road.add(min(on)[1])
+        mine = {}
+        for ei, _ in seq:
+            u = U[ei]; mine[ei] = np.where(u < u0, bell(u0 - u, sides[0][1]), np.where(u > u1, bell(u - u1, sides[1][1]), H))
+        for ei in {ei for dist, _ in sides for m in dist for ei, _ in inc[m]} - comp - below:
+            e = edges[ei]; _, L, s, _, _ = e['_prof']; l = None
+            for dist, R in sides:
+                da, db = dist.get(e['a'], np.inf), dist.get(e['b'], np.inf)
+                if min(da, db) >= R: continue
+                v = bell(np.minimum(da + s, db + L - s), R); l = v if l is None else np.maximum(l, v)
+            if l is not None: mine[ei] = l
+        grade = 0.0                                               # of the deck road (deck + its two approaches)
+        for ei, l in mine.items():
+            lift[ei] = np.maximum(lift.get(ei, 0.0), l)
+            _, _, s, _, free = edges[ei]['_prof']; k = l > 0.01
+            if len(s) > 2 and k.any() and (ei in comp or ei in road):
+                grade = max(grade, float(np.abs(np.gradient(free + l, s))[k].max()))
+        out.append(([ei for ei, _ in seq], round(H, 2), round(grade, 3), round(sides[0][1], 1), round(sides[1][1], 1),
+                    round(H * np.pi / 2 / min(s[1] for s in sides), 3)))
+    for ei, l in lift.items():
+        cum, L, s, q, free = edges[ei]['_prof']; edges[ei]['_prof'] = (cum, L, s, q, free + l)
+    return out
+
+
+def profiles(nodes, edges, J, Hfun, Hsmooth, grad, blend=18.0, sigma=6.0, max_grade=0.08, log=None):
     """Each edge's smooth height along its length; junction planes fitted to the roads meeting there; then each
     edge pinned to its junction planes near its ends, trimmed and resampled every <= 2 m."""
     deck = deck_heights(nodes, edges, Hfun)
@@ -320,6 +426,11 @@ def profiles(nodes, edges, J, Hfun, Hsmooth, grad, blend=18.0, sigma=6.0, max_gr
         else:
             free = ndimage.gaussian_filter1d(Hfun(q[:, 0], q[:, 1]), max(0.5, sigma / max(ds, 1e-3)), mode='nearest')
         e['_prof'] = (cum, L, s, q, free)
+    lifted = clear_overpasses(nodes, edges)
+    if log:
+        log(f'overpasses: {len(lifted)} decks lifted over a road below (lift m / max grade of the deck road / '
+            f'steepest grade of the lift itself / taper m each side):',
+            ', '.join(f'{h}/{g}/{lg}/{l:.0f}+{r:.0f}' for _, h, g, l, r, lg in lifted[:40]))
     planes = {}
     for j in J:                                                   # plane fit (ridge: slope pulled toward flat)
         if len(j['items']) < 2: continue
