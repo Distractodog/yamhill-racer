@@ -17,6 +17,7 @@
 //     air (scrub); hands off it slowly lines up with its flight path. Landing far off line is a bail.
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const BIKE = {
   accel: 20,            // m/s² from standstill
@@ -44,6 +45,10 @@ const LOOSE = [1, 1, 1, 0, 1, 1, 0, 0.3];                      // …but only lo
 const DRAG = [1.4, 3.0, 0, 0, 0.3, 5, 0, 0];                   // extra rolling drag, m/s² (grass / forest are slower)
 const BUMP = [0.04, 0.06, 0.02, 0, 0.03, 0, 0, 0.01];        // bump height, m
 const MASS = 180, IPITCH = 80, LF = 0.72, LR = -0.73, WB = LF - LR, RADIUS = 0.34;
+// water (water.js): bike + rider float on two columns (under the engine, front and back) and fill nose-first
+const FLOAT = 1.3, FLOAT_H = 1.0, FLOAT_Z = 0.6, FLOAT_Y = -0.2;   // buoyancy × weight fully in; column height, m
+const FLOAT_DAMP = 10, FLOOD_RATE = 0.3, ROOF = 1.1;               // 1/s; 1/s; m above the centre: rider's head under
+const WADE = 3.7, SKIM_DRAG = 0.4, BODY_L = 1.2, BODY_Q = 0.04;    // drag, as the car's (skim drag as before)
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _n = new THREE.Vector3(), _c = new THREE.Vector3(),
   _F = new THREE.Vector3(), _up = new THREE.Vector3(), _fw = new THREE.Vector3(), _lt = new THREE.Vector3(),
@@ -60,6 +65,7 @@ export class Bike extends Vehicle {
     this.yaw = 0; this.pitch = 0; this.pitchRate = 0; this.yawRate = 0; this.lean = 0; this.leanRate = 0;
     this.washout = false; this.stoppie = false;
     this.wheelie = false; this.wasGrounded = false; this.groundPitch = 0;
+    this.flood = 0; this.underT = 0; this.bogT = 0; this.waterSub = 0; this.sunk = false; this.skimming = false;
     this.wheels = [LF, LR].map(z => ({ z, front: z > 0, comp: 0, prevComp: 0, contact: false, surf: 0,
       contactPoint: new THREE.Vector3(), spin: 0 }));
     this.mesh = buildBikeModel();
@@ -80,6 +86,7 @@ export class Bike extends Vehicle {
     this.pitch = Math.atan2(hf - hr, WB); this.pos.y = Math.max(hf, hr) + 0.58;
     this.setQuat(); this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.steer = 0; this.drifting = false; this.lean = 0; this.leanRate = 0;
     for (const w of this.wheels) w.comp = w.prevComp = 0;
+    this.flood = 0; this.underT = 0; this.bogT = 0; this.waterSub = 0; this.sunk = false; this.skimming = false;
     this.afterReset();
   }
 
@@ -92,25 +99,26 @@ export class Bike extends Vehicle {
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
     _lt.set(1, 0, 0).applyQuaternion(this.quat);
     const speed = this.vel.length();
-    const hSpeed = Math.hypot(this.vel.x, this.vel.z), skimming = hSpeed * 3.6 > t.skimSpeed;
+    const hSpeed = Math.hypot(this.vel.x, this.vel.z), skimV = t.skimSpeed / 3.6, share = g * MASS / 2;
     const reach = t.travel + RADIUS;
 
     // ------------------------------------------------ suspension: two rays along the body's down axis (+ bumps)
     _F.set(0, -g * MASS, 0); _nAvg.set(0, 0, 0);
-    let torque = 0, contacts = 0, near = 0, wet = 0, bottom = 0;
+    let torque = 0, contacts = 0, near = 0, wet = 0, bottom = 0, bed = 0, wTorque = 0, wade = 0, skim = 0, skimming = 0;
+    const pitchV = Math.cos(this.pitch) * this.pitchRate;      // × z = a point's vertical speed from pitching
     for (const wh of this.wheels) {
       _w.copy(_fw).multiplyScalar(wh.z).add(this.pos);
-      let gh = W.heightAt(_w.x, _w.z, _w.y);
+      let gh = W.heightAt(_w.x, _w.z, _w.y);                    // the tyres always ride on the bed, even under water
       const wl = W.waterLevelAt(_w.x, _w.z), onW = wl > gh;
       const sc = W.surfaceAt(_w.x, _w.z, _w.y);
-      if (onW && skimming) gh = wl; else if (!onW) gh += bumps(_w.x, _w.z) * BUMP[sc];
-      W.normalAt(_w.x, _w.z, _n, _w.y); if (onW && skimming) _n.set(0, 1, 0);
+      if (!onW) gh += bumps(_w.x, _w.z) * BUMP[sc];
+      W.normalAt(_w.x, _w.z, _n, _w.y);
       const denom = _up.dot(_n);
       const dist = denom > 0.25 ? ((_w.y - gh) * _n.y) / denom : 99;
-      wh.prevComp = wh.comp;
+      wh.prevComp = wh.comp; wh.bed = false; wh.plane = 0;
       if (dist < reach + 0.6) near++;
       if (dist < reach) {
-        wh.contact = true; contacts++;
+        wh.contact = true; contacts++; bed++; wh.bed = true;
         wh.comp = Math.min(reach - dist, t.travel);
         bottom = Math.max(bottom, RADIUS - dist);                 // springs bottomed out: push the bike up
         wh.surf = onW ? 5 : (sc === 5 ? 0 : sc); if (onW) wet++;
@@ -121,6 +129,23 @@ export class Bike extends Vehicle {
         wh.contactPoint.copy(_w).addScaledVector(_up, -dist);
         _nAvg.add(_n);
       } else { wh.contact = false; wh.comp = 0; }
+      if (onW) {
+        // tyre in the water (water.js): planing lift that stiffens with speed², and wading drag (below)
+        const ty = wh.bed ? wh.contactPoint.y : _w.y - _up.y * reach;
+        const depth = Math.min(wl - ty, 2 * RADIUS);
+        if (depth > 0) {
+          const hold = planeHold(depth, hSpeed, skimV);
+          const Fz = Math.max(0, share * (hold - planeDamp(hSpeed, skimV, g) * (this.vel.y + wh.z * pitchV) / g));
+          _F.y += Fz; wTorque += Fz * wh.z;
+          wh.plane = planeGrip(hold);
+          wade += depth / (2 * RADIUS) / 2; skim += 0.5;
+          if (!wh.contact && wh.plane > 0) {                          // skimming on this tyre
+            wh.contact = true; contacts++; wet++; wh.surf = 5; skimming++;
+            wh.contactPoint.copy(_w).addScaledVector(_up, -reach); wh.contactPoint.y = wl;
+            _nAvg.add(_Y);
+          }
+        }
+      }
     }
     this.contacts = contacts; this.grounded = contacts > 0;
     const rear = this.wheels[1].contact, front = this.wheels[0].contact;
@@ -132,15 +157,32 @@ export class Bike extends Vehicle {
     const hx = Math.sin(this.yaw), hz = Math.cos(this.yaw);
     this.groundPitch = Math.atan2(W.heightAt(this.pos.x + hx * LF, this.pos.z + hz * LF, this.pos.y + _fw.y * LF) - W.heightAt(this.pos.x + hx * LR, this.pos.z + hz * LR, this.pos.y + _fw.y * LR), WB);
 
-    // ------------------------------------------------ water
+    // ------------------------------------------------ water: bike + rider float, fill nose-first, sink
     const wlC = W.waterLevelAt(this.pos.x, this.pos.z);
     this.waterDepth = Math.max(0, wlC - (this.pos.y - 0.45));
-    if (this.waterDepth > 0) {
-      const sub = Math.min(1, this.waterDepth / 0.8);
-      _F.y += g * MASS * sub * 0.6;
-      _F.x -= this.vel.x * MASS * 1.6 * sub; _F.z -= this.vel.z * MASS * 1.6 * sub; _F.y -= this.vel.y * MASS * 2.5 * sub;
+    let sub = 0;                                               // how much of the bike is under water, 0..1
+    for (const z of [FLOAT_Z, -FLOAT_Z]) {
+      _w.copy(_fw).multiplyScalar(z).addScaledVector(_up, FLOAT_Y).add(this.pos);
+      const f = Math.min(1, (W.waterLevelAt(_w.x, _w.z) - _w.y) / FLOAT_H);
+      if (!(f > 0)) continue;
+      sub += f / 2;
+      const Fz = share * f * (FLOAT * (1 - this.flood * (z > 0 ? 0.62 : 0.4)) - FLOAT_DAMP * (this.vel.y + z * pitchV) / g);
+      _F.y += Fz; wTorque += Fz * z;
     }
-    if (this.onWater) _F.addScaledVector(this.vel, -MASS * 0.4);
+    const inWater = sub > 0 || wade > 0;
+    if (inWater) {
+      const c = MASS * (WADE * wade * skimRelief(hSpeed, skimV) + SKIM_DRAG * skim + (BODY_L + BODY_Q * hSpeed) * sub);
+      _F.x -= this.vel.x * c; _F.z -= this.vel.z * c;
+    }
+    this.flood = Math.min(1, Math.max(0, this.flood + dt * floodRate(sub, FLOOD_RATE)));
+    this.waterSub = sub; this.skimming = skimming >= 1;
+    const sinking = sub > 0.3 && this.flood > 0.5;
+    if (sinking && !this.sunk) this.say('Bail! Into the water', 2.5);
+    this.sunk = sinking;
+    // how much the tyres drive: on the bed (less as the bike floats), or planing on the water
+    let drive = 0;
+    const bg = bedGrip(sub);
+    for (const wh of this.wheels) if (wh.contact) drive += Math.max(wh.bed ? bg : 0, wh.plane);
 
     // ------------------------------------------------ bars
     const rate = (Math.sign(input.steer) !== Math.sign(this.steer) || !input.steer ? 1.8 : 1) * t.steerRate;
@@ -167,7 +209,7 @@ export class Bike extends Vehicle {
       if (rel < -0.4) torque += 20000 * (-0.4 - rel) - 2500 * Math.min(0, this.pitchRate);  // never goes over the bars
       this.pitchRate += torque / IPITCH * dt;
       this.pitchRate *= 1 - Math.min(1, 1.5 * dt);
-    } else {
+    } else if (!inWater) {
       // keys already held at take-off don't lean you (you're still on the gas from the run-up); press them again
       if (!input.throttle) this.heldGas = false; else if (this.airTime < 0.3) this.heldGas = true;
       if (!input.brake) this.heldBrake = false; else if (this.airTime < 0.3) this.heldBrake = true;
@@ -178,13 +220,14 @@ export class Bike extends Vehicle {
       const assist = (fwd || back) ? 0 : clamp((path * 0.8 - this.pitch) * 2.2, -1.5, 1.5);
       this.pitchRate += (want + assist - this.pitchRate) * Math.min(1, 5 * dt);
     }
+    if (inWater) this.pitchRate += wTorque / IPITCH * dt;      // the water tips it (nose-down as it fills)
 
     this.vel.addScaledVector(_F, dt / MASS);
 
     // ------------------------------------------------ riding on the ground: lean → turn, grip, slides
     let leanWant;
-    if (contacts) {
-      const n = _nAvg, k = contacts / 2, grip = GRIP[this.surface], loose = LOOSE[this.surface];
+    if (drive > 0) {
+      const n = _nAvg, k = drive / 2, grip = GRIP[this.surface], loose = LOOSE[this.surface];
       _hp.copy(_fw).addScaledVector(n, -_fw.dot(n)).normalize();
       _vp.copy(this.vel).addScaledVector(n, -this.vel.dot(n));
       const vPlane = _vp.length(), vf = _vp.dot(_hp), reversing = vf < -0.5, av = Math.abs(vf);
@@ -245,6 +288,11 @@ export class Bike extends Vehicle {
       _vp.addScaledVector(_hp, a * dt * k);
       const vN = this.vel.dot(n);
       this.vel.copy(_vp).addScaledVector(n, vN);
+    } else if (inWater) {
+      // floating: no grip, the bars do nothing; sinking, it goes over on its side (the bail look)
+      this.slip = 0; this.drifting = false; this.washout = false;
+      this.yawRate *= 1 - Math.min(1, 3 * dt);
+      leanWant = this.sunk ? (this.lean < 0 ? -1 : 1) : 0;
     } else {
       this.slip = 0; this.drifting = false; this.washout = false;
       // in the air A / D turn the bike (and lay it over a little: a scrub); the bars centre
@@ -257,8 +305,8 @@ export class Bike extends Vehicle {
 
     // ground snap over small crests; landing check
     const firm = contacts === 2;
-    if (!contacts && this.wasGrounded && near >= 1 && this.vel.y < 4) this.vel.y -= 40 * dt;
-    if (contacts && this.airTime > 0.25) {
+    if (!contacts && this.wasGrounded && near >= 1 && this.vel.y < 4 && !inWater) this.vel.y -= 40 * dt;
+    if (contacts && this.airTime > 0.25 && !inWater) {
       const sink = -this._prevVel.y, rel2 = this.pitch - this.groundPitch;
       let yawOff = 0;
       if (hSpeed > 8) { yawOff = Math.atan2(this.vel.x, this.vel.z) - this.yaw; yawOff = Math.abs(Math.atan2(Math.sin(yawOff), Math.cos(yawOff))); }
@@ -270,7 +318,7 @@ export class Bike extends Vehicle {
     }
     if (contacts) { this.heldGas = input.throttle > 0; this.heldBrake = input.brake > 0; }
     this.wasGrounded = contacts > 0;
-    this.airTime = contacts ? 0 : this.airTime + dt;
+    this.airTime = contacts || inWater ? 0 : this.airTime + dt;
 
     // air drag (light; top speed is mostly the engine limit)
     this.vel.addScaledVector(this.vel, -0.00012 * speed * dt);
@@ -293,8 +341,14 @@ export class Bike extends Vehicle {
       if (Math.abs(this.pitch - this.groundPitch) > 0.6) this.bail(); else this.pitchRate += (this.groundPitch - this.pitch) * 8 * dt;
     }
 
-    if (this.waterDepth > 0.4 && speed < 2.5) this.stuck += dt; else this.stuck = 0;
-    if (this.stuck > 3) { this.stuck = 0; this.resetToSafe(); return; }
+    // sunk (3 s fully under), or bogged (wheels on the bed, deep in the water, not moving): back to the nearest bank
+    this.underT = wlC > this.pos.y + ROOF ? this.underT + dt : 0;
+    this.bogT = sub > 0.3 && bed >= 1 && hSpeed < 3 ? this.bogT + dt : 0;
+    if (this.underT > UNDER_SECS || this.bogT > BOG_SECS) {
+      const b = nearestBank(W, this.pos.x, this.pos.z);
+      if (b) this.reset(b[0], b[1], b[2]); else this.resetToSafe();
+      return;
+    }
 
     this.hit = 0;
     const tr = this.collideTrees(0.45, [-0.6, 0.0, 0.6]);
@@ -304,7 +358,7 @@ export class Bike extends Vehicle {
 
     this.trackAccel(dt);
     for (const wh of this.wheels) wh.spin += this.vel.dot(_fw) * dt / RADIUS;
-    if (firm && speed > 3 && !this.drifting && this.slip < 0.2 && !this.onWater && !this.waterDepth && Math.abs(this.pitch - this.groundPitch) < 0.2) this.rememberSafe();
+    if (firm && speed > 3 && !this.drifting && this.slip < 0.2 && !this.onWater && !this.waterDepth && !inWater && Math.abs(this.pitch - this.groundPitch) < 0.2) this.rememberSafe();
   }
 
   // glider hooks: how far the tyres reach below the axles, and picking the bike's yaw / pitch back up from the
@@ -327,7 +381,7 @@ export class Bike extends Vehicle {
   }
 
   hudInfo() {
-    return `${this.wheelie ? 'WHEELIE · ' : ''}${this.stoppie ? 'STOPPIE · ' : ''}${this.drifting || this.slip > 0.25 ? 'SLIDE · ' : ''}${this.washout ? 'FRONT WASHING OUT · ' : ''}`;
+    return `${this.skimming ? 'SKIMMING · ' : ''}${this.wheelie ? 'WHEELIE · ' : ''}${this.stoppie ? 'STOPPIE · ' : ''}${this.drifting || this.slip > 0.25 ? 'SLIDE · ' : ''}${this.washout ? 'FRONT WASHING OUT · ' : ''}`;
   }
 
   syncMesh(dt) {
@@ -340,7 +394,7 @@ export class Bike extends Vehicle {
       w.holder.position.y = -(this.t.travel - (wh.contact ? wh.comp : 0));
       w.spin.rotation.x = wh.spin;
     });
-    ud.rider.rotation.x = clamp(-this.pitchRate * 0.05 + (this.wheelie ? -0.15 : 0.12), -0.35, 0.35);
+    ud.rider.rotation.x = this.sunk ? -0.35 : clamp(-this.pitchRate * 0.05 + (this.wheelie ? -0.15 : 0.12), -0.35, 0.35);
   }
 }
 

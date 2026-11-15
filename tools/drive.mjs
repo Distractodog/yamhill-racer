@@ -12,16 +12,8 @@ for (const [tx, tz] of WJ.tiles) {            // one tile at a time (packed or p
   const d = `${A}tiles/${tx}_${tz}/`;
   W.add(makeTileData(WJ, tx, tz, await readTileData(async f => ab(d + f), WJ.packed)));
 }
-// ponds as {level, x0, z0, x1, z1} from the tiles' pond grids
-W.ponds = (() => {
-  const box = new Map();
-  for (const t of W.tiles.values()) for (let i = 0; i < t.NN; i++) for (let j = 0; j < t.NN; j++) {
-    const k = t.pondId[i * t.NN + j]; if (!k || t.pondLevel[k] === undefined) continue;
-    const x = t.gx0 + j * WJ.hstep, z = t.gz0 + i * WJ.hstep, b = box.get(k) || { level: t.pondLevel[k], x0: x, x1: x, z0: z, z1: z };
-    b.x0 = Math.min(b.x0, x); b.x1 = Math.max(b.x1, x); b.z0 = Math.min(b.z0, z); b.z1 = Math.max(b.z1, z); box.set(k, b);
-  }
-  return [...box.values()];
-})();
+// water test sites (tools/lib/water.mjs): the deepest campus-area pond, the South Yamhill
+const WATER = await import('./lib/water.mjs'), POND = WATER.deepestPond(W, 0, 0);
 const tuning = { ...TUNING_DEFAULTS, ...(process.env.TUNE ? JSON.parse(process.env.TUNE) : {}) };
 const DT = 1 / 120, up = new THREE.Vector3(), fw = new THREE.Vector3();
 function run(name, x, z, yaw, secs, ctl, every = 0.5, make = () => new Car(W, tuning)) {
@@ -86,29 +78,26 @@ if (which === 'all' || which === 'slope') {
 }
 
 if (which === 'all' || which === 'water') {
-  // biggest pond: drive straight across it fast, and slowly
-  const p = [...W.ponds].sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
-  const pcx = (p.x0 + p.x1) / 2, pcz = (p.z0 + p.z1) / 2;
-  // pick the approach direction with no trees or buildings in the way for 80 m
-  let bestA = 0, bestClear = -1;
-  for (let a = 0; a < Math.PI * 2; a += 0.1) {
-    let clear = 0;
-    for (let r = 0; r < 110; r += 2) { let hit = 0; W.treesNear(pcx + Math.sin(a) * r, pcz + Math.cos(a) * r, 3, () => hit++); if (hit) break; clear = r; }
-    if (clear > bestClear) { bestClear = clear; bestA = a; }
-  }
-  const startR = Math.min(bestClear, 90);
-  const sx0 = pcx + Math.sin(bestA) * startR, sz0 = pcz + Math.cos(bestA) * startR, yaw = bestA + Math.PI;
-  console.log('   approach clear for', bestClear, 'm; starting', startR.toFixed(0), 'm from the pond centre');
-  for (const [label, kmh] of [['fast (150 km/h)', 150], ['slow (50 km/h)', 50]]) {
-    let entered = null, maxDepth = 0;
-    const { car, rows } = run('pond ' + label, sx0, sz0, yaw, 8, (t, i, c) => {
-      if (t === 0) { c.vel.set(Math.sin(yaw) * kmh / 3.6, 0, Math.cos(yaw) * kmh / 3.6); }
-      i.throttle = 0.5;
-      if (entered === null && (c.onWater || c.waterDepth > 0)) entered = [t, c.vel.length() * 3.6];
-      maxDepth = Math.max(maxDepth, c.waterDepth || 0);
-    }, 0.5);
-    console.log('   entered water at', entered ? entered[0].toFixed(1) + 's, ' + entered[1].toFixed(0) + ' km/h' : 'never',
-      '· max depth', maxDepth.toFixed(2), 'm · end', (car.vel.length() * 3.6).toFixed(0), 'km/h, travelled', Math.hypot(car.pos.x - sx0, car.pos.z - sz0).toFixed(0), 'm');
+  // drive into a campus pond and the South Yamhill, fast and slowly, half throttle (tools/water_test.mjs does more)
+  for (const [site, c] of [['pond', [POND.x, POND.z]], ['river', WATER.RIVER]]) {
+    const ap = WATER.approach(W, c);
+    console.log(`   ${site} at ${c.map(v => v.toFixed(0))}, ${(W.waterLevelAt(...c) - W.heightAt(...c)).toFixed(1)} m deep: run-up ${ap.run.toFixed(0)} m from ${ap.x.toFixed(0)},${ap.z.toFixed(0)}`);
+    for (const [label, kmh] of [['fast (150 km/h)', 150], ['slow (50 km/h)', 50]]) {
+      let entered = null, maxDepth = 0, bank = null, last = null, skim = 0;
+      const { car } = run(`${site} ${label}`, ap.x, ap.z, ap.yaw, 14, (t, i, c) => {
+        if (t === 0) { c.vel.set(Math.sin(ap.yaw) * kmh / 3.6, 0, Math.cos(ap.yaw) * kmh / 3.6); }
+        if (last && !bank && Math.hypot(c.pos.x - last[0], c.pos.z - last[1]) > 6) bank = [t, c.pos.x, c.pos.z];
+        last = [c.pos.x, c.pos.z];
+        if (entered === null && (c.onWater || c.waterDepth > 0)) entered = [t, c.vel.length() * 3.6];
+        // hold the speed down the bank (brakes) until the water, then half throttle; hands off back on the bank
+        const s = c.vel.length() * 3.6;
+        i.throttle = bank ? 0 : entered ? 0.5 : s < kmh ? 1 : 0; i.brake = !entered && !bank && s > kmh + 2 ? 1 : 0;
+        if (!bank) { maxDepth = Math.max(maxDepth, c.waterDepth || 0); if (c.onWater && !c.waterSub) skim += DT; }
+      }, 0.5);
+      console.log('   entered water at', entered ? entered[0].toFixed(1) + 's, ' + entered[1].toFixed(0) + ' km/h' : 'never',
+        '· skimmed', skim.toFixed(1), 's · max depth', maxDepth.toFixed(2), 'm ·', bank ? `back on the bank at ${bank[0].toFixed(1)} s (dry: ${W.waterLevelAt(bank[1], bank[2]) === -Infinity})` : 'no respawn',
+        '· end', (car.vel.length() * 3.6).toFixed(0), 'km/h');
+    }
   }
 }
 
@@ -311,11 +300,10 @@ if (which === 'all' || which === 'glider') {
   }
   // a pond: glide down onto it slowly → lands in the water and the car's water physics take over
   {
-    const p = [...W.ponds].sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
-    const cx = (p.x0 + p.x1) / 2, cz = (p.z0 + p.z1) / 2;
+    const p = POND, ap = WATER.approach(W, [p.x, p.z]), cx = p.x - Math.sin(ap.yaw) * 20, cz = p.z - Math.cos(ap.yaw) * 20;
     let maxDepth = 0;
-    const { G } = glide('glide down onto the biggest pond', cx, cz, 0, 8,
-      (c, G) => { c.pos.y = p.level + 6; c.vel.set(0, -1, 70 / 3.6); c.airTime = 1; G.toggle(); },
+    const { G } = glide('glide down onto a campus pond', cx, cz, ap.yaw, 8,
+      (c, G) => { c.pos.y = W.waterLevelAt(p.x, p.z) + 6; c.vel.set(Math.sin(ap.yaw) * 70 / 3.6, -1, Math.cos(ap.yaw) * 70 / 3.6); c.airTime = 1; G.toggle(); },
       (t, i, c) => { maxDepth = Math.max(maxDepth, c.waterDepth || 0); });
     console.log(`   closed as '${G.result}', then max water depth ${maxDepth.toFixed(2)} m`);
   }
