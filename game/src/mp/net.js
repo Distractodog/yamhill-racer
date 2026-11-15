@@ -9,6 +9,16 @@ function randomText(length) {
   return Array.from(bytes, b => ALPHABET[b % ALPHABET.length]).join('');
 }
 function error(reason) { return Object.assign(new Error(reason), { reason }); }
+export const LOCAL_RELAY = 'ws://127.0.0.1:8787', DEPLOYED_RELAY = 'wss://yamhill-racer-relay.yamhill-racer.workers.dev';
+// window.YR_MP_RELAY, else ?relay=ws(s)://… on the page URL (testing), else the local stand-in for a page served from
+// 127.0.0.1 / localhost (or no page: Node tools) and the deployed Cloudflare relay everywhere else
+export function defaultRelay(win = globalThis.window) {
+  if (win?.YR_MP_RELAY) return win.YR_MP_RELAY;
+  let query = null; try { query = new URLSearchParams(win?.location?.search || '').get('relay'); } catch {}
+  if (query && /^wss?:\/\/[^\s]+$/i.test(query)) return query;
+  const host = win?.location?.hostname;
+  return !win?.location || host === '127.0.0.1' || host === 'localhost' ? LOCAL_RELAY : DEPLOYED_RELAY;
+}
 
 export class Net {
   constructor({ WebSocketImpl = globalThis.WebSocket, storage = storageDefault(), relay,
@@ -69,7 +79,7 @@ export class Net {
   _connect() {
     let socket;
     try {
-      const relay = this._relay ?? globalThis.window?.YR_MP_RELAY ?? 'ws://127.0.0.1:8787';
+      const relay = this._relay ?? defaultRelay();
       socket = new this._WebSocket(`${relay.replace(/\/$/, '')}/room/${this.roomCode}?id=${encodeURIComponent(this.me.id)}`);
     } catch { this._end('connection-failed'); return; }
     this._socket = socket;

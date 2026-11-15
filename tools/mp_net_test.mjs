@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { Net } from '../game/src/mp/net.js';
+import { Net, defaultRelay, LOCAL_RELAY, DEPLOYED_RELAY } from '../game/src/mp/net.js';
 
 // Deterministic timers exercise the actual send and reconnect loops without sockets or sleeps.
 class Time {
@@ -162,4 +162,19 @@ jet.setVehicleSource(() => ({ kind: 'jet', vehicle, colors: { body: '#ababab' },
 await hello.connect(jet.host());
 assert.deepEqual(hello.sockets[0].sent[0].skin, { vehicle: 'jet', colors: { body: '#ababab' }, glider: {} });
 hello.time.advance(70); assert.equal(hello.sockets[0].sent.find(m => m.t === 'state').v, 'jet'); jet.leave();
-console.log('PASS mp net: identity, lifecycle, roster/events, 15 Hz state, skins, clock, back pressure, retry, cleanup');
+
+// relay choice: YR_MP_RELAY, then ?relay=, then local for a 127.0.0.1 / localhost page (or no page), deployed elsewhere
+const page = (href, extra = {}) => ({ location: new URL(href), ...extra });
+assert.equal(DEPLOYED_RELAY, 'wss://yamhill-racer-relay.yamhill-racer.workers.dev');
+assert.equal(defaultRelay(undefined), LOCAL_RELAY);
+assert.equal(defaultRelay(page('http://127.0.0.1:8173/')), LOCAL_RELAY);
+assert.equal(defaultRelay(page('http://localhost:8195/index.html')), LOCAL_RELAY);
+assert.equal(defaultRelay(page('https://example.github.io/yamhill-racer/')), DEPLOYED_RELAY);
+assert.equal(defaultRelay(page('https://example.github.io/?relay=ws://127.0.0.1:8797')), 'ws://127.0.0.1:8797');
+assert.equal(defaultRelay(page('http://127.0.0.1:8173/?relay=' + encodeURIComponent(DEPLOYED_RELAY))), DEPLOYED_RELAY);
+assert.equal(defaultRelay(page('https://example.github.io/?relay=javascript:alert(1)')), DEPLOYED_RELAY, 'only ws(s) URLs');
+assert.equal(defaultRelay(page('http://127.0.0.1:8173/?relay=ws://a.test', { YR_MP_RELAY: 'ws://b.test' })), 'ws://b.test');
+const urls = [], picky = new Net({ storage: null, relay: undefined, WebSocketImpl: class { constructor(u) { urls.push(u); throw new Error('offline'); } } });
+await picky.host().catch(() => {});
+assert.ok(urls[0].startsWith(`${LOCAL_RELAY}/room/${picky.me.code}?id=`), 'Node (no page) uses the local relay');
+console.log('PASS mp net: identity, lifecycle, roster/events, 15 Hz state, skins, clock, back pressure, retry, cleanup, relay choice');

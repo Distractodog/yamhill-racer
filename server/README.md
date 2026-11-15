@@ -40,12 +40,14 @@ deploys. No secrets or database provisioning are needed. To inspect logs:
 npx wrangler tail --config server/wrangler.toml
 ```
 
-Use the deployed hostname printed by Wrangler and configure the game **before its
-module loads**:
+The relay is deployed at **`wss://yamhill-racer-relay.yamhill-racer.workers.dev`**.
 
-```html
-<script>window.YR_MP_RELAY = 'wss://yamhill-racer-relay.YOUR-SUBDOMAIN.workers.dev';</script>
-```
+Which relay the game uses (`defaultRelay()` in `game/src/mp/net.js`):
+1. `window.YR_MP_RELAY`, if set **before the game's modules load** (browser test scripts do this);
+2. else a `?relay=ws(s)://…` query on the page URL, for testing, e.g.
+   `http://127.0.0.1:8173/?relay=wss://yamhill-racer-relay.yamhill-racer.workers.dev`;
+3. else `ws://127.0.0.1:8787` (the local stand-in) when the page is served from `127.0.0.1` or `localhost`,
+   and the deployed relay above everywhere else.
 
 The client appends `/room/<hostCode>?id=<playerId>`. Each room code routes to its own
 Durable Object. This worker does not serve or deploy `game/`.
