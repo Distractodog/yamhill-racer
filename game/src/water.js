@@ -28,11 +28,11 @@ export function planeGrip(hold) { return clamp(hold * 1.5 - 0.5, 0, 1); }
 export function planeDamp(hSpeed, skimV, g) {
   return 2 * Math.sqrt(Math.min(PLANE_MAX, (hSpeed / skimV) ** 2) * g / SKIM_DEPTH);
 }
-// wading drag left at `hSpeed`: all of it below 0.9× skimSpeed, a quarter from 1.1× (a skimming tyre barely drags),
-// so 0.3 m of water holds the car to ~50 km/h (the bike ~25), but a fast entry keeps skimming
+// wading drag left at `hSpeed`: all of it below 0.9× skimSpeed, none from 1.1× (a skimming tyre only feels the skim
+// drag, as before), so 0.3 m of water holds the car to ~50 km/h (the bike ~25), but a fast entry keeps skimming
 export function skimRelief(hSpeed, skimV) {
   const s = clamp((hSpeed / skimV - 0.9) / 0.2, 0, 1);
-  return 1 - 0.75 * s * s * (3 - 2 * s);
+  return 1 - s * s * (3 - 2 * s);
 }
 // how fast the body fills (+) or drains (-) at `sub` (0..1 under water): smooth through zero at a quarter under
 export function floodRate(sub, rate) { return sub > 0.25 ? rate * Math.min(1, (sub - 0.25) / 0.25) : -0.5 * (1 - sub / 0.25); }

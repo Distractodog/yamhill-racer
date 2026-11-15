@@ -1,7 +1,9 @@
 // Water physics test (game/src/water.js, car.js, bike.js) on the committed tiles, headless, no server.
 // Car and dirt bike drive into a campus pond and the South Yamhill river at 30 / 80 / 150 km/h; sit still in
-// shallow water; drive out of it; drop into deep water at rest; glide down onto the water. Checks: no NaN, height
-// oscillation < 0.1 m once settled, deep water → back on a dry bank. Exit code 1 on any failure.
+// shallow water; drive out of it; drop into deep water at rest; glide down onto the water. Checks: every run really
+// enters the water; no NaN; height oscillation < 0.1 m once settled (with at least 1.5 s of settled samples); deep
+// water → back on a dry bank; above skimSpeed a sustained skim (tyres planing ≥ 0.5 s, not a jump over); the glider
+// closes as 'water'. Exit code 1 on any failure.
 //   node tools/water_test.mjs            (all)        V=1 prints a timeline per run
 //   node tools/water_test.mjs river car  (filter by words in the run name)
 import fs from 'fs';
@@ -69,7 +71,11 @@ function oscillation(ys) {
 
 // ---------------------------------------------------------------- one run
 const results = [];
-function run(name, vehicle, x, z, yaw, secs, { kmh = 0, ctl = () => {}, setup = () => {}, expect = 'any' } = {}) {
+// expect: 'respawn' (deep: must end back on a dry bank), 'skim' (fast: must plane on the water, not jump over it),
+// 'sit' (shallow, no input: stays put), 'out' (shallow: drives out), 'any'. glider: must close with result 'water'.
+// Every run must really enter the water; runs that settle in it need ≥ SETTLED s of settled samples.
+const SETTLED = 1.5, SKIM_MIN = 0.5;
+function run(name, vehicle, x, z, yaw, secs, { kmh = 0, ctl = () => {}, setup = () => {}, expect = 'any', glider = false } = {}) {
   if (filter.length && !filter.every(f => name.includes(f))) return;
   const v = vehicle === 'bike' ? new Bike(W, { ...BIKE }) : new Car(W, { ...TUNING_DEFAULTS });
   v.reset(x, z, yaw);
@@ -78,6 +84,7 @@ function run(name, vehicle, x, z, yaw, secs, { kmh = 0, ctl = () => {}, setup = 
   const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false };
   const ys = [], lines = [];
   let enterT = null, enterKmh = 0, rebounds = 0, rising = false, stayed = null, respawn = null, nan = false, maxUnder = 0, leftWater = null, inWaterT = 0;
+  let skimRun = 0, skimBest = 0, skimDist = 0, skimBestDist = 0, glideOn = false, glideResult = null;
   for (let i = 0; i < secs / DT; i++) {
     const t = i * DT;
     if (respawn === null && enterT === null && kmh) {      // hold the entry speed (brake down a steep bank)
@@ -100,6 +107,10 @@ function run(name, vehicle, x, z, yaw, secs, { kmh = 0, ctl = () => {}, setup = 
     if (inW && respawn === null) inWaterT += DT;
     if (enterT !== null && respawn === null && !inW && leftWater === null && t - enterT > 0.5) leftWater = t;
     maxUnder = Math.max(maxUnder, v.underT || 0);          // the vehicle's own "fully under" timer
+    // sustained skim: the longest unbroken stretch with tyres planing on the water (car ≥ 2, bike ≥ 1)
+    if (v.skimming && !respawn) { skimRun += DT; skimDist += Math.hypot(v.pos.x - px, v.pos.z - pz); } else { skimRun = 0; skimDist = 0; }
+    if (skimRun > skimBest) { skimBest = skimRun; skimBestDist = skimDist; }
+    if (v.glide?.active) glideOn = true; else if (glideOn && glideResult === null) glideResult = v.glide.result;
     if (!respawn) ys.push([t, v.pos.y, inW]);
     // rebounds: the body moving up out of the water faster than 0.5 m/s after it was going down (not skimming)
     if (inW && !respawn && !v.onWater) { if (v.vel.y > 0.5 && !rising) { rising = true; if (t - enterT > 0.05) rebounds++; } else if (v.vel.y < 0) rising = false; }
@@ -111,10 +122,12 @@ function run(name, vehicle, x, z, yaw, secs, { kmh = 0, ctl = () => {}, setup = 
   // oscillation once settled: in the water from 1.5 s after entering (the whole sit-still run after 1.5 s). The
   // height's turning points (ignoring wiggles under 5 mm); an oscillation is a there-and-back: the smaller of two
   // swings in a row. A smooth float → sink → rest on the bed has no there-and-back, a bob or a bounce does.
-  const t0 = (enterT ?? 0) + 1.5;
-  const seg = [];                                       // the first stretch in the water (not a later dip back in)
-  for (const p of ys) { if (p[0] < t0) continue; if (!p[2] && expect !== 'sit') break; seg.push(p); }
-  const osc = oscillation(seg.map(p => p[1]));
+  // (sitting / driving out start in the water at rest: no entry splash to wait out)
+  const t0 = (enterT ?? 0) + (expect === 'sit' || expect === 'out' ? 0.2 : 1.5);
+  // each unbroken stretch in the water is measured on its own (never stitched across a trip out onto land)
+  const stretches = [[]];
+  for (const p of ys) { if (p[0] < t0) continue; if (p[2] || expect === 'sit') stretches.at(-1).push(p[1]); else if (stretches.at(-1).length) stretches.push([]); }
+  const osc = Math.max(0, ...stretches.map(oscillation)), seg = stretches.flat();
   // after a respawn: dry spot, sits still
   let bankOk = null;
   if (respawn) {
@@ -123,7 +136,13 @@ function run(name, vehicle, x, z, yaw, secs, { kmh = 0, ctl = () => {}, setup = 
   }
   const endWet = wet(v.pos.x, v.pos.z) && depth(v.pos.x, v.pos.z) > 0.3;
   const fails = [];
+  const settledS = seg.length * DT;
   if (nan) fails.push('NaN');
+  if (enterT === null) fails.push('never entered the water');
+  if ((expect === 'respawn' || expect === 'sit') && settledS < SETTLED) fails.push(`only ${settledS.toFixed(2)} s of settled samples`);
+  if (expect === 'out' && settledS < 0.5) fails.push(`only ${settledS.toFixed(2)} s in the water before driving out`);
+  if (expect === 'skim' && skimBest < SKIM_MIN) fails.push(`no sustained skim (longest planing stretch ${skimBest.toFixed(2)} s)`);
+  if (glider && glideResult !== 'water') fails.push(`glider closed as '${glideResult}', not 'water'`);
   if (osc >= 0.1) fails.push(`oscillation ${osc.toFixed(3)} m`);
   if (expect === 'respawn' && !respawn) fails.push('never went back to the bank');
   if (respawn && !bankOk) fails.push('respawned in the water');
@@ -135,7 +154,8 @@ function run(name, vehicle, x, z, yaw, secs, { kmh = 0, ctl = () => {}, setup = 
   const outcome = respawn ? `back on the bank at ${respawn.t.toFixed(1)} s (${respawn.dist.toFixed(0)} m away, ${respawn.edge.toFixed(1)} m from the water)`
     : leftWater !== null ? `out of the water at ${leftWater.toFixed(1)} s` : endWet ? 'in deep water' : wet(v.pos.x, v.pos.z) ? 'in shallow water' : 'on land';
   console.log(`${fails.length ? 'FAIL' : 'ok  '} ${name}: entered ${enterT === null ? 'never' : `${enterT.toFixed(1)} s at ${enterKmh.toFixed(0)} km/h`} · ${outcome}` +
-    ` · in water ${inWaterT.toFixed(1)} s · fully under ${maxUnder.toFixed(1)} s · oscillation ${osc.toFixed(3)} m · rebounds ${rebounds} · end ${(v.vel.length() * 3.6).toFixed(0)} km/h${fails.length ? ' · ' + fails.join(', ') : ''}`);
+    ` · in water ${inWaterT.toFixed(1)} s · fully under ${maxUnder.toFixed(1)} s${skimBest ? ` · skimmed ${skimBest.toFixed(2)} s / ${skimBestDist.toFixed(0)} m` : ''}` +
+    `${glider ? ` · glider closed '${glideResult}'` : ''} · settled ${settledS.toFixed(1)} s, oscillation ${osc.toFixed(3)} m · rebounds ${rebounds} · end ${(v.vel.length() * 3.6).toFixed(0)} km/h${fails.length ? ' · ' + fails.join(', ') : ''}`);
   if (process.env.V) console.log(lines.join('\n'));
   results.push({ name, fails });
   return v;
@@ -150,13 +170,20 @@ for (const [site, c] of sites) {
   console.log(`${site}: approach from ${ap.x.toFixed(0)},${ap.z.toFixed(0)} heading ${(ap.yaw * 57.3 % 360).toFixed(0)}°, ${ap.run.toFixed(0)} m of dry run-up`);
   for (const vehicle of ['car', 'bike']) {
     for (const kmh of [30, 80, 150]) {
-      // drive in at kmh and keep the throttle down (the player holding W): below skimSpeed it must still sink
+      // drive in at kmh and keep the throttle down (the player holding W): below skimSpeed it must still sink, above
+      // it it must plane. Skim runs start 8 m up the bank moving along its slope, so they can't launch off the rim
+      // and fly over the water or plunge in from above (the pond sits in a hollow)
       const skim = (vehicle === 'bike' ? BIKE : TUNING_DEFAULTS).skimSpeed;
-      run(`${site} ${vehicle} ${kmh} km/h`, vehicle, ap.x, ap.z, ap.yaw, 22, { kmh, expect: kmh < skim * 0.95 ? 'respawn' : 'any',
+      const expect = kmh < skim * 0.95 ? 'respawn' : kmh > skim * 1.05 ? 'skim' : 'any', onBank = expect === 'skim';
+      const ex = ap.x + Math.sin(ap.yaw) * ap.run, ez = ap.z + Math.cos(ap.yaw) * ap.run;       // the water's edge
+      const [sx, sz] = onBank ? [ex - Math.sin(ap.yaw) * 8, ez - Math.cos(ap.yaw) * 8] : [ap.x, ap.z];
+      const slope = onBank ? (W.heightAt(ex - Math.sin(ap.yaw), ez - Math.cos(ap.yaw)) - W.heightAt(sx, sz)) / 7 : 0;
+      run(`${site} ${vehicle} ${kmh} km/h`, vehicle, sx, sz, ap.yaw, 22, { kmh, expect,
+        setup: v => { v.vel.y = slope * kmh / 3.6; },
         ctl: (t, i, v) => { if (v.waterDepth > 0 || v.onWater) { i.throttle = 1; i.brake = 0; } } });
     }
     // on the water at about skimSpeed, half throttle, turning: the old per-wheel skim / sink switch bounced here
-    run(`${site} ${vehicle} circling on the water near skimSpeed`, vehicle, c[0], c[1], ap.yaw, 18, {
+    run(`${site} ${vehicle} circling on the water near skimSpeed`, vehicle, c[0], c[1], ap.yaw, 18, { expect: 'respawn',
       setup: v => { v.pos.y = wl(...c) + 0.6; v.vel.set(Math.sin(ap.yaw) * 90 / 3.6, 0, Math.cos(ap.yaw) * 90 / 3.6); },
       ctl: (t, i) => { i.throttle = 0.5; i.steer = 0.4; } });
     run(`${site} ${vehicle} dropped in at rest`, vehicle, c[0], c[1], ap.yaw, 14, { expect: 'respawn', setup: v => { v.pos.y = wl(...c) + 1.5; } });
@@ -170,7 +197,7 @@ for (const [site, c] of sites) {
   }
   // glide down onto the water at 70 km/h
   for (const vehicle of ['car', 'bike']) {
-    run(`${site} ${vehicle} glider touchdown on the water`, vehicle, c[0] - Math.sin(ap.yaw) * 20, c[1] - Math.cos(ap.yaw) * 20, ap.yaw, 16, { expect: 'respawn',
+    run(`${site} ${vehicle} glider touchdown on the water`, vehicle, c[0] - Math.sin(ap.yaw) * 20, c[1] - Math.cos(ap.yaw) * 20, ap.yaw, 16, { expect: 'respawn', glider: true,
       setup: v => { const G = new Glider(v, vehicle === 'bike' ? BIKE_GLIDER : {}); v.pos.y = wl(...c) + 5; v.vel.set(Math.sin(ap.yaw) * 70 / 3.6, -1, Math.cos(ap.yaw) * 70 / 3.6); v.airTime = 1; G.toggle(); } });
   }
 }
@@ -186,17 +213,17 @@ function flat(vehicle, d, kmh, secs, x0 = 10) {
   const v = vehicle === 'bike' ? new Bike(pool(d), { ...BIKE }) : new Car(pool(d), { ...TUNING_DEFAULTS });
   v.reset(x0, 0, Math.PI / 2); v.vel.set(kmh / 3.6, 0, 0);
   const inp = { throttle: 1, brake: 0, steer: 0, handbrake: false, lean: false }, ys = [];
-  let nan = false, wetT = null, skimT = 0;
+  let nan = false, wetT = null, skimT = 0, run = 0;
   for (let i = 0; i < secs / DT; i++) {
     v.step(DT, inp);
     if (wetT === null && v.pos.x >= 0) wetT = i * DT;
-    if (wetT !== null && skimT === 0 && (v.waterSub || 0) > 0.3) skimT = i * DT - wetT;   // sank into it
+    run = v.skimming ? run + DT : 0; skimT = Math.max(skimT, run);       // longest stretch with tyres planing
     if (![v.pos.x, v.pos.y, v.vel.x].every(Number.isFinite)) { nan = true; break; }
     if (i * DT > 1.5) ys.push(v.pos.y);
     if (process.env.V && i % 12 === 0) console.log(`  ${vehicle} d${d} ${(i * DT).toFixed(1)}s x${v.pos.x.toFixed(0)} y${v.pos.y.toFixed(2)} vy${v.vel.y.toFixed(2)} ${(v.vel.length() * 3.6).toFixed(0)}km/h` +
       ` pitch° ${(Math.asin(new THREE.Vector3(0, 0, 1).applyQuaternion(v.quat).y) * 57.3).toFixed(0)} contacts ${v.contacts} plane ${v.wheels.map(w => (w.plane || 0).toFixed(2))} sub ${(v.waterSub || 0).toFixed(2)}`);
   }
-  return { kmh: v.vel.length() * 3.6, osc: oscillation(ys), nan, skimT: skimT || (wetT === null ? 0 : secs - wetT) };
+  return { kmh: v.vel.length() * 3.6, osc: oscillation(ys), nan, skimT };
 }
 if (!filter.length || filter.includes('flat')) {
   for (const vehicle of ['car', 'bike']) {
