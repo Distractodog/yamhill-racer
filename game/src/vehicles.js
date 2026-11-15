@@ -4,7 +4,7 @@
 import { Car } from './car.js';
 import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
-import { Boat, JETSKI, SPEEDBOAT } from './boat.js';
+import { Boat, JETSKI, SPEEDBOAT, findBank } from './boat.js';
 import { activeProxy } from './vehicle.js';
 
 export const VEHICLES = [
@@ -52,7 +52,10 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     scene.remove(cur.mesh);
     next.safe = cur.safe.slice();
     next._lastLoaded = cur._lastLoaded;
-    if (place) {
+    // leaving a boat for a land vehicle: on the nearest bank, facing away from the water
+    const bank = place && cur instanceof Boat && !(next instanceof Boat) && findBank(world, p.x, p.z);
+    if (bank) next.reset(...bank);
+    else if (place) {
       if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
       else next.reset(p.x, p.z, yaw);
     }

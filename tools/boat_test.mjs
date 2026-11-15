@@ -4,11 +4,17 @@
 // Checks per boat: floats and bobs at rest, accelerates to its top speed (jet ski ~100, speedboat ~120 km/h), gets on
 // the plane (hull lifts, bow-up hump on the way), turns (jet ski: tighter and leans more), crosses its own wake, slows
 // in shallow water, runs under the bridge, beaches on the bank (slides to a stop), pushes back in with S, R puts it
-// back on the water, and reset() on land finds the nearest water. No NaN anywhere.
+// back on the water, and reset() on land finds the nearest water. No NaN anywhere. Then: light anchors (lights.js
+// format), leaving a boat for the car / bike / jet puts it on the nearest bank facing away from the water, a boat
+// picked with no water loaded near goes to the nearest launch spot (held until its tiles load), and every launch spot
+// is open water inside the map rim.
 import fs from 'fs';
 import { makeWorld, makeTileData } from '../game/src/data.js';
 import { readTileData } from '../game/src/tilepack.js';
-import { Boat, JETSKI, SPEEDBOAT, findWater } from '../game/src/boat.js';
+import * as THREE from 'three';
+import { Boat, JETSKI, SPEEDBOAT, findWater, LAUNCH_SPOTS } from '../game/src/boat.js';
+import { createVehicles } from '../game/src/vehicles.js';
+import { TUNING_DEFAULTS } from '../game/src/car.js';
 
 const A = (process.env.YR_ASSETS || 'game/assets').replace(/\/?$/, '/');
 const WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
@@ -179,6 +185,58 @@ if (J && S) {
   check(J.radius < S.radius * 0.75, 'jet ski turns much tighter than the speedboat', `radius ${J.radius.toFixed(0)} vs ${S.radius.toFixed(0)} m`);
   check(J.lean > S.lean * 2, 'jet ski leans into turns, speedboat banks a little', `${(J.lean * 57.3).toFixed(0)}° vs ${(S.lean * 57.3).toFixed(0)}°`);
   check(S.top > J.top, 'speedboat is faster flat out', `${S.top.toFixed(0)} vs ${J.top.toFixed(0)} km/h`);
+}
+
+// ---- light anchors in lights.js's format (nav left = port = +x, right = starboard, tail)
+console.log('\n== light anchors');
+for (const P of [JETSKI, SPEEDBOAT]) {
+  const L = new Boat(W, P).mesh.userData.lights, arr = a => Array.isArray(a) && a.length && a.every(v => v.isVector3);
+  check(arr(L.head) && arr(L.tail) && arr(L.nav?.left) && arr(L.nav?.right) && arr(L.nav?.tail) && L.nav.left[0].x > 0 && L.nav.right[0].x < 0,
+    `${P.name}: head / tail / nav {left, right, tail} anchors`, `${L.head.length} head, ${L.tail.length} tail`);
+}
+
+// ---- leaving a boat for a land vehicle: nearest bank, facing away from the water, stays dry
+console.log('\n== boat → land vehicle');
+const veh = createVehicles({ scene: new THREE.Scene(), world: W, tuning: { ...TUNING_DEFAULTS } });
+const dryAround = (x, z, r) => [...Array(8)].every((_, a) => water(x + Math.sin(a * Math.PI / 4) * r, z + Math.cos(a * Math.PI / 4) * r) === -Infinity);
+for (const [boatKind, landKind, from] of [['jetski', 'car', RIVER], ['boat', 'bike', POND], ['jetski', 'jet', RIVER]]) {
+  veh.car.reset(...LAND, 0); veh.switchTo('car');
+  veh.switchTo(boatKind); const b = veh.current; b.reset(...from); drive(b, 1, () => false);
+  const bx = b.pos.x, bz = b.pos.z; veh.switchTo(landKind); const v = veh.current;
+  const d = Math.hypot(v.pos.x - bx, v.pos.z - bz), h = v.heading(), ax = v.pos.x + Math.sin(h) * 8, az = v.pos.z + Math.cos(h) * 8;
+  const away = Math.hypot(ax - bx, az - bz) > d, sx = v.pos.x, sz = v.pos.z;
+  check(water(v.pos.x, v.pos.z) === -Infinity && dryAround(v.pos.x, v.pos.z, 3.5) && d < 80 && away,
+    `${boatKind} → ${landKind}: on the nearest bank, facing away from the water`, `${d.toFixed(0)} m from the boat, 8 m ahead is ${Math.hypot(ax - bx, az - bz).toFixed(0)} m from it`);
+  let ok = true; const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
+  for (let i = 0; i < 240; i++) { v.savePrev(); v.step(DT, inp); ok &&= [v.pos.x, v.pos.y, v.pos.z].every(Number.isFinite); }
+  check(ok && !v.onWater && !(v.waterDepth > 0) && water(v.pos.x, v.pos.z) === -Infinity, `${landKind} sits on dry ground for 2 s`, `moved ${Math.hypot(v.pos.x - sx, v.pos.z - sz).toFixed(2)} m`);
+}
+
+// ---- no water loaded near: off to the nearest launch spot, held there until it's loaded, then on the water
+console.log('\n== launch spots');
+const tileWorld = async (tx, tz) => {
+  const w = makeWorld(WJ), d = `${A}tiles/${tx}_${tz}/`;
+  w.add(makeTileData(WJ, tx, tz, await readTileData(async f => ab(d + f), WJ.packed))); return w;
+};
+{
+  const W2 = makeWorld(WJ), b = new Boat(W2, JETSKI);            // nothing streamed in yet
+  b.reset(3694, -1500, 0);
+  const L = b.launching;
+  check(L === LAUNCH_SPOTS[0] && b.pos.x === L.x && b.pos.z === L.z, 'no water loaded near: holds it at the nearest launch spot', `${L?.name} · "${b.msg}"`);
+  const y0 = b.pos.y; b.step(DT, { throttle: 1, brake: 0, steer: 1 });
+  check(b.pos.x === L.x && b.pos.y === y0 && b.vel.length() === 0, 'held still while it loads');
+  W2.add((await tileWorld(2, 1)).tiles.values().next().value);  // the tile streams in
+  await b.launchDone;
+  const lv = W2.waterLevelAt(b.pos.x, b.pos.z);
+  drive(b, 1, () => false);
+  check(!b.launching && b.onWater && Math.hypot(b.pos.x - L.x, b.pos.z - L.z) < 60, 'then on the water there', `at ${b.pos.x.toFixed(0)},${b.pos.z.toFixed(0)}, level ${lv.toFixed(1)}`);
+}
+for (const L of LAUNCH_SPOTS) {
+  const [tx, tz] = W.tileIndex(L.x, L.z), Wt = await tileWorld(tx, tz);
+  const s = findWater(Wt, L.x, L.z, { minDepth: SPEEDBOAT.minDepth, clear: SPEEDBOAT.beam * 2.6, radius: 60 });
+  const inRim = Math.hypot(L.x - WJ.rim.cx, L.z - WJ.rim.cz) < WJ.rim.r - 300, lv = Wt.waterLevelAt(L.x, L.z);
+  check(!!s && Math.hypot(s[0] - L.x, s[1] - L.z) < 40 && inRim && Math.abs(lv - L.y) < 1.5,
+    `launch spot ${L.x},${L.z} (tile ${tx}_${tz}): open water for the speedboat, inside the rim`, s ? `water level ${lv.toFixed(1)} (list ${L.y})` : 'no water');
 }
 console.log(failed ? `\nFAIL boat_test: ${failed} check(s) failed` : '\nPASS boat_test');
 process.exit(failed ? 1 : 0);

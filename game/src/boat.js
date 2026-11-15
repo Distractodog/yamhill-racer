@@ -10,7 +10,9 @@
 //   * Shallow water (depth < minDepth) drags on the hull; ground above the water (a bank, a sand bar, a road) beaches
 //     it: it slides to a stop on the hull, and W / S push it slowly along so you can shove it back in.
 //   * reset(x, z) on land (picking a boat from the V menu, H, F) finds the nearest water that is big enough within the
-//     loaded tiles; R goes back to the last open water you were on.
+//     loaded tiles; none loaded: it holds the boat at the nearest LAUNCH_SPOTS entry while that streams in (like H),
+//     then puts it on the water there. R goes back to the last open water you were on. Switching from a boat to a
+//     land vehicle puts that on the nearest bank (findBank, used by vehicles.js).
 //   * The wake: points dropped behind the stern every WAKE_DT seconds; each spreads out as a ring, so together they
 //     make the V behind the boat (drawn as foam strips in syncMesh) and the ridges you bump over when you cross it.
 // Physics reads the world only through heightAt / terrainAt / surfaceAt / normalAt / waterLevelAt / treesNear /
@@ -95,12 +97,59 @@ export function findWater(W, x0, z0, { minDepth = 0.5, clear = 6, radius = 1400,
   return [best[0], best[1], by];
 }
 
+// Launch spots for when no water is loaded near you: open water at least 1 m deep with 150–300 m of straight run,
+// the best one per tile, then the farthest-apart ones (≥ 4.5 km) inside the map rim. y = water level (camera height
+// while the tiles there stream in). Checked by tools/boat_test.mjs.
+export const LAUNCH_SPOTS = [
+  { name: 'the South Yamhill at Sheridan', x: 3694, z: 1350, y: 52.2 },
+  { x: 18620, z: -24796, y: 43.2 }, { x: 29852, z: -868, y: 27.5 }, { x: 17540, z: 12812, y: 60.8 },
+  { x: 2548, z: -22100, y: 576.7 }, { x: 16332, z: -5452, y: 30 }, { x: -10076, z: 5252, y: 84.9 },
+  { x: 27468, z: -13980, y: 46.9 }, { x: -1020, z: -11740, y: 503.4 }, { x: 8860, z: 9564, y: 55.7 },
+  { x: 10212, z: -12196, y: 136.7 }, { x: 26836, z: 7396, y: 49.1 },
+];
+
+function insideBuilding(W, x, z, margin) {
+  for (const b of W.buildingsNear(x, z, 40)) {
+    const pts = b.pts; if (!pts) continue;
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [x1, z1] = pts[j], [x2, z2] = pts[i];
+      if (((z2 > z) !== (z1 > z)) && (x < (x1 - x2) * (z - z2) / (z1 - z2) + x2)) inside = !inside;
+      const ex = x2 - x1, ez = z2 - z1, u = Math.max(0, Math.min(1, ((x - x1) * ex + (z - z1) * ez) / (ex * ex + ez * ez || 1)));
+      if (Math.hypot(x - x1 - ex * u, z - z1 - ez * u) < margin) return true;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+// Nearest dry ground next to (x0, z0) for a land vehicle leaving a boat: loaded, no water within `clear` m, not
+// steeper than ~25°, clear of trees and buildings; facing away from where the boat was. [x, z, yaw] or null.
+export function findBank(W, x0, z0, { radius = 300, clear = 4 } = {}) {
+  const n = new THREE.Vector3();
+  const dry = (x, z) => W.loadedAt(x, z) && waterAt(W, x, z) === -Infinity;
+  const good = (x, z) => {
+    if (!dry(x, z)) return false;
+    for (let a = 0; a < 8; a++) if (!dry(x + Math.sin(a * Math.PI / 4) * clear, z + Math.cos(a * Math.PI / 4) * clear)) return false;
+    if (W.normalAt(x, z, n).y < 0.9) return false;
+    let tree = false; W.treesNear(x, z, 3.5, () => { tree = true; });
+    return !tree && !insideBuilding(W, x, z, 3);
+  };
+  for (let r = 0; r <= radius; r += 3) {
+    const k = Math.max(1, Math.ceil(2 * Math.PI * r / 3));
+    for (let i = 0; i < k; i++) {
+      const a = i / k * 2 * Math.PI, x = x0 + Math.sin(a) * r, z = z0 + Math.cos(a) * r;
+      if (good(x, z)) return [x, z, r ? a : 0];
+    }
+  }
+  return null;
+}
+
 export class Boat extends Vehicle {
   constructor(world, tuning = JETSKI) {
     super(world, tuning.kind);
     this.t = tuning; this.name = tuning.name;
     this.yaw = 0; this.yawRate = 0; this.pitch = 0; this.pitchRate = 0; this.lean = 0; this.leanRate = 0;
-    this.time = 0; this.plane = 0; this.mode = 'water'; this.shallow = 0; this.beachedT = 0; this.waterSafe = [];
+    this.time = 0; this.plane = 0; this.mode = 'water'; this.shallow = 0; this.beachedT = 0; this.waterSafe = []; this.launching = null;
     this.wake = { x: new Float32Array(WAKE_N), z: new Float32Array(WAKE_N), y: new Float32Array(WAKE_N),
       dx: new Float32Array(WAKE_N), dz: new Float32Array(WAKE_N), age: new Float32Array(WAKE_N).fill(99),
       s: new Float32Array(WAKE_N), v: new Float32Array(WAKE_N), i: 0, t: 0 };
@@ -124,9 +173,11 @@ export class Boat extends Vehicle {
   }
 
   // on water: right there if it's open enough, else the nearest water that is; no water loaded nearby: on the spot
-  reset(x, z, yaw = null) {
+  reset(x, z, yaw = null, { launch = true } = {}) {
     const t = this.t, W = this.world;
+    this.launching = null;                                      // cancels a launch hold in progress
     const spot = findWater(W, x, z, { minDepth: t.minDepth, clear: t.beam * 2.6, yaw });
+    if (!spot && launch) { this.launchFrom(x, z); return; }
     if (spot) [x, z, yaw] = spot; else yaw ??= 0;
     const wl = waterAt(W, x, z);
     this.yaw = yaw; this.yawRate = 0; this.pitch = 0; this.pitchRate = 0; this.lean = 0; this.leanRate = 0; this.plane = 0;
@@ -135,8 +186,24 @@ export class Boat extends Vehicle {
     this.mode = Number.isFinite(wl) ? 'water' : 'land';
     this.wake.age.fill(99); this.wake.t = 0;
     this.setQuat();
-    if (!spot) this.say('No river or pond near here: drive to one, then pick the boat', 4);
+    if (!spot) this.say('No open water here', 3);
     this.afterReset();
+  }
+  // no water loaded near (x, z): go to the nearest launch spot, held still (step does nothing) until its tiles are in
+  // (the camera follows the boat there, which streams them), then onto the water. `launchDone` resolves when it's there.
+  launchFrom(x, z) {
+    const L = LAUNCH_SPOTS.reduce((a, b) => Math.hypot(b.x - x, b.z - z) < Math.hypot(a.x - x, a.z - z) ? b : a);
+    const hold = this.launching = L, W = this.world;
+    this.say(`No river or pond near here: off to ${L.name || 'the nearest launch spot'} (${(Math.hypot(L.x - x, L.z - z) / 1000).toFixed(1)} km)`, 4);
+    this.pos.set(L.x, L.y, L.z); this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.yawRate = 0; this._lastLoaded = null;
+    this.mode = 'water'; this.grounded = true; this.onWater = false; this.wake.age.fill(99);
+    this.afterReset();
+    this.launchDone = (async () => {
+      const end = Date.now() + 30000;
+      while (this.launching === hold && (!W.loadedAt(L.x, L.z) || W.pendingTiles?.() > 0) && Date.now() < end)
+        await new Promise(r => setTimeout(r, 100));
+      if (this.launching === hold) this.reset(L.x, L.z, null, { launch: false });
+    })();
   }
   // R: the last open water you were on (the land vehicles' safe spots aren't water); none close by (an old ride
   // somewhere else on the map): the nearest water from here
@@ -160,6 +227,7 @@ export class Boat extends Vehicle {
   }
 
   step(dt, input) {
+    if (this.launching) { this.pos.x = this.launching.x; this.pos.z = this.launching.z; this.vel.set(0, 0, 0); this._lastLoaded = null; return; }
     const t = this.t, W = this.world, g = t.gravity, hl = t.len / 2 * 0.8, hb = t.beam / 2;
     this._prevVel.copy(this.vel); this.time += dt; this.hit = 0;
     const s = Math.sin(this.yaw), c = Math.cos(this.yaw);   // forward (s, c), left (c, -s)
@@ -443,7 +511,7 @@ export function buildJetSkiModel() {
     bars, rider, wheels: [], blob: [1.2, 3.2],
     decalSpots: [[0.5, 0.17, hb + 0.012, 0.23, -0.9, 0, Math.PI / 2], [0.5, 0.17, -hb - 0.012, 0.23, -0.9, 0, -Math.PI / 2]],
     lights: { head: [new THREE.Vector3(0, 0.45, 1.25)], tail: [new THREE.Vector3(0.2, 0.32, -1.6), new THREE.Vector3(-0.2, 0.32, -1.6)],
-      nav: { red: [new THREE.Vector3(0.4, 0.45, 0.85)], green: [new THREE.Vector3(-0.4, 0.45, 0.85)], white: [new THREE.Vector3(0, 0.62, -0.9)] } },
+      nav: { left: [new THREE.Vector3(0.4, 0.45, 0.85)], right: [new THREE.Vector3(-0.4, 0.45, 0.85)], tail: [new THREE.Vector3(0, 0.62, -0.9)] } },
   };
   return root;
 }
@@ -497,7 +565,7 @@ export function buildSpeedboatModel() {
     decalSpots: [[0.9, 0.3, hb + 0.012, 0.47, -1.6, 0, Math.PI / 2], [0.9, 0.3, -hb - 0.012, 0.47, -1.6, 0, -Math.PI / 2]],
     lights: { head: [new THREE.Vector3(0.3, 0.85, 2.9), new THREE.Vector3(-0.3, 0.85, 2.9)],
       tail: [new THREE.Vector3(0.6, 0.72, -3.22), new THREE.Vector3(-0.6, 0.72, -3.22)],
-      nav: { red: [new THREE.Vector3(0.7, 0.95, 1.9)], green: [new THREE.Vector3(-0.7, 0.95, 1.9)], white: [new THREE.Vector3(0, 1.52, -2.95)] } },
+      nav: { left: [new THREE.Vector3(0.7, 0.95, 1.9)], right: [new THREE.Vector3(-0.7, 0.95, 1.9)], tail: [new THREE.Vector3(0, 1.52, -2.95)] } },
   };
   return root;
 }

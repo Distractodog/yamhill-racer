@@ -3,7 +3,8 @@
 // Starts tools/serve.py on 8173 if nothing is listening there. Start-up via tools/lib/startgame.mjs (campus spawn).
 // Shots: the V picker with both boats in it; per boat (jet ski, speedboat): picked on land at campus (it should start
 // on the nearest pond / river), at full speed on the South Yamhill at Sheridan (chase camera, spray + wake), in a hard
-// turn (lean / bank), from the side at speed, and beached on the river bank; then both in the Garage (repainted).
+// turn (lean / bank), from the side at speed, and beached on the river bank; a launch from campus to the nearest launch
+// spot (tiles stream in during the hold) and back to the car (on the bank); then both in the Garage (repainted).
 // Prints the boat state per shot, median frame time while driving, and page errors; exits nonzero on page errors
 // or failed checks. The images need looking at.
 import puppeteer from 'puppeteer-core';
@@ -126,6 +127,24 @@ for (const [kind, n] of [['jetski', 4], ['boat', 5]]) {
   await page.keyboard.press('KeyR'); await wait(800);
   s = await state(); check(s.onWater, `${kind}: R puts it on the water`);
 }
+
+// ---- no water loaded near: launch (what reset() does then) from campus to the nearest launch spot, with streaming
+console.log('\n== launch spot');
+await holdCar(page, { ...CAMPUS, kind: 'jetski' });
+const launch = await page.evaluate(async () => {
+  const b = game.vehicles.current, t0 = performance.now(); b.launchFrom(b.pos.x, b.pos.z);
+  const msg = b.msg; await b.launchDone; return { msg, ms: Math.round(performance.now() - t0) };
+});
+await wait(1500);
+let ls = await state(); console.log(' ', JSON.stringify(launch), JSON.stringify(ls));
+check(ls.onWater && Math.hypot(ls.x - 3694, ls.z - 1350) < 60, `launched to the South Yamhill at Sheridan after ${launch.ms} ms`);
+await shot('launch-01-at-sheridan');
+// ---- leaving the boat: V → car puts the car on the nearest bank, facing away from the water
+await page.keyboard.press('KeyV'); await wait(200); await page.keyboard.press('Digit1'); await wait(1500);
+ls = await state(); console.log(' ', JSON.stringify(ls));
+const dry = await page.evaluate(() => { const c = game.vehicles.current, w = game.world.waterLevelAt(c.pos.x, c.pos.z); return !(w > game.world.terrainAt(c.pos.x, c.pos.z)); });
+check(ls.kind === 'car' && dry, 'jet ski → car: the car is on the bank, not in the river');
+await shot('launch-02-car-on-bank');
 
 // ---- Garage: both boats, repainted
 for (const kind of ['jetski', 'boat']) {
