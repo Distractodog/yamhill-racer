@@ -1,8 +1,9 @@
-// Director: start the game server on 8173 and server/local.mjs on 8787.
+// Director: start the game server (YR_URL, default 8173) and server/local.mjs (YR_MP_RELAY, default 8787).
 // Run through the heavy-check gate: node tools/mp_menu_test.mjs [screenshot directory]
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import puppeteer from 'puppeteer-core';
+const GAME = process.env.YR_URL || 'http://127.0.0.1:8173/', RELAY = process.env.YR_MP_RELAY || 'ws://127.0.0.1:8787';
 const out = process.argv[2];
 if (out) await mkdir(out, { recursive: true });
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
@@ -14,12 +15,12 @@ try {
   await Promise.all(pages.map(async (page, i) => {
     page.on('pageerror', error => errors.push(error.message));
     await page.setViewport({ width: 1280, height: 800 });
-    await page.evaluateOnNewDocument(index => {
-      window.YR_MP_RELAY = 'ws://127.0.0.1:8787';
+    await page.evaluateOnNewDocument((index, relay) => {
+      window.YR_MP_RELAY = relay;
       localStorage.setItem('yr-welcome-hidden-1', '1');
       localStorage.setItem('yr-mp-name-1', index ? 'Guest' : 'Host');
-    }, i);
-    await page.goto('http://127.0.0.1:8173/', { waitUntil: 'load' });
+    }, i, RELAY);
+    await page.goto(GAME, { waitUntil: 'load' });
     await page.waitForFunction(() => window.game?.multiplayer && !document.getElementById('loading'), { timeout: 120000 });
     // Close any initial spawn card before exercising the MP dialog.
     await page.keyboard.press('Escape');

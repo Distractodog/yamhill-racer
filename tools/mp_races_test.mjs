@@ -198,4 +198,28 @@ advance(DNF_AFTER + 1500); await flush();
 assert.equal(A.ch.dnf, 1, 'local challenge stopped'); assert.equal(A.core.active.myDone, true);
 assert.equal(A.core.rows().find(r => r.id === 'A').status, 'dnf'); assert.ok(A.ui.resultsCalls > r0);
 const p1 = prog(); advance(3000); assert.equal(prog(), p1, 'no more progress after the DNF'); assert.ok(p1 >= p0);
+// withdrawing after accepting (solo run before the start): race-cancel, the inviter drops that player from the race
+A.core.hook.onQuit(); A.ch.state = 'idle'; reset();
+A.core.invite('r1', ['B', 'C']); await flush(); B.core.accept(); await flush();
+B.core.hook.onLocalStart(); await flush();
+assert.deepEqual(B.sent.at(-1), { t: 'race-cancel', inviteId: A.core.outgoing.inviteId });
+assert.equal(A.core.lobbyData().rows.find(r => r.id === 'B').status, 'decline');
+assert.equal(A.core.lobbyData().canStart, false);
+C.core.accept(); await flush();
+assert.deepEqual(A.core.active.players, ['A', 'C'], 'withdrawn player is not in race-start');
+assert.equal(B.core.active, null);
+// the only acceptor withdrawing (nobody left) closes the invitation
+reset();
+A.core.invite('r1', ['B', 'C']); await flush(); B.core.accept(); C.core.decline(); await flush();
+assert.ok(A.core.active); reset();                      // (B + A started; clear it)
+A.core.invite('r1', ['B', 'C']); await flush(); B.core.accept(); await flush();
+B.core.hook.onLocalStart(); C.core.decline(); await flush();
+assert.equal(A.core.outgoing, null); assert.equal(A.core.active, null); assert.equal(A.sent.at(-1).t, 'race-cancel');
+// closing a finish screen is not a withdrawal: the accepted invite stays
+reset();
+A.core.invite('r1', ['B', 'C']); await flush(); B.core.accept(); await flush();
+B.ch.state = 'finished'; const nb2 = B.sent.length; B.core.hook.onQuit(); await flush();
+assert.equal(B.sent.length, nb2); assert.ok(B.core.accepted); B.ch.state = 'idle';
+C.core.accept(); await flush();
+assert.deepEqual(A.core.active.players, ['A', 'B', 'C']); assert.ok(B.core.active);
 console.log('mp races state machine: OK');

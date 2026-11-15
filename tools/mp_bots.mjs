@@ -8,7 +8,7 @@ import { readTileData } from '../game/src/tilepack.js';
 const args = process.argv.slice(2);
 const option = key => args.includes(key) ? args[args.indexOf(key) + 1] : undefined;
 const count = Number(args[0]?.startsWith('--') ? 15 : args[0] ?? 15);
-const relay = option('--relay') || 'ws://127.0.0.1:8787';
+const relay = option('--relay') || process.env.YR_MP_RELAY || 'ws://127.0.0.1:8787';
 const room = option('--room')?.toUpperCase() || 'B2TS2';
 if (!Number.isInteger(count) || count < 1 || count > 16) throw new Error('Count must be 1–16 (leave a slot for your browser).');
 // Node 22+ has a built-in WebSocket; older installs may use the local relay's ws dependency.

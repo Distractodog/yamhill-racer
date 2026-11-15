@@ -10,10 +10,11 @@ From the repository root (Node 18 or newer):
 
 ```sh
 npm install
-node server/local.mjs
+node server/local.mjs          # or: node server/local.mjs <port>
 ```
 
-Connect to `ws://127.0.0.1:8787/room/ABCDE?id=<12-character-player-id>`.
+Connect to `ws://127.0.0.1:8787/room/ABCDE?id=<12-character-player-id>` (the port argument changes 8787).
+Browser scripts read the relay from `YR_MP_RELAY` and the game from `YR_URL`.
 The first client must send the contract's `hello` with `host:true` and `code:ABCDE`.
 Guests send `host:false`. The server listens on loopback only. `ws` is now a direct
 devDependency (it was previously only a transitive dependency).

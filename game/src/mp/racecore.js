@@ -48,7 +48,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   let incoming = null;      // someone invited me: { inviteId, from, raceId, timer }
   let accepted = null;      // inviteId I accepted and am waiting to start
   let active = null;        // the race I'm in (or just finished)
-  let tick = null, acceptedTimer = null;
+  let tick = null, acceptedTimer = null, acceptedFrom = null;
   const routes = new Map();
   const routeOf = info => routes.get(info.id) || (routes.set(info.id, makeRoute(info)), routes.get(info.id));
   const raceName = id => list.find(c => c.id === id)?.name || 'a race';
@@ -104,15 +104,15 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   // ---------------------------------------------------------------- invitee
   function showIncoming() { ui.incoming?.(incoming && { fromName: nameOf(incoming.from), raceName: raceName(incoming.raceId), ttl: INVITE_TTL }); }
   function clearIncoming() { if (incoming) timers.clearTimeout(incoming.timer); incoming = null; showIncoming(); }
-  function setAccepted(id) {                            // accepted but not started: forget it if the start never comes
-    timers.clearTimeout(acceptedTimer); acceptedTimer = null; accepted = id;
+  function setAccepted(id, from = null) {               // accepted but not started: forget it if the start never comes
+    timers.clearTimeout(acceptedTimer); acceptedTimer = null; accepted = id; acceptedFrom = id && from;
     if (id) acceptedTimer = timers.setTimeout(() => { accepted = null; acceptedTimer = null; }, INVITE_TTL + START_DELAY + 15000);
   }
   function reply(accept) {
     if (!incoming) return;
-    const { inviteId } = incoming;
+    const { inviteId, from } = incoming;
     mp.send({ t: 'invite-reply', inviteId, accept });
-    setAccepted(accept ? inviteId : null);
+    setAccepted(accept ? inviteId : null, from);
     clearIncoming();
   }
   function onInvite(m) {
@@ -184,8 +184,12 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   }
   function onRaceCancel(m) {
     if (m.from === mp.me.id) return;
-    if (incoming && m.inviteId === incoming.inviteId) clearIncoming();     // the inviter gave up
-    if (accepted === m.inviteId) setAccepted(null);
+    if (outgoing && m.inviteId === outgoing.inviteId && outgoing.replies.has(m.from)) {   // an invitee withdrew before the start
+      outgoing.replies.set(m.from, 'decline'); settle();
+    }
+    // the inviter gave up (another invitee withdrawing sends the same inviteId: that doesn't end my invitation)
+    if (incoming && m.inviteId === incoming.inviteId && m.from === incoming.from) clearIncoming();
+    if (accepted === m.inviteId && m.from === acceptedFrom) setAccepted(null);
     if (active && m.inviteId === active.inviteId && !active.finished.has(m.from)) { active.out.add(m.from); ui.results?.(rows()); }
   }
   function onLeft(m) {
@@ -204,11 +208,17 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
 
   // challenges.js hook callbacks
   function leave() {                        // I left (Esc, new run, vehicle switch): tell the others unless I'd finished
+    if (accepted) mp.send({ t: 'race-cancel', inviteId: accepted });   // withdraw my acceptance: the inviter drops me
     setAccepted(null);                      // a solo run (or leaving) forgets an accepted-but-unstarted invite,
     if (outgoing) cancelInvite();           // cancels invitations I sent,
     if (incoming) reply(false);             // and declines one I hadn't answered: a late acceptance can't replace this run
     if (!active) return;
     if (!active.myDone) mp.send({ t: 'race-cancel', inviteId: active.inviteId });
+    active = null;
+    if (tick) { timers.clearInterval(tick); tick = null; }
+  }
+  function onQuit() {                       // closing a finish screen isn't leaving: invitations stay, only the done race goes
+    if (challenges.state !== 'finished' || (active && !active.myDone)) return leave();
     active = null;
     if (tick) { timers.clearInterval(tick); tick = null; }
   }
@@ -258,7 +268,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     'race-finish': onRaceFinish, 'race-cancel': onRaceCancel, left: onLeft,
     disconnected: () => reset(true), closed: () => reset(true) };
   for (const [k, fn] of Object.entries(handlers)) mp.on(k, fn);
-  const hook = { onLocalStart: leave, onQuit: leave, onFinish, onGate, hudHtml, pick };
+  const hook = { onLocalStart: leave, onQuit, onFinish, onGate, hudHtml, pick };
   return {
     hook, invite, cancelInvite, start: startOutgoing, accept: () => reply(true), decline: () => reply(false),
     rows, hudHtml, resultsHtml, lobbyData, reset,

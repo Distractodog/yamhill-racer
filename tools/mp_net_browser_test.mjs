@@ -1,10 +1,11 @@
-// Director integration check (requires game server on 8173 and local relay on 8787).
-// Run through the heavy-check gate: node tools/mp_net_browser_test.mjs
+// Director integration check (requires the game server, YR_URL default http://127.0.0.1:8173/, and the local relay,
+// YR_MP_RELAY default ws://127.0.0.1:8787). Run through the heavy-check gate: node tools/mp_net_browser_test.mjs
 // Two isolated browser identities import the transport without loading/rendering the world.
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer-core';
 
-const origin = process.env.YR_GAME_URL || 'http://127.0.0.1:8173';
+const origin = (process.env.YR_URL || process.env.YR_GAME_URL || 'http://127.0.0.1:8173').replace(/\/$/, '');
+const relay = process.env.YR_MP_RELAY || 'ws://127.0.0.1:8787';
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: true, args: ['--no-sandbox'],
@@ -16,11 +17,12 @@ try {
     const context = await browser.createBrowserContext(), page = await context.newPage();
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(`${origin}/src/mp/net.js`);
-    await page.evaluate(async () => {
+    await page.evaluate(async relay => {
+      window.YR_MP_RELAY = relay;
       const { mp } = await import('/src/mp/net.js');
       window.mp = mp; window.states = []; window.skins = [];
       mp.on('state', m => window.states.push(m)); mp.on('skin', m => window.skins.push(m));
-    });
+    }, relay);
     pages.push(page);
   }
   const [host, guest] = pages;

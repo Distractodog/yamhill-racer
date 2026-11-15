@@ -26,4 +26,5 @@ server.on('upgrade', (req, socket, head) => {
     room.connect(address.id, ws);
   });
 });
-server.listen(8787, '127.0.0.1', () => console.log('MP relay: ws://127.0.0.1:8787'));
+const port = Number(process.argv[2] || 8787);     // node server/local.mjs [port]
+server.listen(port, '127.0.0.1', () => console.log(`MP relay: ws://127.0.0.1:${port}`));
