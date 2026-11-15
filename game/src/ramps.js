@@ -12,7 +12,14 @@ export function rampExtraWidth(widen, s, side) {
 
 // roads.js should use these side widths per sample; far meshes must retain taper boundary samples.
 export function roadHalfWidth(r, i, side) {
-  return r.hw + rampExtraWidth(r.widen, r.s[i], side);
+  const s = r.s[i], extra = rampExtraWidth(r.widen, s, side);
+  // The two strips at a joined lane are rounded independently to centimetres by
+  // the baker. Overlap their mating edge by 2 cm so rounding cannot expose soil.
+  // Both rendering and physics use this width; the parallel lane is not repaved.
+  // Include the mouth on either end, where the separately sampled gore/ramp takes
+  // over from the parallel lane. Its edge can extend past the centre-line range.
+  const joined = r.widen?.some(([sd, a, b, wa, wb]) => sd === side && wa === wb && wa > 0 && s >= a - r.hw && s <= b + r.hw);
+  return r.hw + Math.max(extra, joined ? .02 : 0);
 }
 
 export function roadEdge(r, i, side, extra = 0, lift = 0) {

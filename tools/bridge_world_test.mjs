@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { makeTileData, makeWorld, BRIDGE_CLIMB } from '../game/src/data.js';
 import { readTileData } from '../game/src/tilepack.js';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
+import { bridgeJunction } from '../game/src/bridgequeries.js';
 
 export async function checkBridgeWorld(assets) {
   const W = JSON.parse(fs.readFileSync(`${assets}/world.json`));
@@ -19,7 +20,9 @@ export async function checkBridgeWorld(assets) {
     if(!data.tile.paths.some(p=>p.bridge))continue;
     const td=makeTileData(W,tx,tz,data), world=makeWorld(W);world.add(td);report.tiles++;
     const lower=makeTileData(W,tx,tz,{...data,tile:{...data.tile,
-      paths:data.tile.paths.filter(p=>!p.bridge),physPaths:data.tile.physPaths.filter(p=>!p.bridge)}});
+      paths:data.tile.paths.filter(p=>!p.bridge),physPaths:data.tile.physPaths.filter(p=>!p.bridge),
+      junctions:data.tile.junctions.filter(j=>!bridgeJunction(j,td.roads)),
+      physJunctions:data.tile.physJunctions.filter(j=>!bridgeJunction(j,td.roads))}});
     const inside=(x,z)=>x>=td.x0+2&&x<td.x0+W.tile-2&&z>=td.z0+2&&z<td.z0+W.tile-2;
     for(const r of td.renderRoads.filter(r=>r.bridge)) {
       report.strips++;

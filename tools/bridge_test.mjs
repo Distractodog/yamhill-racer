@@ -22,8 +22,13 @@ function fixture(bridge = true, ramp = false) {
     { kind: 'asphalt', w: 14, bridge, pts: [[X, Z - 110], [X, Z + 110]], yc: [[9.8, 0.03], [14.2, 0.03]] },
   ];
   if (ramp) Object.assign(paths[1], { cls: 'trunk_link', widen: [[1, 0, 220, 0, 6.5]] });
+  const junctions=[{kind:'asphalt',c:[X,Z+116,deck(X,Z+116)],ring:[
+    [X-7,Z+110,deck(X-7,Z+110),0],[X+7,Z+110,deck(X+7,Z+110),1],
+    [X+7,Z+123,deck(X+7,Z+123),1],[X-7,Z+123,deck(X-7,Z+123),1],
+  ]}];
+  junctions.push({kind:'gravel',c:[X,Z+116,0],ring:junctions[0].ring.map(([x,z,,flag])=>[x,z,0,flag])});
   const td = makeTileData(W, TX, TZ, { hbuf: H.buffer, pbuf: P.buffer, sbuf: S.buffer,
-    tbuf: new ArrayBuffer(0), tile: { paths, physPaths: paths, rivers: { 1: 0.5 } } });
+    tbuf: new ArrayBuffer(0), tile: { paths, physPaths: paths, junctions, physJunctions:junctions, rivers: { 1: 0.5 } } });
   const world = makeWorld(W); world.add(td); return world;
 }
 const near = (actual, expected, label, eps = 1e-8) => assert.ok(Math.abs(actual - expected) < eps, `${label}: ${actual} vs ${expected}`);
@@ -38,6 +43,12 @@ function queries(world) {
   assert.equal(world.surfaceAt(X, Z + 40, 0), 5, 'river surface under deck');
   near(world.heightAt(X, Z + 40, 0), -2, 'river bed under deck');
   near(world.waterLevelAt(X, Z + 40), 0.5, 'river water preserved');
+  const jx=X+1,jz=Z+116,jy=deck(jx,jz);
+  near(world.heightAt(jx,jz,0),0,'under the junction attached to the deck');
+  assert.equal(world.surfaceAt(jx,jz,0),4,'coincident lower junction remains gravel, not a bridge');
+  near(world.heightAt(jx,jz),jy,'placement on bridge junction');
+  near(world.heightAt(jx,jz,jy),jy,'on bridge junction');
+  assert.ok(world.normalAt(jx,jz,new THREE.Vector3(),jy).distanceTo(new THREE.Vector3(-.03,1,-.02).normalize())<1e-8,'bridge junction normal');
   const n = world.normalAt(x, z, new THREE.Vector3(), h);
   assert.ok(n.distanceTo(new THREE.Vector3(-0.03, 1, -0.02).normalize()) < 1e-8, 'deck normal includes both slopes');
   assert.ok(world.normalAt(x, z).distanceTo(n) < 1e-8, 'highest deck normal without y');

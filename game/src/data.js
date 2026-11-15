@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { sidewalkSides, KERB } from './roads.js';
 import { roadHalfWidth, roadEdge, triangleHeight } from './ramps.js';
+import { bridgeJunction } from './bridgequeries.js';
 import { applyCampus } from './campus.js';
 import { applyTrack } from './campustrack.js';
 import { campusDrive } from './campusdrive.js';
@@ -125,8 +126,10 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
         Math.min(r.z[i], r.z[i + 1]) - m, Math.max(r.z[i], r.z[i + 1]) + m, r.id, i);
     }
   }
+  const deckRoads = roads.filter(r => r.bridge);
   for (const j of tile.physJunctions || []) {
-    const id = juncs.length, R = j.ring, c = j.c; juncs.push({ cls: PATH_KINDS[j.kind].cls, c, ring: R });
+    const id = juncs.length, R = j.ring, c = j.c;
+    juncs.push({ cls: PATH_KINDS[j.kind].cls, c, ring: R, bridge: bridgeJunction(j, deckRoads) });
     for (let k = 0; k < R.length; k++) {
       const p = R[k], q = R[(k + 1) % R.length];
       addBox(Math.min(c[0], p[0], q[0]), Math.max(c[0], p[0], q[0]), Math.min(c[1], p[1], q[1]), Math.max(c[1], p[1], q[1]), -1 - id, k);
@@ -139,7 +142,7 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
   }
   yield 'tiledata';
   const renderJunctions = (tile.junctions || []).map(j => ({ ...j, cls: PATH_KINDS[j.kind].cls }));
-  const hasBridges = roads.some(r => r.bridge);
+  const hasBridges = roads.some(r => r.bridge) || juncs.some(j => j.bridge);
   let lastCls = -1, lastBridge = false, lastGx = 0, lastGz = 0;
   // Road surface height here (-Infinity if absent); remember the winning surface and deck gradient.
   function overlayAt(x, z, yq = Infinity) {
@@ -154,7 +157,14 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
         const a = (px * vz - pz * vx) / det, b = (ux * pz - uz * px) / det;
         if (a < -1e-4 || b < -1e-4 || a + b > 1 + 1e-4) continue;
         const y = c[2] + (A[2] - c[2]) * a + (B[2] - c[2]) * b;
-        if (y > best) { best = y; lastCls = J.cls; lastBridge = false; }
+        if (J.bridge && yq < y - BRIDGE_CLIMB) continue;
+        if (y > best) {
+          best = y; lastCls = J.cls; lastBridge = J.bridge;
+          if (lastBridge) {
+            lastGx = ((A[2] - c[2]) * vz - uz * (B[2] - c[2])) / det;
+            lastGz = (ux * (B[2] - c[2]) - (A[2] - c[2]) * vx) / det;
+          }
+        }
         continue;
       }
       const r = roads[id];
