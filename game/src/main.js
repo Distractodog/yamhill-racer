@@ -231,7 +231,37 @@ let glideCam = 0;                       // 0 = driving camera, 1 = gliding camer
 let camYaw = null, camPitch = 0, camY = null, shakeT = 0, shake = 0;
 const jUp = new THREE.Vector3(), jDir = new THREE.Vector3();
 const jLastPos = new THREE.Vector3(), jMove = new THREE.Vector3();
-let jFollowing = false;
+let jFollowing = false, camCeiling = Infinity;
+// Ask from the vehicle's level: an overhead deck is a ceiling, not supporting ground.
+// Preview the camera's motion so it descends before the slab edge. The slab in bridges.js
+// is 1.2 m deep; leave another 0.5 m below it. Retain the ceiling briefly on exit so tall chase views rise smoothly.
+function chaseCeiling(position, rp, velocity, dt) {
+  let ceiling = Infinity;
+  const speed = Math.hypot(velocity.x, velocity.z);
+  const reach = Math.min(100, Math.max(12, speed * 0.8, (position.y - rp.y) * 6));
+  const lookX = speed > 0.1 ? velocity.x : rp.x - position.x;
+  const lookZ = speed > 0.1 ? velocity.z : rp.z - position.z;
+  const lookLength = Math.hypot(lookX, lookZ) || 1;
+  for (let distance = 0; distance <= reach; distance += 2) {
+    const x = position.x + lookX / lookLength * distance;
+    const z = position.z + lookZ / lookLength * distance;
+    const low = world.heightAt(x, z, rp.y), deck = world.heightAt(x, z);
+    if (deck > low + 0.01 && deck > rp.y + 0.8)
+      ceiling = Math.min(ceiling, deck - 1.7 + Math.max(0, distance - 6) * 0.2);
+  }
+  camCeiling = Math.min(ceiling, camCeiling + dt * 6);
+  if (camCeiling >= position.y && ceiling === Infinity) camCeiling = Infinity;
+  return camCeiling;
+}
+function clampChaseCamera(rp, clearance) {
+  const ground = world.heightAt(camPos.x, camPos.z, rp.y);
+  // Never enter the slab, including when starting/teleporting beneath one.
+  const deck = world.heightAt(camPos.x, camPos.z);
+  const overhead = deck > ground + 0.01 && deck > rp.y + 0.8;
+  if (overhead) camPos.y = Math.min(camPos.y, deck - 1.7);
+  const gh = ground + (overhead ? 0.6 : clearance);
+  if (camPos.y < gh) camPos.y = gh;
+}
 // jet: chase camera behind the flight path that rolls part way with the wings; cockpit view on C
 function updateJetCamera(dt) {
   const v = vehicles.current, rp = v.renderPos;
@@ -242,18 +272,23 @@ function updateJetCamera(dt) {
   const roll = v.mode === 'air' ? 0.6 : 0.2;
   const upB = tmp.set(0, 1, 0).lerp(jUp, roll).normalize();
   if (camMode === 2) {
+    camCeiling = Infinity;
     camera.position.copy(rp).addScaledVector(jUp, 1.05).addScaledVector(fw, 2.9);
     camLook.copy(camera.position).add(fw.clone().multiplyScalar(50));
     camera.up.copy(jUp);
   } else {
     const dist = camMode === 1 ? 46 : 19 + Math.min(sp, 300) * 0.012, high = camMode === 1 ? 12 : 4.6;
     const target = fw.clone().copy(rp).addScaledVector(jDir, -dist).addScaledVector(upB, high);
+    if (v.mode === 'air') camCeiling = Infinity;
+    if (v.mode !== 'air') target.y = Math.min(target.y, chaseCeiling(target, rp, v.vel, dt));
     // Carry the camera with the rendered jet before easing changes in the viewing offset.
     // Smoothing absolute positions made the jet outrun the camera, triggering repeated snaps.
     jMove.subVectors(rp, jLastPos);
     if (!jFollowing || jMove.lengthSq() > 10000) camPos.copy(target);
     else camPos.add(jMove).lerp(target, 1 - Math.exp(-dt * (v.mode === 'air' ? 9 : 14)));
-    const gh = world.heightAt(camPos.x, camPos.z) + 1.2; if (camPos.y < gh) camPos.y = gh;
+    if (v.mode === 'air') {
+      const gh = world.heightAt(camPos.x, camPos.z) + 1.2; if (camPos.y < gh) camPos.y = gh;
+    } else clampChaseCamera(rp, 1.2);
     camera.position.copy(camPos);
     camera.position.x += Math.sin(shakeT * 1.3) * shake; camera.position.y += Math.sin(shakeT * 1.7 + 1) * shake;
     camLook.copy(rp).addScaledVector(jDir, 25).addScaledVector(upB, 2);
@@ -292,6 +327,7 @@ function updateCamera(dt) {
   const amp = shake;
   shakeT += dt * 31;
   if (camMode === 2) {          // nose cam
+    camCeiling = Infinity;
     tmp.set(...(vc.nose || [0, 0.62, 0.9])).applyQuaternion(car.renderQuat).add(car.renderPos);
     camera.position.copy(tmp);
     camLook.copy(tmp).add(fw.multiplyScalar(10));
@@ -301,9 +337,9 @@ function updateCamera(dt) {
     if (glideCam > 0.001) { dist += (13 + Math.min(sp, 60) * 0.05 - dist) * glideCam; high += (2.8 - high) * glideCam; }
     const cx = Math.sin(camYaw), cz = Math.cos(camYaw);
     tmp.set(car.renderPos.x - cx * dist, camY + high - Math.sin(camPitch) * dist, car.renderPos.z - cz * dist);
+    tmp.y = Math.min(tmp.y, chaseCeiling(tmp, rp, car.vel, dt));
     camPos.lerp(tmp, 1 - Math.exp(-dt * 22));
-    const gh = world.heightAt(camPos.x, camPos.z) + 0.9;
-    if (camPos.y < gh) camPos.y = gh;
+    clampChaseCamera(rp, 0.9);
     camera.position.copy(camPos);
     camera.position.x += Math.sin(shakeT * 1.3) * amp; camera.position.y += Math.sin(shakeT * 1.7 + 1) * amp;
     camLook.set(car.renderPos.x + cx * 5, camY + 0.9 + Math.sin(camPitch) * 5, car.renderPos.z + cz * 5);
