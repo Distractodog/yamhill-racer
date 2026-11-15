@@ -46,15 +46,29 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   function switchTo(kind, { place = true } = {}) {
     const next = all[kind]; if (!next) return false;
     if (next === cur) return true;
+    const fromBoat = cur instanceof Boat, toBoat = next instanceof Boat;
+    if (fromBoat) cur.launching = null;          // cancels a boat's hold (on its way to a launch spot / back to land)
     const p = cur.pos.clone(), yaw = cur.heading(), sp = cur.vel.length();
     const agl = p.y - world.heightAt(p.x, p.z);
+    // leaving a boat for a land vehicle: on the nearest bank, facing away from the water. No dry bank loaded near (the
+    // boat is still on its way to a launch spot): back where you were before picking the boat; if that ground has
+    // streamed out meanwhile, the boat (hidden) holds there until it's loaded, then this switch runs again.
+    let land = null;
+    if (place && fromBoat && !toBoat) {
+      const back = cur.cameFrom, atBack = back && Math.hypot(p.x - back[0], p.z - back[1]) < 1;   // a hold there just ended
+      land = (atBack ? back : findBank(world, p.x, p.z)) || back || null;
+      if (land && !world.loadedAt(land[0], land[1])) {
+        const boat = cur;
+        boat.holdAt({ x: land[0], z: land[1], y: land[3] }, () => { if (cur === boat) switchTo(kind); }, { away: true });
+        return true;
+      }
+    }
+    if (toBoat) next.cameFrom = fromBoat ? cur.cameFrom : [p.x, p.z, yaw, p.y];
     cur.glide?.cancel?.();
     scene.remove(cur.mesh);
     next.safe = cur.safe.slice();
     next._lastLoaded = cur._lastLoaded;
-    // leaving a boat for a land vehicle: on the nearest bank, facing away from the water
-    const bank = place && cur instanceof Boat && !(next instanceof Boat) && findBank(world, p.x, p.z);
-    if (bank) next.reset(...bank);
+    if (land) next.reset(land[0], land[1], land[2]);
     else if (place) {
       if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
       else next.reset(p.x, p.z, yaw);

@@ -193,16 +193,22 @@ export class Boat extends Vehicle {
   // (the camera follows the boat there, which streams them), then onto the water. `launchDone` resolves when it's there.
   launchFrom(x, z) {
     const L = LAUNCH_SPOTS.reduce((a, b) => Math.hypot(b.x - x, b.z - z) < Math.hypot(a.x - x, a.z - z) ? b : a);
-    const hold = this.launching = L, W = this.world;
     this.say(`No river or pond near here: off to ${L.name || 'the nearest launch spot'} (${(Math.hypot(L.x - x, L.z - z) / 1000).toFixed(1)} km)`, 4);
-    this.pos.set(L.x, L.y, L.z); this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.yawRate = 0; this._lastLoaded = null;
+    this.holdAt(L, () => this.reset(L.x, L.z, null, { launch: false }));
+  }
+  // hold the boat still at {x, z, y} until the ground there has streamed in (or 30 s), then done(). Another reset /
+  // holdAt, or setting `launching` to null (vehicles.js does on a switch), cancels it. `away`: the hold is only to
+  // load ground for a land vehicle (vehicles.js), so the boat isn't drawn.
+  holdAt(L, done, { away = false } = {}) {
+    const hold = this.launching = { x: L.x, z: L.z, away }, W = this.world;
+    this.pos.set(L.x, L.y ?? this.pos.y, L.z); this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.yawRate = 0; this._lastLoaded = null;
     this.mode = 'water'; this.grounded = true; this.onWater = false; this.wake.age.fill(99);
     this.afterReset();
     this.launchDone = (async () => {
       const end = Date.now() + 30000;
       while (this.launching === hold && (!W.loadedAt(L.x, L.z) || W.pendingTiles?.() > 0) && Date.now() < end)
         await new Promise(r => setTimeout(r, 100));
-      if (this.launching === hold) this.reset(L.x, L.z, null, { launch: false });
+      if (this.launching === hold) { this.launching = null; done(); }
     })();
   }
   // R: the last open water you were on (the land vehicles' safe spots aren't water); none close by (an old ride
@@ -382,6 +388,7 @@ export class Boat extends Vehicle {
   syncMesh(dt) {
     const m = this.mesh, ud = m.userData;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
+    m.visible = !this.launching?.away;
     if (ud.bars) ud.bars.rotation.y = -this.steer * 0.45;
     if (ud.wheel) ud.wheel.rotation.z = this.steer * 1.6;
     if (ud.rider) ud.rider.rotation.z = this.lean * 0.35;      // hangs off the inside a little more than the hull

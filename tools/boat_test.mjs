@@ -6,8 +6,9 @@
 // in shallow water, runs under the bridge, beaches on the bank (slides to a stop), pushes back in with S, R puts it
 // back on the water, and reset() on land finds the nearest water. No NaN anywhere. Then: light anchors (lights.js
 // format), leaving a boat for the car / bike / jet puts it on the nearest bank facing away from the water, a boat
-// picked with no water loaded near goes to the nearest launch spot (held until its tiles load), and every launch spot
-// is open water inside the map rim.
+// picked with no water loaded near goes to the nearest launch spot (held until its tiles load), switching straight
+// back to a land vehicle before it gets there cancels that and puts it back where it was (waiting for that ground if
+// it streamed out), and every launch spot is open water inside the map rim.
 import fs from 'fs';
 import { makeWorld, makeTileData } from '../game/src/data.js';
 import { readTileData } from '../game/src/tilepack.js';
@@ -222,7 +223,7 @@ const tileWorld = async (tx, tz) => {
   const W2 = makeWorld(WJ), b = new Boat(W2, JETSKI);            // nothing streamed in yet
   b.reset(3694, -1500, 0);
   const L = b.launching;
-  check(L === LAUNCH_SPOTS[0] && b.pos.x === L.x && b.pos.z === L.z, 'no water loaded near: holds it at the nearest launch spot', `${L?.name} · "${b.msg}"`);
+  check(L && L.x === LAUNCH_SPOTS[0].x && L.z === LAUNCH_SPOTS[0].z && b.pos.x === L.x && b.pos.z === L.z, 'no water loaded near: holds it at the nearest launch spot', `"${b.msg}"`);
   const y0 = b.pos.y; b.step(DT, { throttle: 1, brake: 0, steer: 1 });
   check(b.pos.x === L.x && b.pos.y === y0 && b.vel.length() === 0, 'held still while it loads');
   W2.add((await tileWorld(2, 1)).tiles.values().next().value);  // the tile streams in
@@ -230,6 +231,47 @@ const tileWorld = async (tx, tz) => {
   const lv = W2.waterLevelAt(b.pos.x, b.pos.z);
   drive(b, 1, () => false);
   check(!b.launching && b.onWater && Math.hypot(b.pos.x - L.x, b.pos.z - L.z) < 60, 'then on the water there', `at ${b.pos.x.toFixed(0)},${b.pos.z.toFixed(0)}, level ${lv.toFixed(1)}`);
+}
+// ---- picking a boat with no water loaded near, then straight back to a land vehicle before the launch spot loads:
+// the launch is cancelled and the land vehicle goes back where it was (dry); if that ground streamed out meanwhile,
+// the switch waits (boat hidden and held there) until it's loaded again
+{
+  console.log('\n== boat picked far from water, then back to land at once');
+  const W3 = await tileWorld(2, 0), tile = W3.tiles.values().next().value;   // dry hills; nearest launch spot is unloaded
+  const v3 = createVehicles({ scene: new THREE.Scene(), world: W3, tuning: { ...TUNING_DEFAULTS } });
+  const [sx, sz, syaw] = W3.placeOn(4000, 0, 3, 400);
+  const dryHere = (w, c) => !(w.waterLevelAt(c.pos.x, c.pos.z) > w.terrainAt(c.pos.x, c.pos.z));
+  const sitStill = (v) => { const y0 = v.pos.y, x0 = v.pos.x, z0 = v.pos.z; let ok = true;
+    const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
+    for (let i = 0; i < 240; i++) { v.savePrev(); v.step(DT, inp); ok &&= [v.pos.x, v.pos.y, v.pos.z].every(Number.isFinite); }
+    return { ok, moved: Math.hypot(v.pos.x - x0, v.pos.z - z0), dy: v.pos.y - y0, above: v.pos.y - W3.heightAt(v.pos.x, v.pos.z) }; };
+  v3.car.reset(sx, sz, syaw); v3.car.safe = [];
+  const precondition = findWater(W3, sx, sz, { minDepth: JETSKI.minDepth, clear: JETSKI.beam * 2.6 }) === null;
+  for (const landKind of ['car', 'bike', 'jet']) {
+    v3.switchTo('car'); v3.car.reset(sx, sz, syaw);
+    v3.switchTo('jetski'); const ski = v3.current, L = ski.launching;
+    check(precondition && L && !W3.loadedAt(L.x, L.z), `jet ski picked at ${sx.toFixed(0)},${sz.toFixed(0)} heads for an unloaded launch spot`, L ? `${L.x},${L.z}` : 'no launch');
+    v3.switchTo(landKind); const v = v3.current;
+    const st = sitStill(v);
+    check(v.kind === landKind && !ski.launching && Math.hypot(v.pos.x - sx, v.pos.z - sz) < 3 && dryHere(W3, v) && st.ok && st.above > -0.5,
+      `…straight back to the ${landKind}: launch cancelled, back where it was, on dry ground`, `${Math.hypot(v.pos.x - sx, v.pos.z - sz).toFixed(1)} m from the start, ${st.above.toFixed(2)} m above the ground after 2 s`);
+    await ski.launchDone;                                         // the cancelled launch must not move anything later
+    check(v3.current === v && Math.hypot(v.pos.x - sx, v.pos.z - sz) < 3, `…the cancelled launch doesn't come back`);
+  }
+  // the start's ground streams out while the boat is away: the switch back waits for it
+  v3.switchTo('car'); v3.car.reset(sx, sz, syaw);
+  v3.switchTo('boat'); const boat = v3.current;
+  W3.remove(tile.tx, tile.tz);
+  v3.switchTo('car');
+  check(v3.current === boat && boat.launching?.away && boat.pos.x === sx && boat.pos.z === sz && (boat.syncMesh(0), !boat.mesh.visible),
+    'start ground unloaded: the switch waits, boat held (hidden) at the start', `${v3.current.kind}, held at ${boat.pos.x.toFixed(0)},${boat.pos.z.toFixed(0)}`);
+  boat.step(DT, { throttle: 1, brake: 0, steer: 1 });
+  check(boat.pos.x === sx && boat.vel.length() === 0, '…and held still meanwhile');
+  W3.add(tile);
+  await boat.launchDone;
+  const c = v3.current, st = sitStill(c);
+  check(c.kind === 'car' && Math.hypot(c.pos.x - sx, c.pos.z - sz) < 3 && Math.abs(c.heading() - syaw) < 0.3 && st.ok && st.above > -0.5 && dryHere(W3, c),
+    '…then the car is placed there once loaded, facing the way it was', `${c.kind} ${Math.hypot(c.pos.x - sx, c.pos.z - sz).toFixed(1)} m from the start, ${st.above.toFixed(2)} m above the ground`);
 }
 for (const L of LAUNCH_SPOTS) {
   const [tx, tz] = W.tileIndex(L.x, L.z), Wt = await tileWorld(tx, tz);

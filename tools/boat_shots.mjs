@@ -128,6 +128,19 @@ for (const [kind, n] of [['jetski', 4], ['boat', 5]]) {
   s = await state(); check(s.onWater, `${kind}: R puts it on the water`);
 }
 
+// ---- launch started, then straight back to the car before it gets there: launch cancelled, car back at campus, dry
+console.log('\n== launch cancelled');
+await holdCar(page, { ...CAMPUS, kind: 'car' });
+const before = await state();
+await page.evaluate(() => { game.vehicles.switchTo('jetski'); const b = game.vehicles.current; b.launchFrom(b.pos.x, b.pos.z); });
+await wait(100);                                                 // well before Sheridan (≈4.3 km away) streams in
+await page.keyboard.press('KeyV'); await page.keyboard.press('Digit1'); await wait(2500);
+let back = await state(); console.log(' ', JSON.stringify(back));
+const backDry = await page.evaluate(() => { const c = game.vehicles.current, w = game.world.waterLevelAt(c.pos.x, c.pos.z); return !(w > game.world.terrainAt(c.pos.x, c.pos.z)) && c.pos.y > game.world.heightAt(c.pos.x, c.pos.z) - 0.3; });
+check(back.kind === 'car' && Math.hypot(back.x - before.x, back.z - before.z) < 5 && backDry && !(await page.evaluate(() => game.vehicles.jetski.launching)),
+  'jet ski launch cancelled by switching back: the car is where it was, on dry ground');
+await shot('launch-00-cancelled-car-back');
+
 // ---- no water loaded near: launch (what reset() does then) from campus to the nearest launch spot, with streaming
 console.log('\n== launch spot');
 await holdCar(page, { ...CAMPUS, kind: 'jetski' });
