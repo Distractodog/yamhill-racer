@@ -128,16 +128,28 @@ for (const [kind, n] of [['jetski', 4], ['boat', 5]]) {
   s = await state(); check(s.onWater, `${kind}: R puts it on the water`);
 }
 
-// ---- launch started, then straight back to the car before it gets there: launch cancelled, car back at campus, dry
+// ---- launch started, then straight back to the car before it gets there: launch cancelled, car back at campus, dry.
+// Precondition set up here: the boat is held for the launch spot farthest from campus (tens of km: never loaded in this
+// page), and that is checked to be still unloaded and still pending right before switching back.
 console.log('\n== launch cancelled');
 await holdCar(page, { ...CAMPUS, kind: 'car' });
 const before = await state();
-await page.evaluate(() => { game.vehicles.switchTo('jetski'); const b = game.vehicles.current; b.launchFrom(b.pos.x, b.pos.z); });
-await wait(100);                                                 // well before Sheridan (≈4.3 km away) streams in
-await page.keyboard.press('KeyV'); await page.keyboard.press('Digit1'); await wait(2500);
-let back = await state(); console.log(' ', JSON.stringify(back));
+const far = await page.evaluate(async () => {
+  const { LAUNCH_SPOTS } = await import('./src/boat.js');
+  game.vehicles.switchTo('jetski'); const b = game.vehicles.current;
+  const L = LAUNCH_SPOTS.reduce((a, c) => Math.hypot(c.x - b.pos.x, c.z - b.pos.z) > Math.hypot(a.x - b.pos.x, a.z - b.pos.z) ? c : a);
+  b.holdAt(L, () => b.reset(L.x, L.z, null, { launch: false }));   // what launchFrom does, aimed at the far spot
+  return { x: L.x, z: L.z, km: +(Math.hypot(L.x - b.pos.x, L.z - b.pos.z) / 1000).toFixed(1) };
+});
+await wait(100);
+const pending = await page.evaluate((x, z) => !!game.vehicles.jetski.launching && game.vehicles.current === game.vehicles.jetski && !game.world.loadedAt(x, z), far.x, far.z);
+check(pending, `precondition: jet ski held for the far launch spot ${far.x},${far.z}, still unloaded`);
+await page.keyboard.press('KeyV'); await page.keyboard.press('Digit1');
+await page.waitForFunction(() => game.vehicles.current.kind === 'car', { timeout: 30000 }).catch(() => {});
+await wait(1500);
+let back = await state(); console.log(' ', JSON.stringify(far), JSON.stringify(back));
 const backDry = await page.evaluate(() => { const c = game.vehicles.current, w = game.world.waterLevelAt(c.pos.x, c.pos.z); return !(w > game.world.terrainAt(c.pos.x, c.pos.z)) && c.pos.y > game.world.heightAt(c.pos.x, c.pos.z) - 0.3; });
-check(back.kind === 'car' && Math.hypot(back.x - before.x, back.z - before.z) < 5 && backDry && !(await page.evaluate(() => game.vehicles.jetski.launching)),
+check(pending && back.kind === 'car' && Math.hypot(back.x - before.x, back.z - before.z) < 5 && backDry && !(await page.evaluate(() => game.vehicles.jetski.launching)),
   'jet ski launch cancelled by switching back: the car is where it was, on dry ground');
 await shot('launch-00-cancelled-car-back');
 

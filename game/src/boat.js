@@ -145,6 +145,7 @@ export function findBank(W, x0, z0, { radius = 300, clear = 4 } = {}) {
 }
 
 export class Boat extends Vehicle {
+  static holdPatience = 30000;    // ms holdAt waits for other tiles to finish streaming (tests shorten it)
   constructor(world, tuning = JETSKI) {
     super(world, tuning.kind);
     this.t = tuning; this.name = tuning.name;
@@ -196,18 +197,22 @@ export class Boat extends Vehicle {
     this.say(`No river or pond near here: off to ${L.name || 'the nearest launch spot'} (${(Math.hypot(L.x - x, L.z - z) / 1000).toFixed(1)} km)`, 4);
     this.holdAt(L, () => this.reset(L.x, L.z, null, { launch: false }));
   }
-  // hold the boat still at {x, z, y} until the ground there has streamed in (or 30 s), then done(). Another reset /
-  // holdAt, or setting `launching` to null (vehicles.js does on a switch), cancels it. `away`: the hold is only to
-  // load ground for a land vehicle (vehicles.js), so the boat isn't drawn.
+  // hold the boat still at {x, z, y} until the ground there has streamed in, then done(). It never lets go onto ground
+  // that isn't loaded: past Boat.holdPatience (ms) it stops waiting for other tiles still streaming elsewhere, but not
+  // for this one (it says so and keeps holding). Another reset / holdAt, or setting `launching` to null (vehicles.js
+  // does on a switch), cancels it. `away`: the hold only loads ground for a land vehicle, so the boat isn't drawn.
   holdAt(L, done, { away = false } = {}) {
     const hold = this.launching = { x: L.x, z: L.z, away }, W = this.world;
     this.pos.set(L.x, L.y ?? this.pos.y, L.z); this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.yawRate = 0; this._lastLoaded = null;
     this.mode = 'water'; this.grounded = true; this.onWater = false; this.wake.age.fill(99);
     this.afterReset();
     this.launchDone = (async () => {
-      const end = Date.now() + 30000;
-      while (this.launching === hold && (!W.loadedAt(L.x, L.z) || W.pendingTiles?.() > 0) && Date.now() < end)
+      const end = Date.now() + Boat.holdPatience;
+      let told = false;
+      while (this.launching === hold && (!W.loadedAt(L.x, L.z) || (W.pendingTiles?.() > 0 && Date.now() < end))) {
+        if (!told && Date.now() >= end) { told = true; this.say('Still loading the map there…', 4); }
         await new Promise(r => setTimeout(r, 100));
+      }
       if (this.launching === hold) { this.launching = null; done(); }
     })();
   }

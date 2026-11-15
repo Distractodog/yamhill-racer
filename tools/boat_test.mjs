@@ -220,14 +220,22 @@ const tileWorld = async (tx, tz) => {
   w.add(makeTileData(WJ, tx, tz, await readTileData(async f => ab(d + f), WJ.packed))); return w;
 };
 {
+  const patience = Boat.holdPatience; Boat.holdPatience = 200;   // shorten the 30 s wait for the test
   const W2 = makeWorld(WJ), b = new Boat(W2, JETSKI);            // nothing streamed in yet
+  let busy = 1; W2.pendingTiles = () => busy;                    // and the game's streamer never reports idle
   b.reset(3694, -1500, 0);
   const L = b.launching;
   check(L && L.x === LAUNCH_SPOTS[0].x && L.z === LAUNCH_SPOTS[0].z && b.pos.x === L.x && b.pos.z === L.z, 'no water loaded near: holds it at the nearest launch spot', `"${b.msg}"`);
   const y0 = b.pos.y; b.step(DT, { throttle: 1, brake: 0, steer: 1 });
   check(b.pos.x === L.x && b.pos.y === y0 && b.vel.length() === 0, 'held still while it loads');
-  W2.add((await tileWorld(2, 1)).tiles.values().next().value);  // the tile streams in
+  let settled = false; b.launchDone.then(() => { settled = true; });
+  await new Promise(r => setTimeout(r, 700));                     // past the (shortened) deadline, destination still missing
+  b.step(DT, { throttle: 1, brake: 0, steer: 1 });
+  check(!settled && b.launching === L && b.pos.x === L.x && b.pos.y === y0 && b.vel.length() === 0 && b.msg.startsWith('Still loading'),
+    'past the deadline with the spot still unloaded: keeps holding, never released onto missing ground', `"${b.msg}"`);
+  W2.add((await tileWorld(2, 1)).tiles.values().next().value);  // the tile streams in (other tiles still "pending")
   await b.launchDone;
+  Boat.holdPatience = patience; busy = 0;
   const lv = W2.waterLevelAt(b.pos.x, b.pos.z);
   drive(b, 1, () => false);
   check(!b.launching && b.onWater && Math.hypot(b.pos.x - L.x, b.pos.z - L.z) < 60, 'then on the water there', `at ${b.pos.x.toFixed(0)},${b.pos.z.toFixed(0)}, level ${lv.toFixed(1)}`);
