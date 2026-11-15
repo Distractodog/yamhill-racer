@@ -167,7 +167,8 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // state: 'idle' | 'placing' | 'countdown' | 'running' | 'finished'
   let ch = null, arches = [], state = 'idle', t = 0, cd = 0, next = 1, splits = [], splitT = 0, sel = 0, result = null;
   let menuOpen = false, placeToken = 0, returning = false, wrongWayTime = 0;
-  let mpHook = null, sync = null;     // multiplayer (mp/races.js): optional hook + a relay-clock start { at, now }
+  // multiplayer (mp/races.js): optional hook + a relay-clock start { at, now }; a late player joins that shared clock
+  let mpHook = null, sync = null;
   const lastPos = new THREE.Vector2(), curPos = new THREE.Vector2();
   let lastY = 0, curY = 0;
 
@@ -347,8 +348,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
         <span class="ch-meta">${fmtDist(c.length)} · best ${fmtTime(best[c.id]?.time)}</span>
         <span class="ch-desc">${c.desc}</span></button>`; }).join('') +
       `<div class="ch-hint">↑/↓ + Enter or click to start · J or Esc to close${state !== 'idle' ? ' · Backspace restarts a run' : ''}</div>`;
-    menu.querySelectorAll('.ch-item').forEach(b => b.addEventListener('click', () => start(+b.dataset.i)));
-    mpHook?.menu?.(menu, list[sel]);
+    menu.querySelectorAll('.ch-item').forEach(b => b.addEventListener('click', () => { if (!mpHook?.pick?.(+b.dataset.i)) start(+b.dataset.i); }));
   }
   function openMenu() { menuOpen = true; done.style.display = 'none'; renderMenu(); menu.style.display = 'block'; }
   function closeMenu() { menuOpen = false; menu.style.display = 'none'; if (state === 'finished') done.style.display = 'block'; }
@@ -372,7 +372,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     if (e.code === 'KeyJ') { menuOpen ? closeMenu() : openMenu(); return; }
     if (menuOpen) {
       if (e.code === 'ArrowDown' || e.code === 'ArrowUp') { sel = (sel + (e.code === 'ArrowDown' ? 1 : list.length - 1)) % list.length; renderMenu(); }
-      else if (e.code === 'Enter') start(sel);
+      else if (e.code === 'Enter') { if (!mpHook?.pick?.(sel)) start(sel); }
       else if (e.code === 'Escape') closeMenu();
       return;
     }
@@ -384,7 +384,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   return {
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
-    set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, next, state, t },
+    set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, track: ch.track, route: ch.route, next, state, t },
     rewards, best: () => best, start, quit, openMenu, closeMenu,
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
@@ -421,10 +421,10 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       }
       if (state === 'countdown') {
         const before = Math.ceil(cd); if (sync) cd = (sync.at - sync.now()) / 1000; else cd -= dt; const now = Math.ceil(cd);
-        if (cd <= 0) { state = 'running'; t = 0; ghost.start(ch, car); count.textContent = 'GO!'; blip(880, 0.35); setTimeout(() => { if (count.textContent === 'GO!') count.style.display = 'none'; }, 700); }
+        if (cd <= 0) { state = 'running'; t = sync ? -cd : 0; ghost.start(ch, car); count.textContent = 'GO!'; blip(880, 0.35); setTimeout(() => { if (count.textContent === 'GO!') count.style.display = 'none'; }, 700); }
         else if (now !== before) { count.textContent = String(now); blip(440, 0.15); }
       } else if (state === 'running') {
-        t += dt;
+        if (sync) t = Math.max(0, (sync.now() - sync.at) / 1000); else t += dt;
         ghost.update(t, car);
         wrongWayTime = !returning && track && drivingWrongWay(car.vel, ch.track, track.index) ? wrongWayTime + dt : 0;
         // a teleport (R reset) is not a crossing: only count normal movement

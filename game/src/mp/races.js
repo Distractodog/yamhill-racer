@@ -41,18 +41,13 @@ export function createRaces({ challenges, car }) {
       outEl.style.display = 'block';
     },
     results() { const e = document.getElementById('ch-mp-results'); if (e) e.innerHTML = core.resultsHtml(); },
-    menu(menu, race) {
-      if (!mp.inGame || !race) return;
-      const b = document.createElement('button'); b.className = 'mp-invite-btn'; b.textContent = `👥 Invite players to ${race.name}`;
-      b.addEventListener('click', () => { challenges.closeMenu(); picker(race); });
-      menu.append(b);
-    },
+    pick(race, i) { challenges.closeMenu(); picker(race, i); },
   };
-  function picker(race) {
+  function picker(race, i) {
     const others = [...mp.players.values()].filter(p => p.id !== mp.me.id);
     outEl.innerHTML = `<h3>Invite to ${esc(race.name)}</h3>${others.length ? others.map(p => `<label><input type="checkbox" value="${esc(p.id)}" checked> ${esc(p.name)}</label>`).join('') : '<div>No other players yet.</div>'}
-      <button data-a="invite"${others.length ? '' : ' disabled'}>Invite</button><button data-a="cancel" class="alt">Cancel</button>`;
-    outEl.style.display = 'block'; outEl.dataset.race = race.id;
+      <button data-a="invite"${others.length ? '' : ' disabled'}>Invite</button><button data-a="solo" class="alt">Race solo</button><button data-a="cancel" class="alt">Cancel</button>`;
+    outEl.style.display = 'block'; outEl.dataset.race = race.id; outEl.dataset.i = i;
   }
   inEl.addEventListener('click', e => { const a = e.target.dataset?.a; if (a === 'yes') core.accept(); else if (a === 'no') core.decline(); });
   outEl.addEventListener('click', e => {
@@ -60,7 +55,8 @@ export function createRaces({ challenges, car }) {
     if (a === 'invite') {
       const ids = [...outEl.querySelectorAll('input:checked')].map(i => i.value);
       if (!core.invite(outEl.dataset.race, ids)) outEl.style.display = 'none';
-    } else if (a === 'start') core.start();
+    } else if (a === 'solo') { outEl.style.display = 'none'; challenges.start(+outEl.dataset.i); }
+    else if (a === 'start') core.start();
     else if (a === 'cancel') { if (core.outgoing) core.cancelInvite(); else outEl.style.display = 'none'; }
   });
 

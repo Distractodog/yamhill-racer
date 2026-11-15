@@ -1,7 +1,7 @@
 // Multiplayer race logic (no DOM, no three.js): invites, replies, synced start, live places, results.
 // races.js wires it to the real `mp` (net.js), the challenges manager and the pop-up DOM; tests pass fakes.
-// Messages (relay forwards them to everyone, with `from`): invite, invite-reply, race-start, race-progress,
-// race-finish, race-cancel — see the multiplayer contract.
+// Messages (the relay broadcasts them to everyone INCLUDING the sender, with `from`): invite, invite-reply,
+// race-start, race-progress, race-finish, race-cancel — own echoes are ignored.
 export const INVITE_TTL = 30000, START_DELAY = 5000, DNF_AFTER = 60000, PROGRESS_MS = 500;
 
 export const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -10,14 +10,36 @@ export function ordinal(n) {
   return n + s;
 }
 
-// distance along the route (metres, straight lines between gates) given the next gate to reach
-export function routeProgress(gates, next, x, z) {
-  const at = [0];
-  for (let i = 1; i < gates.length; i++) at.push(at[i - 1] + Math.hypot(gates[i].x - gates[i - 1].x, gates[i].z - gates[i - 1].z));
-  if (next >= gates.length) return at[gates.length - 1];
-  const prev = at[Math.max(0, next - 1)], seg = at[next] - prev;
-  const left = Math.hypot(gates[next].x - x, gates[next].z - z);
-  return prev + Math.min(seg, Math.max(0, seg - left));
+// Route geometry for progress: the race's centre line (challenges.json `track` [x,z,halfWidth] or, for jets, `route`
+// [x,z]) with cumulative arc length, and each gate's arc position (projected forward from the previous gate).
+export function makeRoute(ch) {
+  let pts = (ch.track || ch.route || []).map(p => [p[0], p[1]]);
+  if (pts.length < 2) pts = ch.gates.map(g => [g.x, g.z]);
+  const S = [0];
+  for (let i = 1; i < pts.length; i++) S.push(S[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const route = { pts, S, total: S[S.length - 1], gateS: [0] };
+  for (let i = 1; i < ch.gates.length; i++) route.gateS.push(project(route, ch.gates[i].x, ch.gates[i].z, route.gateS[i - 1] - 20, Infinity).s);
+  return route;
+}
+// nearest point on the centre line with arc position inside [lo, hi]: { s, d }
+function project(route, x, z, lo, hi) {
+  const { pts, S } = route;
+  let best = { s: Math.min(Math.max(lo, 0), route.total), d: Infinity };
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (S[i + 1] < lo || S[i] > hi) continue;
+    const ex = pts[i + 1][0] - pts[i][0], ez = pts[i + 1][1] - pts[i][1], L2 = ex * ex + ez * ez || 1e-9;
+    const t = Math.min(1, Math.max(0, ((x - pts[i][0]) * ex + (z - pts[i][1]) * ez) / L2));
+    const d = Math.hypot(x - pts[i][0] - ex * t, z - pts[i][1] - ez * t);
+    if (d < best.d) best = { s: S[i] + (S[i + 1] - S[i]) * t, d };
+  }
+  return best;
+}
+// distance along the route (metres), bounded to the stretch between the last checkpoint passed and the next one
+export function routeProgress(route, next, x, z) {
+  const n = route.gateS.length;
+  if (next >= n) return route.gateS[n - 1];
+  const lo = route.gateS[Math.max(0, next - 1)], hi = route.gateS[next];
+  return Math.min(hi, Math.max(lo, project(route, x, z, lo - 5, hi + 5).s));
 }
 
 export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, pos = () => ({ x: 0, z: 0 }) }) {
@@ -26,7 +48,9 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   let incoming = null;      // someone invited me: { inviteId, from, raceId, timer }
   let accepted = null;      // inviteId I accepted and am waiting to start
   let active = null;        // the race I'm in (or just finished)
-  let tick = null;
+  let tick = null, acceptedTimer = null;
+  const routes = new Map();
+  const routeOf = info => routes.get(info.id) || (routes.set(info.id, makeRoute(info)), routes.get(info.id));
   const raceName = id => list.find(c => c.id === id)?.name || 'a race';
   const nameOf = id => id === mp.me.id ? mp.me.name : mp.players.get(id)?.name || 'Racer';
   const busy = () => ['placing', 'countdown', 'running'].includes(challenges.state);
@@ -42,7 +66,8 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   const showLobby = () => ui.lobby?.(lobbyData());
   function invite(raceId, ids) {
     ids = ids.filter(id => id !== mp.me.id && mp.players.has(id));
-    if (!ids.length || outgoing || busy()) return false;
+    // one pending invite at a time: not while one is open for me, accepted-but-unstarted, or I'm already racing
+    if (!ids.length || outgoing || incoming || accepted || busy()) return false;
     const inviteId = newId();
     outgoing = { inviteId, raceId, replies: new Map(ids.map(id => [id, 'wait'])), timer: null };
     outgoing.timer = timers.setTimeout(() => {          // nobody waits forever: silent players count as declined
@@ -73,22 +98,26 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     const players = [mp.me.id, ...[...replies].filter(([, s]) => s === 'accept').map(([id]) => id)];
     const startAt = mp.now() + START_DELAY;
     mp.send({ t: 'race-start', inviteId, raceId, players, startAt });
-    begin({ inviteId, raceId, players, startAt });
+    begin({ inviteId, raceId, players, startAt });      // the relay's echo of race-start is ignored (from === me)
   }
 
   // ---------------------------------------------------------------- invitee
   function showIncoming() { ui.incoming?.(incoming && { fromName: nameOf(incoming.from), raceName: raceName(incoming.raceId), ttl: INVITE_TTL }); }
   function clearIncoming() { if (incoming) timers.clearTimeout(incoming.timer); incoming = null; showIncoming(); }
+  function setAccepted(id) {                            // accepted but not started: forget it if the start never comes
+    timers.clearTimeout(acceptedTimer); acceptedTimer = null; accepted = id;
+    if (id) acceptedTimer = timers.setTimeout(() => { accepted = null; acceptedTimer = null; }, INVITE_TTL + START_DELAY + 15000);
+  }
   function reply(accept) {
     if (!incoming) return;
     const { inviteId } = incoming;
     mp.send({ t: 'invite-reply', inviteId, accept });
-    accepted = accept ? inviteId : null;
+    setAccepted(accept ? inviteId : null);
     clearIncoming();
   }
   function onInvite(m) {
     if (m.from === mp.me.id || !m.to?.includes(mp.me.id)) return;
-    if (incoming || busy() || outgoing || !list.some(c => c.id === m.raceId)) { mp.send({ t: 'invite-reply', inviteId: m.inviteId, accept: false }); return; }
+    if (incoming || accepted || busy() || outgoing || !list.some(c => c.id === m.raceId)) { mp.send({ t: 'invite-reply', inviteId: m.inviteId, accept: false }); return; }
     incoming = { inviteId: m.inviteId, from: m.from, raceId: m.raceId, timer: timers.setTimeout(() => reply(false), INVITE_TTL) };
     showIncoming();
   }
@@ -99,14 +128,14 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   }
   function onRaceStart(m) {
     if (m.from === mp.me.id || !m.players?.includes(mp.me.id) || accepted !== m.inviteId) return;
-    accepted = null;
+    setAccepted(null);
     begin(m);
   }
 
   // ---------------------------------------------------------------- the race itself
   function begin({ inviteId, raceId, players, startAt }) {
     const i = list.findIndex(c => c.id === raceId);
-    if (i < 0) return;
+    if (i < 0 || active?.inviteId === inviteId) return;
     if (incoming) clearIncoming();
     active = { inviteId, raceId, players, startAt, progress: new Map(), finished: new Map(), out: new Set(), firstFinishAt: null, myDone: false };
     if (!tick) tick = timers.setInterval(onTick, PROGRESS_MS);
@@ -115,7 +144,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   function sendProgress() {
     const info = challenges.runInfo?.();
     if (!info || info.state !== 'running' || !active || active.myDone) return;
-    const p = pos(), cur = { checkpoint: info.next - 1, dist: routeProgress(info.gates, info.next, p.x, p.z) };
+    const p = pos(), cur = { checkpoint: info.next - 1, dist: routeProgress(routeOf(info), info.next, p.x, p.z) };
     active.progress.set(mp.me.id, cur);
     mp.send({ t: 'race-progress', inviteId: active.inviteId, ...cur });
   }
@@ -126,43 +155,61 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     if (rows().every(r => r.status !== 'racing')) { timers.clearInterval(tick); tick = null; }
   }
   function onProgress(m) {
-    if (!active || m.inviteId !== active.inviteId || !active.players.includes(m.from)) return;
+    if (!active || m.inviteId !== active.inviteId || !active.players.includes(m.from) || m.from === mp.me.id || active.out.has(m.from)) return;
     active.progress.set(m.from, { checkpoint: m.checkpoint, dist: m.dist });
   }
-  function noteFinish(id, time) {
+  const isLate = at => active.firstFinishAt != null && at > active.firstFinishAt + DNF_AFTER;
+  function noteFinish(id, time, at) {       // false when it doesn't count: DNF (cancelled / left / past the deadline) is final
+    if (active.out.has(id) || active.finished.has(id) || isLate(at)) return false;
     active.finished.set(id, time);
-    if (active.firstFinishAt == null) active.firstFinishAt = mp.now();
+    if (active.firstFinishAt == null) active.firstFinishAt = at;
+    return true;
   }
   function onRaceFinish(m) {
     if (!active || m.inviteId !== active.inviteId || !active.players.includes(m.from) || m.from === mp.me.id) return;
-    noteFinish(m.from, m.time); ui.results?.(rows());
+    noteFinish(m.from, m.time, m.srvT ?? mp.now()); ui.results?.(rows());
   }
   function onRaceCancel(m) {
     if (m.from === mp.me.id) return;
     if (incoming && m.inviteId === incoming.inviteId) clearIncoming();     // the inviter gave up
-    if (accepted === m.inviteId) accepted = null;
-    if (active && m.inviteId === active.inviteId) { active.out.add(m.from); ui.results?.(rows()); }
+    if (accepted === m.inviteId) setAccepted(null);
+    if (active && m.inviteId === active.inviteId && !active.finished.has(m.from)) { active.out.add(m.from); ui.results?.(rows()); }
   }
   function onLeft(m) {
     if (outgoing?.replies.has(m.id)) { outgoing.replies.set(m.id, 'decline'); settle(); }
     if (incoming?.from === m.id) clearIncoming();
-    if (active) { active.out.add(m.id); ui.results?.(rows()); }
+    if (active && !active.finished.has(m.id)) { active.out.add(m.id); ui.results?.(rows()); }
+  }
+  function reset(quitRun) {                 // connection gone: drop every invite/race and stop all timers
+    if (outgoing) { timers.clearTimeout(outgoing.timer); outgoing = null; showLobby(); }
+    clearIncoming(); setAccepted(null);
+    const racing = active && !active.myDone;
+    active = null;
+    if (tick) { timers.clearInterval(tick); tick = null; }
+    if (racing && quitRun) challenges.quit?.();
   }
 
   // challenges.js hook callbacks
-  function leave() {                       // I left (Esc, new run, vehicle switch): tell the others unless I'd finished
+  function leave() {                        // I left (Esc, new run, vehicle switch): tell the others unless I'd finished
+    setAccepted(null);                      // a solo run (or leaving) forgets an accepted-but-unstarted invite
     if (!active) return;
     if (!active.myDone) mp.send({ t: 'race-cancel', inviteId: active.inviteId });
     active = null;
     if (tick) { timers.clearInterval(tick); tick = null; }
   }
-  function onFinish(time) {
+  function onFinish() {
     if (!active || active.myDone) return;
-    active.myDone = true; noteFinish(mp.me.id, time);
-    mp.send({ t: 'race-finish', inviteId: active.inviteId, time });
+    active.myDone = true;
+    const at = mp.now(), time = Math.max(0, (at - active.startAt) / 1000);   // everyone's time is on the relay clock
+    if (noteFinish(mp.me.id, time, at)) mp.send({ t: 'race-finish', inviteId: active.inviteId, time });
     ui.results?.(rows());
   }
   function onGate() { sendProgress(); }
+  // a click/Enter on a race row in the J menu: in a game with other players it opens the invite step instead
+  function pick(i) {
+    if (!ui.pick || !mp.inGame || ![...mp.players.keys()].some(id => id !== mp.me.id)) return false;
+    ui.pick(list[i], i); return true;
+  }
 
   // ---------------------------------------------------------------- places / results
   function rows() {
@@ -193,13 +240,14 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   }
 
   const handlers = { invite: onInvite, 'invite-reply': onReply, 'race-start': onRaceStart, 'race-progress': onProgress,
-    'race-finish': onRaceFinish, 'race-cancel': onRaceCancel, left: onLeft };
+    'race-finish': onRaceFinish, 'race-cancel': onRaceCancel, left: onLeft,
+    disconnected: () => reset(true), closed: () => reset(true) };
   for (const [k, fn] of Object.entries(handlers)) mp.on(k, fn);
-  const hook = { onLocalStart: leave, onQuit: leave, onFinish, onGate, hudHtml, menu: (el, race) => ui.menu?.(el, race) };
+  const hook = { onLocalStart: leave, onQuit: leave, onFinish, onGate, hudHtml, pick };
   return {
     hook, invite, cancelInvite, start: startOutgoing, accept: () => reply(true), decline: () => reply(false),
-    rows, hudHtml, resultsHtml, lobbyData,
-    get active() { return active; }, get outgoing() { return outgoing; }, get incoming() { return incoming; },
-    dispose() { for (const [k, fn] of Object.entries(handlers)) mp.off?.(k, fn); if (tick) timers.clearInterval(tick); },
+    rows, hudHtml, resultsHtml, lobbyData, reset,
+    get active() { return active; }, get outgoing() { return outgoing; }, get incoming() { return incoming; }, get accepted() { return accepted; },
+    dispose() { reset(false); for (const [k, fn] of Object.entries(handlers)) mp.off?.(k, fn); },
   };
 }

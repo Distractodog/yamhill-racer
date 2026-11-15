@@ -21,8 +21,8 @@ async function open(name) {
   const ctx = await browser.createBrowserContext();            // separate localStorage = separate player id
   const page = await ctx.newPage();
   await page.setViewport({ width: 1100, height: 700 });
-  page.on('pageerror', e => console.log(name, 'PAGE ERROR', e.message));
-  await page.evaluateOnNewDocument(n => { localStorage.setItem('yr-mp-name-1', n); localStorage.setItem('yr-welcome-seen', '1'); }, name);
+  page.on('pageerror', e => { console.log(name, 'PAGE ERROR', e.message); failed++; });
+  await page.evaluateOnNewDocument(n => { localStorage.setItem('yr-mp-name-1', n); localStorage.setItem('yr-welcome-hidden-1', '1'); }, name);
   await page.goto('http://127.0.0.1:8173/', { waitUntil: 'load' });
   await page.waitForFunction(() => window.game, { timeout: 90000 });
   return page;
@@ -41,7 +41,7 @@ try {
     window.__go = null; const t = setInterval(() => { if (window.game.challenges.state === 'running' && !window.__go) { window.__go = mp.now(); clearInterval(t); } }, 5);
   });
   await host.evaluate(() => { window.game.challenges.openMenu(); });
-  await host.click('.mp-invite-btn'); await sleep(200);
+  await host.click('#ch-menu .ch-item'); await sleep(200);          // in MP a race row opens the Invite step
   await host.click('#mp-invite-out [data-a="invite"]'); await sleep(500);
   check('guest sees invite', await guest.evaluate(() => getComputedStyle(document.getElementById('mp-invite-in')).display === 'block'));
   await guest.screenshot({ path: `${shots}/guest-invite.png` });
@@ -57,6 +57,7 @@ try {
 
   const through = page => page.evaluate(async () => {
     const { car, challenges } = window.game, gates = challenges.runInfo().gates;
+    // note: the first row (long-walk) is a car race; gates sit on the route
     const frame = () => new Promise(r => requestAnimationFrame(() => r()));
     for (let i = 1; i < gates.length; i++) {
       const g = gates[i], fx = Math.sin(g.yaw), fz = Math.cos(g.yaw);
