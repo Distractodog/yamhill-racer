@@ -101,6 +101,7 @@ const audio = new CarAudio();
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 const challenges = await createChallenges({ scene, world, car, minimap, vehicles });
+import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 document.getElementById('loading').remove();
 const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });

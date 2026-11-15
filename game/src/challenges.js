@@ -167,6 +167,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // state: 'idle' | 'placing' | 'countdown' | 'running' | 'finished'
   let ch = null, arches = [], state = 'idle', t = 0, cd = 0, next = 1, splits = [], splitT = 0, sel = 0, result = null;
   let menuOpen = false, placeToken = 0, returning = false, wrongWayTime = 0;
+  let mpHook = null, sync = null;     // multiplayer (mp/races.js): optional hook + a relay-clock start { at, now }
   const lastPos = new THREE.Vector2(), curPos = new THREE.Vector2();
   let lastY = 0, curY = 0;
 
@@ -234,7 +235,9 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     track?.reset(); lastPos.set(car.pos.x, car.pos.z); curPos.copy(lastPos); lastY = curY = car.pos.y;
   }
 
-  async function start(i) {
+  async function start(i, opts = {}) {
+    if (!opts.mp) mpHook?.onLocalStart?.();
+    sync = opts.sync || null;
     ghost.stop();
     ch = list[i]; sel = i; result = null; returning = false; wrongWayTime = 0;
     closeMenu(); done.style.display = 'none';
@@ -252,11 +255,12 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     state = 'placing'; next = 1; t = 0; splits = [];
     hud.style.display = 'block'; renderHud();
     if (!(await placeCar(ch.start.x, ch.start.z, ch.start.yaw))) return;
-    state = 'countdown'; cd = COUNTDOWN; styleArches();
-    count.style.display = 'block'; count.textContent = '3'; blip(440, 0.15);
+    state = 'countdown'; cd = sync ? (sync.at - sync.now()) / 1000 : COUNTDOWN; styleArches();
+    count.style.display = 'block'; count.textContent = String(sync ? Math.max(1, Math.ceil(cd)) : 3); blip(440, 0.15);
   }
 
   function quit() {
+    mpHook?.onQuit?.(); sync = null;
     ghost.stop();
     returning = false; wrongWayTime = 0; placeToken++; state = 'idle'; ch = null; clearArches();
     if (vehicles) vehicles.jet.respawn = null;
@@ -279,12 +283,14 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       ${isBest ? `<div class="ch-new">${prev ? `New best! ${fmtDelta(t - prev.time)}` : 'First time set!'}</div>`
                : `<div>Best ${fmtTime(prev.time)} · ${fmtDelta(t - prev.time)}</div>`}
       ${unlocked.map(r => `<div class="ch-reward"><span>NEW LIVERY UNLOCKED</span><strong>${r.name}</strong><small>Available in your Garage</small></div>`).join('')}
+      <div id="ch-mp-results"></div>
       <div class="ch-actions"><button data-action="retry">Race again</button><button data-action="races">Choose race</button><button data-action="roam">Free roam</button></div>
       <div class="ch-hint">Enter retry · J challenges · Esc free roam</div>`;
     done.querySelector('[data-action="retry"]').addEventListener('click', () => start(sel));
     done.querySelector('[data-action="races"]').addEventListener('click', openMenu);
     done.querySelector('[data-action="roam"]').addEventListener('click', quit);
     done.style.display = 'block';
+    mpHook?.onFinish?.(t);
   }
 
   // ---- checkpoint crossing: the car's path this frame crosses the arch line between the posts
@@ -312,6 +318,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       blip(990, 0.09);
     }
     next++;
+    mpHook?.onGate?.(next);
     if (isFinish) finish(); else styleArches();
   }
 
@@ -328,7 +335,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       else if (wrongWayTime >= 1) sub += ' · WRONG WAY · turn around';
       const b = best[ch.id]; if (b) sub += ` · best ${fmtTime(b.time)}`;
     } else if (state === 'finished') sub = 'Finished';
-    hud.innerHTML = `<div class="ch-name">${ch.name}</div><div class="ch-time">${fmtTime(t)}</div><div class="ch-sub">${sub}</div>`;
+    hud.innerHTML = `<div class="ch-name">${ch.name}</div><div class="ch-time">${fmtTime(t)}</div><div class="ch-sub">${sub}</div>${mpHook?.hudHtml?.() || ''}`;
   }
 
   // ---- menu
@@ -341,6 +348,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
         <span class="ch-desc">${c.desc}</span></button>`; }).join('') +
       `<div class="ch-hint">↑/↓ + Enter or click to start · J or Esc to close${state !== 'idle' ? ' · Backspace restarts a run' : ''}</div>`;
     menu.querySelectorAll('.ch-item').forEach(b => b.addEventListener('click', () => start(+b.dataset.i)));
+    mpHook?.menu?.(menu, list[sel]);
   }
   function openMenu() { menuOpen = true; done.style.display = 'none'; renderMenu(); menu.style.display = 'block'; }
   function closeMenu() { menuOpen = false; menu.style.display = 'none'; if (state === 'finished') done.style.display = 'block'; }
@@ -376,6 +384,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   return {
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
+    set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, next, state, t },
     rewards, best: () => best, start, quit, openMenu, closeMenu,
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
@@ -411,7 +420,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
         }
       }
       if (state === 'countdown') {
-        const before = Math.ceil(cd); cd -= dt; const now = Math.ceil(cd);
+        const before = Math.ceil(cd); if (sync) cd = (sync.at - sync.now()) / 1000; else cd -= dt; const now = Math.ceil(cd);
         if (cd <= 0) { state = 'running'; t = 0; ghost.start(ch, car); count.textContent = 'GO!'; blip(880, 0.35); setTimeout(() => { if (count.textContent === 'GO!') count.style.display = 'none'; }, 700); }
         else if (now !== before) { count.textContent = String(now); blip(440, 0.15); }
       } else if (state === 'running') {
