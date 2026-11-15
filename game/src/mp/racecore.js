@@ -2,6 +2,8 @@
 // races.js wires it to the real `mp` (net.js), the challenges manager and the pop-up DOM; tests pass fakes.
 // Messages (the relay broadcasts them to everyone INCLUDING the sender, with `from`): invite, invite-reply,
 // race-start, race-progress, race-finish, race-cancel — own echoes are ignored.
+import { gridPosition } from './collide.js';
+
 export const INVITE_TTL = 30000, START_DELAY = 5000, DNF_AFTER = 60000, PROGRESS_MS = 500;
 
 export const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -69,7 +71,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     // one pending invite at a time: not while one is open for me, accepted-but-unstarted, or I'm already racing
     if (!ids.length || outgoing || incoming || accepted || busy()) return false;
     const inviteId = newId();
-    outgoing = { inviteId, raceId, replies: new Map(ids.map(id => [id, 'wait'])), timer: null };
+    outgoing = { inviteId, raceId, replies: new Map(ids.map(id => [id, 'wait'])), order: [], timer: null };
     outgoing.timer = timers.setTimeout(() => {          // nobody waits forever: silent players count as declined
       if (!outgoing) return;
       for (const [id, s] of outgoing.replies) if (s === 'wait') outgoing.replies.set(id, 'decline');
@@ -93,9 +95,9 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   }
   function startOutgoing() {
     if (!outgoing || !lobbyData().canStart) return;
-    const { inviteId, raceId, replies } = outgoing;
+    const { inviteId, raceId, replies, order } = outgoing;
     timers.clearTimeout(outgoing.timer); outgoing = null; showLobby();
-    const players = [mp.me.id, ...[...replies].filter(([, s]) => s === 'accept').map(([id]) => id)];
+    const players = [mp.me.id, ...order.filter(id => replies.get(id) === 'accept')];
     const startAt = mp.now() + START_DELAY;
     mp.send({ t: 'race-start', inviteId, raceId, players, startAt });
     begin({ inviteId, raceId, players, startAt });      // the relay's echo of race-start is ignored (from === me)
@@ -123,6 +125,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   }
   function onReply(m) {
     if (!outgoing || m.inviteId !== outgoing.inviteId || !outgoing.replies.has(m.from)) return;
+    if (m.accept && !outgoing.order.includes(m.from)) outgoing.order.push(m.from);
     outgoing.replies.set(m.from, m.accept ? 'accept' : 'decline');
     settle();
   }
@@ -144,7 +147,8 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     if (challenges.state !== 'idle') challenges.quit?.();      // leave any earlier run first (its hook cancels/clears the old race)
     active = { inviteId, raceId, players, startAt, progress: new Map(), finished: new Map(), out: new Set(), firstFinishAt: null, myDone: false };
     if (!tick) tick = timers.setInterval(onTick, PROGRESS_MS);
-    challenges.start(i, { mp: true, sync: { at: startAt, now: () => mp.now() } });
+    challenges.start(i, { mp: true, grid: list[i].start && gridPosition(list[i].start, players.indexOf(mp.me.id), list[i].vehicle),
+      gridCount: players.length, sync: { at: startAt, now: () => mp.now() } });
   }
   function sendProgress() {
     const info = challenges.runInfo?.();

@@ -1,9 +1,9 @@
 // The world controller is DOM-free so its lifecycle can be tested with a fake Net.
 export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}, lock = () => {}, timers = globalThis }) {
-  let mode = 'host', snapshot = null, last = '', pending = null;
+  let mode = 'host', bump = true, snapshot = null, last = '', pending = null;
   const listeners = [];
   const on = (type, fn) => { mp.on(type, fn); listeners.push([type, fn]); };
-  const read = () => ({ tuning: structuredClone(tuning), atmosphere: { preset: atmosphere.preset } });
+  const read = () => ({ bump, tuning: structuredClone(tuning), atmosphere: { preset: atmosphere.preset } });
   function apply(settings) {
     for (const kind of ['car', 'bike', 'jet']) {
       const source = settings?.tuning?.[kind];
@@ -22,16 +22,16 @@ export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}
   function publish() {
     if (mp.inGame && mp.isHost) { const settings = read(); last = JSON.stringify(settings); mp.send({ t: 'world', mode, settings }); }
   }
-  on('connected', () => { mode = 'host'; if (mp.isHost) publish(); });
+  on('connected', () => { mode = 'host'; bump = true; if (mp.isHost) publish(); });
   on('world', message => {
     if (!mp.inGame || mp.isHost || !['host', 'own'].includes(message.mode)) return;
     // Only the roster's host may supply world settings.
     if (message.from && !mp.players.get(message.from)?.host) return;
-    mode = message.mode;
+    mode = message.mode; bump = message.settings?.bump !== false;
     if (mode === 'host') { snapshot ||= read(); apply(message.settings); lock(true); }
     else restore();
   });
-  for (const event of ['disconnected', 'kicked', 'closed']) on(event, () => { restore(); mode = 'host'; timers.clearTimeout(pending); pending = null; });
+  for (const event of ['disconnected', 'kicked', 'closed']) on(event, () => { restore(); mode = 'host'; bump = true; timers.clearTimeout(pending); pending = null; });
   const interval = timers.setInterval(() => {
     if (!mp.inGame || !mp.isHost) return;
     const next = JSON.stringify(read());
@@ -41,6 +41,8 @@ export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}
   }, 100);
   return {
     get mode() { return mode; },
+    get bump() { return bump; },
+    setBump(next) { if (!mp.inGame || !mp.isHost) return; bump = !!next; publish(); },
     setMode(next) { if (!mp.inGame || !mp.isHost || !['host', 'own'].includes(next)) return; mode = next; publish(); },
     restore,
     dispose() { restore(); timers.clearInterval(interval); timers.clearTimeout(pending); for (const [type, fn] of listeners) mp.off(type, fn); },
@@ -57,7 +59,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
     <div id="mp-connect"><button id="mp-host" class="menu-button">Host my game</button>
       <form id="mp-join-form"><label>Friend’s code <input id="mp-join-code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" required pattern="[A-HJ-KM-NP-Z2-9a-hj-km-np-z]{5}"></label><button id="mp-join" class="menu-button">Join</button></form></div>
     <div id="mp-game" hidden><p>Game code: <strong id="mp-room"></strong></p><h3>Players</h3><ul id="mp-players"></ul>
-      <fieldset id="mp-world"><legend>World settings</legend><label><input type="radio" name="mp-mode" value="host">Everyone uses the host's settings</label><label><input type="radio" name="mp-mode" value="own">Everyone uses their own settings</label></fieldset>
+      <fieldset id="mp-world"><legend>World settings</legend><label><input type="radio" name="mp-mode" value="host">Everyone uses the host's settings</label><label><input type="radio" name="mp-mode" value="own">Everyone uses their own settings</label><label>Bumping: <select id="mp-bump"><option value="on">on</option><option value="off">off</option></select></label></fieldset>
       <p id="mp-host-note">Only the host can change world settings.</p><button id="mp-leave" class="menu-button">Leave game</button></div><p id="mp-status" role="status"></p>`;
   document.body.append(panel);
   const $ = id => panel.querySelector('#mp-' + id);
@@ -83,6 +85,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
     // guests see the host's choice checked but can't change it (inert, not disabled: a disabled radio's dot is near invisible)
     $('world').inert = !mp.isHost; $('world').setAttribute('aria-disabled', String(!mp.isHost)); $('host-note').hidden = mp.isHost;
     panel.querySelectorAll('[name="mp-mode"]').forEach(el => { el.checked = el.value === world.mode; });
+    $('bump').value = world.bump ? 'on' : 'off';
     $('players').replaceChildren();
     for (const player of mp.players.values()) {
       const row = document.createElement('li'), label = document.createElement('span');
@@ -111,7 +114,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
   }
   $('host').addEventListener('click', () => connect(false));
   $('join-form').addEventListener('submit', e => { e.preventDefault(); connect(true); });
-  $('world').addEventListener('change', e => { world.setMode(e.target.value); render(); });
+  $('world').addEventListener('change', e => { if (e.target.id === 'mp-bump') world.setBump(e.target.value === 'on'); else world.setMode(e.target.value); render(); });
   $('leave').addEventListener('click', () => { world.restore(); mp.leave(); render(); });
   mp.on('joined', ({ player }) => { if (player.id !== mp.me.id) say(`${player.name} joined`); render(); });
   mp.on('left', ({ id }) => { say(`${names.get(id)?.name || 'A player'} left`); render(); });
