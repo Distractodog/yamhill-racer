@@ -17,6 +17,8 @@ export const PATH_KINDS = {
   trail: { cls: 2 },
 };
 export const STEP = 1.5;
+// A deck supports callers within 3 m below it or higher. Omit y for placement's highest surface.
+export const BRIDGE_CLIMB = 3;
 // jump ramps (challenges): a wedge laid on the road. u = metres along from the foot, v = across.
 // Up 11 m to 2.2 m high (~11°), 2 m flat top, then an 18 m gentle back so the wrong way is a bump, not a wall.
 export const RAMP = { up: 11, top: 2, down: 18, h: 2.2 };
@@ -52,7 +54,7 @@ export function prepRoad(p, id) {
   // road class data (tile.json from builds with road classes; absent on older tiles)
   const sw = sidewalkSides(p.sidewalk);
   return { id, kind: p.kind, hw: p.w / 2, cls: K.cls, x: xs, z: zs, y: ys, c: cs, lx, lz, n,
-    osm: p.cls, flat: !!p.flat, oneway: !!p.oneway, sw, hasSidewalk: !!(sw[0] || sw[1]), stop: p.stop };
+    bridge: p.bridge, osm: p.cls, flat: !!p.flat, oneway: !!p.oneway, sw, hasSidewalk: !!(sw[0] || sw[1]), stop: p.stop };
 }
 
 // ---------------------------------------------------------------- one tile
@@ -125,9 +127,11 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
   }
   yield 'tiledata';
   const renderJunctions = (tile.junctions || []).map(j => ({ ...j, cls: PATH_KINDS[j.kind].cls }));
-  let lastCls = -1;
-  function overlayAt(x, z) {                 // road surface height here (-Infinity if no road); sets lastCls
-    let best = -Infinity; lastCls = -1;
+  const hasBridges = roads.some(r => r.bridge);
+  let lastCls = -1, lastBridge = false, lastGx = 0, lastGz = 0;
+  // Road surface height here (-Infinity if absent); remember the winning surface and deck gradient.
+  function overlayAt(x, z, yq = Infinity) {
+    let best = -Infinity; lastCls = -1; lastBridge = false;
     const l = segGrid.get(Math.floor((z - sz0) / SG) * SGN + Math.floor((x - sx0) / SG)); if (!l) return best;
     for (let q = 0; q < l.length; q += 2) {
       const id = l[q], i = l[q + 1];
@@ -138,7 +142,7 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
         const a = (px * vz - pz * vx) / det, b = (ux * pz - uz * px) / det;
         if (a < -1e-4 || b < -1e-4 || a + b > 1 + 1e-4) continue;
         const y = c[2] + (A[2] - c[2]) * a + (B[2] - c[2]) * b;
-        if (y > best) { best = y; lastCls = J.cls; }
+        if (y > best) { best = y; lastCls = J.cls; lastBridge = false; }
         continue;
       }
       const r = roads[id];
@@ -153,16 +157,30 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
         if (!sw || Math.abs(off) > r.hw + sw) continue;
         const e = off > 0 ? r.hw : -r.hw;
         const y = r.y[i] + (r.y[i + 1] - r.y[i]) * uc + (r.c[i] + (r.c[i + 1] - r.c[i]) * uc) * e + KERB;
-        if (y > best) { best = y; lastCls = 6; }
+        if (r.bridge && yq < y - BRIDGE_CLIMB) continue;
+        if (y > best) { best = y; lastCls = 6; if ((lastBridge = !!r.bridge)) deckSlope(r, i, ex, ez, L2, uc, e, true); }
         continue;
       }
       const y = r.y[i] + (r.y[i + 1] - r.y[i]) * uc + (r.c[i] + (r.c[i + 1] - r.c[i]) * uc) * off;
-      if (y > best) { best = y; lastCls = r.cls; }
+      if (r.bridge && yq < y - BRIDGE_CLIMB) continue;
+      if (y > best) { best = y; lastCls = r.cls; if ((lastBridge = !!r.bridge)) deckSlope(r, i, ex, ez, L2, uc, off, false); }
     }
     return best;
   }
-  function surfaceAt(x, z) {
-    overlayAt(x, z);
+  function deckSlope(r, i, ex, ez, L2, uc, off, sidewalk) {
+    const L = Math.sqrt(L2);
+    const along = (r.y[i + 1] - r.y[i] + (r.c[i + 1] - r.c[i]) * off) / L;
+    const cross = sidewalk ? 0 : r.c[i] + (r.c[i + 1] - r.c[i]) * uc;
+    lastGx = (along * ex + cross * ez) / L; lastGz = (along * ez - cross * ex) / L;
+  }
+  function deckNormal(x, z, y, out) {
+    if (!hasBridges) return false;
+    const h = overlayAt(x, z, y);
+    if (!lastBridge || h < terrainAt(x, z)) return false;
+    out.set(-lastGx, 1, -lastGz); return true;
+  }
+  function surfaceAt(x, z, y) {
+    overlayAt(x, z, y);
     // Pave only the approach road strips/junctions, leaving surrounding gravel and trails alone.
     if (lastCls === 4 && campusDrive(x, z)) return 3;
     return lastCls >= 0 ? lastCls : rasterSurfaceAt(x, z);
@@ -186,8 +204,8 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
   yield 'tiledata';
   const td = { tx, tz, x0, z0, gx0, gz0, NN, hs: HS, H, surf, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
     sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
-    pondId, pondLevel, waterLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear,
-    heightAt: (x, z) => Math.max(terrainAt(x, z), overlayAt(x, z)) };
+    pondId, pondLevel, waterLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear, deckNormal,
+    heightAt: (x, z, y) => Math.max(terrainAt(x, z), overlayAt(x, z, y)) };
   applyTrack(td);                           // running track north of the gym: level ground + surface (campustrack.js)
   td.buildings = applyCampus(td);           // Delphian campus: hand-made models replace the OSM blocks (campus.js)
   yield 'tiledata';
@@ -243,14 +261,17 @@ export function makeWorld(W) {
   }
   function setRamps(list) { challengeRamps = prepRamps(list); ramps = fixedRamps.concat(challengeRamps); }
   function setFixedRamps(list) { fixedRamps = prepRamps(list); ramps = fixedRamps.concat(challengeRamps); }
-  function groundAt(x, z) { const t = at(x, z); return t ? t.heightAt(x, z) : 0; }     // without ramps
-  function heightAt(x, z) { const g = groundAt(x, z); return ramps.length ? g + rampAt(x, z) : g; }
-  function surfaceAt(x, z) { const t = tileAt(x, z); return t ? t.surfaceAt(x, z) : 0; }
+  function groundAt(x, z, y) { const t = at(x, z); return t ? t.heightAt(x, z, y) : 0; }     // without ramps
+  function heightAt(x, z, y) { const g = groundAt(x, z, y); return ramps.length ? g + rampAt(x, z) : g; }
+  function surfaceAt(x, z, y) { const t = tileAt(x, z); return t ? t.surfaceAt(x, z, y) : 0; }
   function waterLevelAt(x, z) { const t = tileAt(x, z); return t ? t.waterLevelAt(x, z) : -Infinity; }
-  function normalAt(x, z, out = new THREE.Vector3()) {
-    const e = W.hstep * 0.5;
-    const hl = terrainAt(x - e, z), hr = terrainAt(x + e, z), hd = terrainAt(x, z - e), hu = terrainAt(x, z + e);
-    out.set(hl - hr, 2 * e, hd - hu);
+  function normalAt(x, z, out = new THREE.Vector3(), y) {
+    const e = W.hstep * 0.5, t = at(x, z);
+    if (t?.deckNormal?.(x, z, y, out)) out.multiplyScalar(2 * e);
+    else {
+      const hl = terrainAt(x - e, z), hr = terrainAt(x + e, z), hd = terrainAt(x, z - e), hu = terrainAt(x, z + e);
+      out.set(hl - hr, 2 * e, hd - hu);
+    }
     if (ramps.length && rampAt(x, z) > 0) { out.x -= 2 * e * rampSlope * rampFx; out.z -= 2 * e * rampSlope * rampFz; }
     return out.normalize();
   }

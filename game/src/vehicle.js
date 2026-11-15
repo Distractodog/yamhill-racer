@@ -54,7 +54,7 @@ export class Vehicle {
     let worst = 0;
     for (const zo of offsets) {
       _w.set(0, 0, zo).applyQuaternion(this.quat).add(this.pos);
-      if (_w.y - this.world.heightAt(_w.x, _w.z) > 14) continue;
+      if (_w.y - this.world.heightAt(_w.x, _w.z, _w.y) > 14) continue;
       this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr) => {
         const dx = _w.x - tx, dz = _w.z - tz, d = Math.hypot(dx, dz), min = R + tr;
         if (d < min && d > 1e-4) {
@@ -78,7 +78,7 @@ export class Vehicle {
     let worst = 0;
     for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) {
       if (!b.pts) continue;
-      const top = b.top ?? this.world.heightAt(b.pts[0][0], b.pts[0][1]) + (b.h || 6);   // top is set when the game meshes it
+      const top = b.top ?? this.world.heightAt(b.pts[0][0], b.pts[0][1], this.pos.y) + (b.h || 6);   // top is set when the game meshes it
       const roof = roofSupport && this.pos.y > buildingRoofFloor(b, this.world) ? buildingRoofAt(b, this.pos.x, this.pos.z, this.world) : Infinity;
       if (this.pos.y > top + 1 || (Number.isFinite(roof) && this.pos.y > roof + 0.05)) continue;
       const pts = b.pts; let inside = false, bestD = Infinity, bx = 0, bz = 0;

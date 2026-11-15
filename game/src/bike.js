@@ -100,11 +100,11 @@ export class Bike extends Vehicle {
     let torque = 0, contacts = 0, near = 0, wet = 0, bottom = 0;
     for (const wh of this.wheels) {
       _w.copy(_fw).multiplyScalar(wh.z).add(this.pos);
-      let gh = W.heightAt(_w.x, _w.z);
+      let gh = W.heightAt(_w.x, _w.z, _w.y);
       const wl = W.waterLevelAt(_w.x, _w.z), onW = wl > gh;
-      const sc = W.surfaceAt(_w.x, _w.z);
+      const sc = W.surfaceAt(_w.x, _w.z, _w.y);
       if (onW && skimming) gh = wl; else if (!onW) gh += bumps(_w.x, _w.z) * BUMP[sc];
-      W.normalAt(_w.x, _w.z, _n); if (onW && skimming) _n.set(0, 1, 0);
+      W.normalAt(_w.x, _w.z, _n, _w.y); if (onW && skimming) _n.set(0, 1, 0);
       const denom = _up.dot(_n);
       const dist = denom > 0.25 ? ((_w.y - gh) * _n.y) / denom : 99;
       wh.prevComp = wh.comp;
@@ -126,11 +126,11 @@ export class Bike extends Vehicle {
     const rear = this.wheels[1].contact, front = this.wheels[0].contact;
     if (contacts) {
       _nAvg.normalize();
-      const s = W.surfaceAt(this.pos.x, this.pos.z); this.surface = wet ? 5 : (s === 5 ? 0 : s);
+      const s = W.surfaceAt(this.pos.x, this.pos.z, this.pos.y); this.surface = wet ? 5 : (s === 5 ? 0 : s);
     } else _nAvg.set(0, 1, 0);
     this.onWater = wet > 0;
     const hx = Math.sin(this.yaw), hz = Math.cos(this.yaw);
-    this.groundPitch = Math.atan2(W.heightAt(this.pos.x + hx * LF, this.pos.z + hz * LF) - W.heightAt(this.pos.x + hx * LR, this.pos.z + hz * LR), WB);
+    this.groundPitch = Math.atan2(W.heightAt(this.pos.x + hx * LF, this.pos.z + hz * LF, this.pos.y + _fw.y * LF) - W.heightAt(this.pos.x + hx * LR, this.pos.z + hz * LR, this.pos.y + _fw.y * LR), WB);
 
     // ------------------------------------------------ water
     const wlC = W.waterLevelAt(this.pos.x, this.pos.z);
@@ -287,7 +287,7 @@ export class Bike extends Vehicle {
       this.pos.addScaledVector(_nAvg, bottom);
       const vn = this.vel.dot(_nAvg); if (vn < 0) { this.vel.addScaledVector(_nAvg, -vn); this.hit = Math.max(this.hit, -vn * 0.4); }
     }
-    const gC = W.heightAt(this.pos.x, this.pos.z);
+    const gC = W.heightAt(this.pos.x, this.pos.z, this.pos.y);
     if (this.pos.y < gC + 0.25) {                                // the body itself hit the ground
       this.pos.y = gC + 0.25; if (this.vel.y < 0) this.vel.y = 0;
       if (Math.abs(this.pitch - this.groundPitch) > 0.6) this.bail(); else this.pitchRate += (this.groundPitch - this.pitch) * 8 * dt;
