@@ -32,6 +32,7 @@ sends `Cache-Control: no-store` so edits always load.
 |---|---|---|
 | `npm run drive` (= `node tools/drive.mjs`) | no | Headless physics on the real world data (no rendering). Sections: accel, turn, slalom, drift, drop, hills, slope, water, **ramps**, **walls**, **glider**, **bike**, **jet**, **bikeglider**, and race bots finishing every race. Prints numbers; look for 0 flips, no NaN, bots finish. |
 | `node tools/drive.mjs <section>` | no | One section only, e.g. `walls`, `ramps`, `glider`, `bike`, `bikeglider`, `jet`. `V=1` prints per-step numbers; `TUNE='{"grip":1.6}'` tries settings; `NO_CAMPUS=1` runs without campus buildings. |
+| `node tools/water_test.mjs [words]` | no | Car + bike into a campus pond and the South Yamhill at 30/80/150 km/h, sitting/driving out of shallow water, drop-in, glider splashdown, a flat test pool: no NaN, oscillation < 0.1 m, deep → back on a dry bank. `V=1` prints timelines. |
 | `node tools/campus_test.mjs` | no | Campus building geometry, collision heights, road clearance, road colours. |
 | `node tools/jet_camera_test.mjs`, `jet_boundary_test.mjs`, `jet_wreck_test.mjs` | no | Jet camera follow at 600–1750 km/h, flight at tile/map edges, crash tumble + respawn. |
 | `node tools/stream_test.mjs [km/h]` | yes | Flies across the whole map at speed (default 1000); counts frames **with no ground under the car** (must be 0) and slow frames. Headless Chrome is slower than real browsers: ~8–12% slow frames is normal. |
@@ -72,6 +73,7 @@ x∈[tx·2000−1000, tx·2000+1000], z likewise.
 | `car.js` | `Car extends Vehicle`: arcade car on the heightfield (4 suspension rays, yaw-rate steering, grip alignment, drifts, handbrake, water skimming). `TUNING_DEFAULTS` (top speed 1000 km/h, accel 30, brakes 60, gravity 24). Keeps its own older copies of collision helpers so its handling is unchanged — don't "deduplicate" them. |
 | `carmodel.js` | Low-poly open-wheel car mesh: `buildCarModel`, `WHEEL_POS`. |
 | `bike.js` | `Bike`: dirt bike (two suspension rays, yaw+pitch body, auto-balanced lean, wheelies, stoppies, bail on bad landing). `BIKE` tuning, `buildBikeModel`. |
+| `water.js` | Water for the car and bike (ponds and rivers alike): tyres ride the bed, planing lift ∝ speed² (skims above `skimSpeed`), wading drag, a buoyant body that floods nose-first and sinks; `nearestBank` respawn after ~3 s fully under. Pure physics (world queries only). |
 | `jet.js` | `Jet`: ground mode (3 wheels) and flight (lift/drag, stall, landing/crash, wreck tumble 4.5 s then respawn). `JET` tuning, `buildJetModel`. Top ~1733 km/h. No glider. |
 | `glider.js` | `Glider` (G key) for car and bike: when open, the vehicle's `step` hands over to `vehicle.glide.step`. `GLIDER` + `BIKE_GLIDER` tuning, `buildGliderModel`. Vehicle hooks used if present: `wheelReach()`, `afterGlide()`, `bail()`. |
 | `challenges.js` | Timed races: J list, countdown, start/checkpoint/finish arches, timer + splits HUD, finish screen, best times (localStorage). Reads `assets/challenges.json`. Fixed map ramps (`assets/ramps.json`) are created here too. `createChallenges`, `fmtTime`. `constrain()` (after every physics step) applies walls. |
