@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileData, fetchReader, groundFile } from './tilepack.js';
 import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
+import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import { createTileScenery } from './scenery.js';
@@ -173,8 +174,11 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       }
       out.chunks.push({ levels, cx: td.x0 + (j0 + j1) / 2 * HS, cz: td.z0 + (i0 + i1) / 2 * HS, lv: -1 });
     }
+    // Copy bridge metadata onto rendering strips before drawing the shallow road skirts.
+    out.bridges = yield* buildBridgeSteps(td, campusMat);
     // road / trail strips
     for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) g.add(yield* placeRoadBlockSteps(td, stripMat, batch, roadLODSteps));   // one near + far pair per block
+    if (out.bridges) g.add(out.bridges.near, out.bridges.far);
     for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
     // ponds + river pools: a quad per height cell touching one. Each corner sits at its own pool's level (a corner
     // outside any pool: the highest one next to it), so a river's stepped pools join into one smooth surface
@@ -393,6 +397,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         b.far.visible = d >= townRange.near && d < townRange.far;
         b.near.castShadow = d < townRange.shadow;
       }
+      showBridges(v.bridges, cam);
       showProps(v.propLods, cam);
       showCampusItems(v.campusItemLods, cam);
       for (const c of v.campusLods) {

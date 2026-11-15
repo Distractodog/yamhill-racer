@@ -57,17 +57,18 @@ export function roadBatches(list, samples = 1500) {
 // cross-section columns of a strip: [offset left of centre, height offset, colour key of the quad to the next column]
 function columns(r, school, far) {
   const { hw, kind, osm } = r;
+  const skirt = r.bridge ? -1.2 : -3, flare = r.bridge ? 0 : 1.2;
   if (osm === undefined) {                       // older tiles: exactly the old layout
-    if (far) return [[hw + 1.2, -3, 'side'], [hw, 0, 'top'], [-hw, 0, 'side'], [-(hw + 1.2), -3, null]];
+    if (far) return [[hw + flare, skirt, 'side'], [hw, 0, 'top'], [-hw, 0, 'side'], [-(hw + flare), skirt, null]];
     const lineW = kind === 'asphalt' ? 0.35 : 0;
-    const offs = kind === 'asphalt' ? [hw + 1.2, hw + 0.4, hw, hw - 0.5, hw - 0.5 - lineW, 0.12, -0.12,
-      -(hw - 0.5 - lineW), -(hw - 0.5), -hw, -(hw + 0.4), -(hw + 1.2)] : [hw + 1.2, hw + 0.4, hw, 0, -hw, -(hw + 0.4), -(hw + 1.2)];
+    const offs = kind === 'asphalt' ? [hw + flare, hw + (r.bridge ? 0 : 0.4), hw, hw - 0.5, hw - 0.5 - lineW, 0.12, -0.12,
+      -(hw - 0.5 - lineW), -(hw - 0.5), -hw, -(hw + (r.bridge ? 0 : 0.4)), -(hw + flare)] : [hw + flare, hw + (r.bridge ? 0 : 0.4), hw, 0, -hw, -(hw + (r.bridge ? 0 : 0.4)), -(hw + flare)];
     const K = offs.length;
     return offs.map((o, k) => {
       let key = k <= 1 || k >= K - 3 ? 'side' : 'top';
       if (kind === 'asphalt' && (k === 3 || k === K - 5)) key = 'line';
       else if (kind === 'asphalt' && k === 5) key = 'dash';
-      return [o, k === 0 || k === K - 1 ? -3 : k === 1 || k === K - 2 ? -0.3 : 0, k === K - 1 ? null : key];
+      return [o, k === 0 || k === K - 1 ? skirt : k === 1 || k === K - 2 ? -0.3 : 0, k === K - 1 ? null : key];
     });
   }
   const [swL, swR] = r.sw, base = osm.split(':')[0];
@@ -78,9 +79,9 @@ function columns(r, school, far) {
   const cols = [];
   const side = (sw, sgn) => {                    // outer part of one side, listed from the outside in
     const o = q => sgn * q;
-    if (sw) return [[o(hw + sw + 1.2), -3, 'side'], [o(hw + sw + 0.3), KERB - 0.3, 'side'], [o(hw + sw), KERB, 'walk'],
+    if (sw) return [[o(hw + sw + flare), skirt, 'side'], [o(hw + sw + (r.bridge ? 0 : 0.3)), KERB - 0.3, 'side'], [o(hw + sw), KERB, 'walk'],
       [o(hw + 0.15), KERB, 'kerb'], [o(hw), KERB, 'kerb'], [o(hw), 0, top]];
-    return [[o(hw + 1.2), -3, 'side'], [o(hw + 0.4), -0.3, 'side'], [o(hw), 0, top]];
+    return [[o(hw + flare), skirt, 'side'], [o(hw + (r.bridge ? 0 : 0.4)), -0.3, 'side'], [o(hw), 0, top]];
   };
   cols.push(...side(swL, 1));
   if (far) cols[cols.length - 1][2] = top;
