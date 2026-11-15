@@ -1,0 +1,16 @@
+#mp-panel { position: fixed; z-index: 35; top: 64px; left: 16px; width: min(420px, calc(100vw - 56px)); max-height: calc(100dvh - 110px); overflow: auto; padding: 20px; border: 1px solid #ffffff30; border-radius: 14px; background: #14241af5; color: white; box-shadow: 0 12px 40px #0008; font: 14px system-ui, sans-serif; }
+#mp-panel[hidden], #mp-panel [hidden] { display: none; }
+#mp-panel h2 { margin: 0; font-size: 20px; }
+#mp-close { background: transparent; color: white; border: 0; font-size: 26px; cursor: pointer; }
+#mp-panel label { display: block; margin: 12px 0; line-height: 1.6; }
+#mp-panel input:not([type=radio]) { box-sizing: border-box; display: block; width: 100%; padding: 9px; background: #ffffff12; color: white; border: 1px solid #ffffff60; border-radius: 6px; font: inherit; }
+#mp-join-code { text-transform: uppercase; letter-spacing: .18em; }
+#mp-panel fieldset { border: 1px solid #ffffff40; border-radius: 8px; margin: 16px 0 8px; }
+#mp-panel fieldset:disabled { color: #d1d8d2; }
+#mp-players { list-style: none; padding: 0; }
+#mp-players li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; overflow-wrap: anywhere; }
+#mp-status, #mp-host-note, #mp-settings-note { color: #ffd76a; line-height: 1.5; }
+#mp-toasts { position: fixed; z-index: 60; bottom: 100px; left: 50%; transform: translateX(-50%); max-width: 80vw; padding: 12px 20px; border-radius: 10px; background: #14241aee; color: white; font: 16px system-ui, sans-serif; pointer-events: none; }
+#mp-toasts:empty { display: none; }
+#tuning-controls[inert], #atmosphere-presets[inert] { opacity: .6; }
+@media(max-width: 600px) { #mp-panel { top: 20px; left: 12px; max-height: calc(100dvh - 80px); } }

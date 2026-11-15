@@ -21,6 +21,8 @@ import { BIKE } from './bike.js';
 import { JET } from './jet.js';
 import { createSpawn } from './spawn.js';
 import { createSettings } from './settings.js';
+import { mp } from './mp/net.js';
+import { createMPMenu } from './mp/menu.js';
 import { makeRim } from './rim.js';
 import { toggleUnits, onUnits, speedUnit, speedValue, fmtKmh } from './units.js';
 
@@ -157,6 +159,7 @@ const clearKeys = () => { keys.clear(); letters.clear(); };
 settings.ready(clearKeys, () => {
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
+const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, gui, beforeOpen: () => garage.close() });
 addEventListener('keydown', e => {
   if (e.gameUI) return;
   keys.add(e.code);
@@ -426,3 +429,4 @@ sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim }
 window.game.sessionSpawn = sessionSpawn;
 
 Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX });
+Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });

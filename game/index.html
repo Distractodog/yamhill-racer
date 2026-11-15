@@ -68,6 +68,7 @@
              background: #2d4a2f; z-index: 100; }
 </style>
 <link rel="stylesheet" href="presentation.css">
+<link rel="stylesheet" href="src/mp/mp.css">
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -80,6 +81,7 @@
 <div id="loading">Loading map…</div>
 <div id="hud"><div id="speed"><span id="speed-num">0</span><button id="speed-unit" type="button" tabindex="-1" title="Switch km/h / mph (U)">km/h</button></div><div id="info"></div></div>
 <nav id="menu-bar" aria-label="Game options">
+  <button id="mp-button" class="menu-button" aria-controls="mp-panel" aria-expanded="false" disabled>Play multiplayer</button>
   <button id="garage-button" class="menu-button" disabled>Garage</button>
   <button id="atmosphere-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Atmosphere</button>
   <button id="settings-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Settings</button>
