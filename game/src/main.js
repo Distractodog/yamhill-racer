@@ -23,6 +23,7 @@ import { createSpawn } from './spawn.js';
 import { createSettings } from './settings.js';
 import { createMPMenu } from './mp/menu.js';
 import { makeRim } from './rim.js';
+import { createCollisions } from './mp/collide.js';
 import { createRemotes } from './mp/remotes.js';
 import { toggleUnits, onUnits, speedUnit, speedValue, fmtKmh } from './units.js';
 
@@ -162,6 +163,8 @@ settings.ready(clearKeys, () => {
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
 const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, gui, beforeOpen: () => garage.close() });
+const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, vehicles.jet],
+  predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
 addEventListener('keydown', e => {
   if (e.gameUI) return;
   keys.add(e.code);
@@ -374,7 +377,7 @@ function frame(now) {
   readInput();
   challenges.holdInput(input);
   acc += sessionSpawn.blocked || garage.open ? 0 : dt;
-  while (acc >= STEP) { car.savePrev(); car.step(STEP, input); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
+  while (acc >= STEP) { car.savePrev(); car.step(STEP, input); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
   challenges.update(dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
@@ -432,5 +435,5 @@ sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim }
 window.game.sessionSpawn = sessionSpawn;
 
 Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX });
-Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
+Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

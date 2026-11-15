@@ -148,6 +148,8 @@ export class Net {
     const p = vehicle.pos, q = vehicle.quat, vel = vehicle.vel;
     if (!p || !q || !vel) return;
     const state = { t: 'state', v: skin.vehicle, p: [p.x, p.y, p.z], q: [q.x, q.y, q.z, q.w],
+      grounded: !!vehicle.grounded, mode: vehicle.kind === 'jet' ? vehicle.mode : undefined,
+      ghostUntil: Number.isFinite(vehicle.ghostUntil) ? vehicle.ghostUntil : 0,
       vel: [vel.x, vel.y, vel.z], glide: !!vehicle.glide?.active, ts: this.now() };
     if ([...state.p, ...state.q, ...state.vel].every(Number.isFinite)) this.send(state);
   }

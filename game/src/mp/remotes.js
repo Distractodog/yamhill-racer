@@ -1,5 +1,5 @@
 // Other players in a multiplayer game: their vehicle in their own skin, their glider, a name tag, and a named dot on
-// the corner and full maps. Drawing only: no physics, no collisions (cars pass through each other).
+// the corner and full maps. Drawing and collision prediction; physics responses live in collide.js.
 // Everything comes through `mp` (net.js): roster / joined / left keep the list, 'state' (~15 Hz) moves them, 'skin'
 // repaints them.
 // Smoothing: states are kept in a short buffer on the relay clock and drawn DELAY ms in the past, between two states;
@@ -31,7 +31,8 @@ export function parseState(msg, t) {
   if (!msg || !finArr(msg.p, 3) || !finArr(msg.q, 4) || !fin(t)) return null;
   const q = new THREE.Quaternion(...msg.q); if (q.lengthSq() < 1e-6) return null;
   return { t, v: KINDS.includes(msg.v) ? msg.v : 'car', p: msg.p.slice(), q: q.normalize(),
-    vel: finArr(msg.vel, 3) ? msg.vel.slice() : [0, 0, 0], glide: !!msg.glide };
+    vel: finArr(msg.vel, 3) ? msg.vel.slice() : [0, 0, 0], glide: !!msg.glide, grounded: msg.grounded === true, mode: msg.mode,
+    ghostUntil: fin(msg.ghostUntil) ? msg.ghostUntil : 0 };
 }
 
 // Add a state in time order (a repeat of the newest time replaces it) and drop what's too old to be drawn again.
@@ -231,6 +232,7 @@ export async function createRemotes(opts = {}) {
 export function makeRemotes({ scene, camera, minimap, mp = null }) {
   const group = new THREE.Group(); group.name = 'mp-remotes'; scene?.add(group);
   const players = new Map();             // id → remote
+  predictionPlayers = players;
   const now = () => (mp?.now ? mp.now() : performance.now());
   const myId = () => mp?.me?.id;
   // ms = smoothed per-frame cost without one-off model builds (buildMs = total time spent building models)
@@ -425,5 +427,20 @@ export function makeRemotes({ scene, camera, minimap, mp = null }) {
   const list = () => [...players.values()].map(r => ({ id: r.id, name: r.name, host: r.host, kind: r.kind, visible: r.shown,
     far: r.far, glide: !!r.track.latest?.glide, x: r.root.position.x, y: r.root.position.y, z: r.root.position.z, dist: r.dist,
     tag: r.tag.visible, body: r.kind ? bodyColor(r, r.kind) : null }));
-  return { group, update, receive, drawMarkers, dispose, list, stats, get count() { return players.size; } };
+  return { group, update, receive, drawMarkers, dispose, list, stats,
+    predictedState: (id, atMs) => predictedState(id, atMs, players), get count() { return players.size; } };
+}
+
+// Collision prediction uses the same buffer/extrapolation, at NOW (no render delay or visual correction).
+// Kept separate from rendering for MP-4 integration. Unknown/stale peers cannot become invisible obstacles.
+let predictionPlayers = new Map();
+export function predictedState(id, atMs, players = predictionPlayers) {
+  const track = players.get(id)?.track;
+  if (!track || track.stale(atMs) || !Number.isFinite(atMs)) return null;
+  const s = track.latest;
+  if (atMs - s.t > MAX_EXTRAP) return null;
+  const p = new THREE.Vector3(), q = new THREE.Quaternion(), vel = new THREE.Vector3();
+  poseAt(track.buf, atMs, p, q, vel);
+  return { v: s.v, p: p.toArray(), q: q.toArray(), vel: vel.toArray(), glide: s.glide,
+    grounded: s.grounded, mode: s.mode, ghostUntil: s.ghostUntil };
 }

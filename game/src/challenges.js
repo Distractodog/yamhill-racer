@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
 import { makeTrack } from './track.js';
+import { gridTrack } from './mp/collide.js';
 import { createGhost } from './ghost.js';
 import { createRewards } from './rewards.js';
 import { checkpointStart, drivingWrongWay } from './raceguidance.js';
@@ -251,11 +252,13 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     } : null;
     buildArches();
     ramps = (ch.ramps || []).map(r => ({ r, grp: null }));
-    track = ch.track ? makeTrack(ch.track) : null;
+    track = ch.track ? makeTrack(opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track) : null;
     world.setRamps?.(ch.ramps || []);
     state = 'placing'; next = 1; t = 0; splits = [];
     hud.style.display = 'block'; renderHud();
-    if (!(await placeCar(ch.start.x, ch.start.z, ch.start.yaw))) return;
+    const startPose = opts.mp && opts.grid ? opts.grid : ch.start;
+    if (!(await placeCar(startPose.x, startPose.z, startPose.yaw))) return;
+    if (opts.mp && sync) car.ghostUntil = Math.max(car.ghostUntil || 0, sync.at + 3000);
     state = 'countdown'; cd = sync ? (sync.at - sync.now()) / 1000 : COUNTDOWN; styleArches();
     count.style.display = 'block'; count.textContent = String(sync ? Math.max(1, Math.ceil(cd)) : 3); blip(440, 0.15);
   }
