@@ -6,6 +6,9 @@
                    is extended onto that road's centre line and becomes a junction
   merge_deg2       two edges meeting end to end with the same kind and width become one (no seam)
   contract_short   very short edges between junctions (median bits, double nodes) collapse into one junction
+  tapers           a ramp leaving a through road at a shallow angle is no junction: it is re-laid to run beside the
+                   main road (a lane added / dropped, `widen`), then peels away; a flat gore piece fills the V
+                   (taper_heights: the ramp takes the main road's surface there; taper_pieces: gore + lane wedge)
   junction_layout  per node: how far each road is trimmed back so the junction piece can take over
   profiles         per edge: a smooth height along the road (terrain smoothed along its length) that meets each
                    junction's tilted plane exactly; also a cross slope (only non-zero near junctions)
@@ -237,7 +240,9 @@ def junction_layout(nodes, edges):
     for n, l in enumerate(inc):
         P = nodes[n]; items = []
         for ei, end in l:
-            e = edges[ei]; op = oriented(e, end); cum = arclen(op); L = cum[-1]
+            e = edges[ei]
+            if e.get('taper', (False, False))[end]: continue        # a ramp's taper end: no fan, no plane (tapers)
+            op = oriented(e, end); cum = arclen(op); L = cum[-1]
             t = at_s(op, min(8.0, 0.4 * L), cum)[0, :2] - P; t /= np.linalg.norm(t) or 1
             items.append({'ei': ei, 'end': end, 't': t, 'ang': math.atan2(t[1], t[0]), 'h': e['w'] / 2, 'L': L, 'kind': e['kind']})
         items.sort(key=lambda it: it['ang'])
@@ -247,6 +252,7 @@ def junction_layout(nodes, edges):
             nx = items[(k + 1) % m]
             a = (nx['ang'] - it['ang']) % (2 * math.pi)
             it['alpha'] = a if a > 1e-6 else 2 * math.pi
+        if not m: continue
         for k, it in enumerate(items):
             if m == 1: it['d'] = 0.0; continue
             pv, nx = items[k - 1], items[(k + 1) % m]
@@ -452,8 +458,9 @@ def profiles(nodes, edges, J, Hfun, Hsmooth, grad, blend=18.0, sigma=6.0, max_gr
         tg = np.gradient(q, axis=0); tg /= np.maximum(np.hypot(*tg.T), 1e-9)[:, None]
         nrm = np.stack([tg[:, 1], -tg[:, 0]], 1)                       # left of travel direction
         ws, ys, cs = [], [], []
+        tap = e.get('taper', (False, False))                     # taper ends meet no plane (taper_heights)
         for end, dist in ((0, s), (1, L - s)):
-            pl = planes.get(e['a'] if end == 0 else e['b'])
+            pl = None if tap[end] else planes.get(e['a'] if end == 0 else e['b'])
             if pl is None: continue
             w = 1 - _smoothstep((dist - e['trim'][end]) / blend)
             ws.append(w); ys.append(plane_y(pl, q[:, 0], q[:, 1])); cs.append(nrm @ pl[2])
@@ -475,7 +482,7 @@ def profiles(nodes, edges, J, Hfun, Hsmooth, grad, blend=18.0, sigma=6.0, max_gr
         sa = s0 + arclen(xy)
         out = np.column_stack([xy, np.interp(sa, s, y), np.interp(sa, s, c)])
         for end, idx, other in ((0, 0, 1), (1, -1, -2)):           # exact match with the junction plane at the ends
-            pl = planes.get(e['a'] if end == 0 else e['b'])
+            pl = None if tap[end] else planes.get(e['a'] if end == 0 else e['b'])
             if pl is None: continue
             t = out[idx if end == 0 else idx, :2] - out[other, :2] if end == 1 else out[1, :2] - out[0, :2]
             t = t / (np.linalg.norm(t) or 1)
@@ -558,6 +565,7 @@ def carve(gh, gx0, gz0, hstep, edges, juncs, protect, drop=0.1, inner=6.0, outer
             C.append(z0); NX.append(z0); NZ.append(z0); HW.append(z0)
             M = np.array([[a[0] - c[0], a[1] - c[1]], [b[0] - c[0], b[1] - c[1]]])       # the triangle's slope
             g = np.linalg.solve(M, [a[2] - c[2], b[2] - c[2]]) if abs(np.linalg.det(M)) > 1e-6 else np.zeros(2)
+            if j.get('gore') or j.get('wedge'): g = np.zeros(2)     # flat pieces fanned from an edge point: slivers
             GX.append(np.full(len(p), g[0])); GZ.append(np.full(len(p), g[1]))
     X, Z, Y, C, NX, NZ, HW, GX, GZ = (np.nan_to_num(np.concatenate(a)) for a in (X, Z, Y, C, NX, NZ, HW, GX, GZ))
     # separate trees for strip and junction samples, so dense junction samples can't crowd out a nearby road
@@ -678,3 +686,287 @@ def harmonize(edges, J):
         w = np.minimum(w, 1); w[0] = w[-1] = 0                    # ends stay matched to their junctions
         o[:, 2] = o[:, 2] * (1 - w) + tgt * w; changed += 1
     return changed
+
+
+# ---------------------------------------------------------------- ramp tapers
+LINK_W = 6.5                                     # one ramp lane as drawn (roads are drawn ~1.5-2x real width)
+TAPER = {'motorway': 110.0, 'trunk': 110.0, 'primary': 80.0, 'secondary': 80.0, 'tertiary': 60.0}   # others 45 m
+TAPER_ANGLE = math.radians(30)                   # a ramp leaving a through road closer than this is a taper
+LANE_END = 30.0                                  # lane add / drop at the meet: extra width 0 -> full over this length
+GORE_W = 5.0                                     # the gore piece ends where ramp and main road are this far apart
+PULL_MAX = 20.0                                  # a ramp is never moved more than this sideways onto its taper line
+CLS_RANK = {'motorway': 6, 'trunk': 5, 'primary': 4, 'secondary': 3, 'tertiary': 2, 'unclassified': 1,
+            'residential': 1, 'living_street': 1}
+
+
+def _cls(e): return e.get('attr', {}).get('cls', '')
+def _is_link(e): return _cls(e).split(':')[0].endswith('_link')
+def _base(e): return _cls(e).split(':')[0].replace('_link', '')
+
+
+def _plus(d, eps=4.0):
+    """Smooth max(d, 0): exactly 0 below -eps and d above eps, C1 between."""
+    d = np.asarray(d, float)
+    return np.where(d >= eps, d, np.where(d <= -eps, 0.0, (d + eps) ** 2 / (4 * eps)))
+
+
+class _Frame:
+    """A road's centre line every ~1 m (all columns of pts), with unit tangents and left normals: points project to
+    (arc length, offset to the left)."""
+    def __init__(self, pts, step=1.0):
+        cum = arclen(pts); self.L = cum[-1]
+        self.s = np.linspace(0, self.L, max(2, int(math.ceil(self.L / step)) + 1))
+        self.q = at_s(pts, self.s, cum)
+        tg = np.gradient(self.q[:, :2], axis=0); tg /= np.maximum(np.hypot(*tg.T), 1e-9)[:, None]
+        self.t, self.n = tg, np.stack([tg[:, 1], -tg[:, 0]], 1)
+        self.tree = cKDTree(self.q[:, :2])
+
+    def project(self, P):
+        P = np.atleast_2d(np.asarray(P, float))[:, :2]; _, k = self.tree.query(P); d = P - self.q[k, :2]
+        return self.s[k] + (d * self.t[k]).sum(1), (d * self.n[k]).sum(1)
+
+    def at(self, u):
+        """Rows (all columns) and left normals at arc lengths u."""
+        u = np.atleast_1d(np.asarray(u, float))
+        n = np.column_stack([np.interp(u, self.s, self.n[:, 0]), np.interp(u, self.s, self.n[:, 1])])
+        return at_s(self.q, u, self.s), n / np.maximum(np.hypot(*n.T), 1e-9)[:, None]
+
+
+def _alike(A, B): return A['kind'] == B['kind'] and A['w'] == B['w'] and A.get('attr') == B.get('attr')
+
+
+def _chain(edges, deg, c, at, reach=700.0):
+    """The through road from c's meet along the arm its ramp runs beside (M1), on through other tapers' meets where
+    the road runs on alike and their ramps are on the other side. Returns (polyline, usable length, cap on this
+    taper's length: another taper's ramp on the same side ahead)."""
+    ei, end = c['m1']; pts = [oriented(edges[ei], end)]; L = arclen(pts[0])[-1]
+    while True:
+        e = edges[ei]; f = e['b'] if end == 0 else e['a']; b = at.get(f)
+        if b is None or L > reach:
+            return np.vstack(pts), L - (40.0 if deg[f] >= 3 and b is None else 5.0), np.inf
+        back = b['m1'][0] == ei                                    # b's ramp runs back along this road, towards c
+        nxt = b['m2'] if back else b['m1']
+        if (-b['side'] if back else b['side']) == c['side']:      # same side: stop short of b (or share the gap)
+            return np.vstack(pts), L - 5.0, (L - 10.0) / 2 if back else L - 10.0
+        if not _alike(e, edges[nxt[0]]): return np.vstack(pts), L - 5.0, np.inf
+        ei, end = nxt; q = oriented(edges[ei], end); pts.append(q[1:]); L += arclen(q)[-1]
+
+
+def _taper_fit(edges, deg, c, chain, s_cap=np.inf):
+    """Where ramp c['r'] runs beside the through road (chain from the meet, see _chain): taper / blend lengths and
+    the re-laid ramp polyline (from the meet side). Returns (fit, None) or (None, reason)."""
+    ri, rend = c['r']; R, M = edges[ri], edges[c['m1'][0]]
+    F = _Frame(chain[0]); u_lim = min(chain[1], chain[2])
+    rp = oriented(R, rend); rc = arclen(rp); Lr = rc[-1]
+    sr = np.linspace(0, Lr, max(2, int(math.ceil(Lr)) + 1)); Q = at_s(rp, sr, rc)[:, :2]
+    u, lat = F.project(Q); side = c['side']
+    hm, hr = M['w'] / 2, R['w'] / 2; D = hm + hr; dl = side * lat - D       # dl: how far the ramp is off its taper line
+    TP = TAPER.get(_base(M), 45.0); LD = min(LANE_END, 0.35 * TP)
+    far_r = R['b'] if rend == 0 else R['a']
+    bad = np.nonzero(np.diff(u) < 0.2 * (sr[1] - sr[0]))[0]               # the ramp turns away: projection ends
+    s_end = min(s_cap, Lr - (40.0 if deg[far_r] >= 3 else 10.0))
+    k_lim = min(bad[0] if len(bad) else len(u) - 1, int(np.searchsorted(sr, s_end)) - 1)
+    if k_lim < 5 or u[k_lim] < LD + 40: return None, 'short'
+    uu, dd = u[:k_lim + 1], dl[:k_lim + 1]
+    if np.interp(TP, uu, dd) > PULL_MAX:
+        ok = np.nonzero((uu <= TP) & (dd <= PULL_MAX))[0]; TP = float(uu[ok[-1]]) if len(ok) else 0.0
+    while TP >= LD + 20:                                            # (a loop ramp turning off soon: a short taper)
+        BL = float(np.clip(20 + 3 * max(np.interp(TP, uu, dd), 0.0), 20, 90))
+        k = np.nonzero((uu >= TP + BL) & (dd >= 4.0) & (uu <= u_lim))[0]      # past the blend, clear of the main road
+        if len(k): kz = int(k[0]); break
+        TP -= 10.0
+    else:
+        return None, 'no room'
+    if (side * lat[:kz + 1] < -hm).any(): return None, 'crosses'
+    s_ld, s_ze = float(np.interp(LD, uu, sr[:k_lim + 1])), float(sr[kz])
+    sn = np.append(np.arange(s_ld, s_ze - 1.0, 2.0), s_ze)
+    Qn = at_s(rp, sn, rc)[:, :2]; un, ln = F.project(Qn)
+    b = _smoothstep((un - TP) / BL); lat_new = D + b * _plus(side * ln - D)
+    Pn = Qn + (side * (lat_new - side * ln))[:, None] * F.at(un)[1]
+    g = np.nonzero(lat_new - D >= GORE_W)[0]
+    new = np.vstack([Pn, rp[rc > s_ze + 0.5, :2]])
+    return {'TP': TP, 'LD': LD, 'BL': BL, 'ze': float(un[-1]), 'ug': float(un[g[0]] if len(g) else un[-1]),
+            'D': D, 'side': side, 'pts': new, 'dirpt': F.at(min(10.0, F.L))[0][0, :2].copy(),
+            'pull': round(float(np.interp(TP, uu, dd)), 1)}, None
+
+
+def tapers(nodes, edges, log=None):
+    """Ramp meets become tapers. A node where exactly three roads meet, two of them one through road (not links,
+    not bridges, >= 150 deg apart) and the third a ramp (an OSM *_link, or a one-way road of a lower class) leaving
+    one of them (M1) at < TAPER_ANGLE: the ramp is re-laid so its centre line runs beside M1's edge (offset main
+    half-width + ramp half-width) from LANE_END to TP m from the meet, then blends back onto its own OSM line over
+    BL m. The ramp's end at the meet is marked e['taper'][end] (junction_layout skips it: no fan, no plane); the two
+    halves of the through road become one strip when they are alike (else an ordinary 2-road joint stays). A taper
+    may run on past a neighbouring taper's meet whose ramp is on the other side; two on the same side share the road
+    between them. Meets with no room (short roads, junctions close by, ramps turning away at once, more than three
+    roads) stay ordinary junctions.
+    Returns (nodes, edges, tapers); each taper is a dict (main / ramp edges, side, lengths) for taper_heights /
+    taper_pieces. The main road's edge gets 'widen': [(side, xa, za, xb, zb, w0, w1)] (widen_on)."""
+    inc = incidence(nodes, edges); deg = [len(l) for l in inc]
+    road = lambda e: e['kind'] != 'trail' and not is_bridge(e)
+    cand, why = [], Counter()
+    for n, l in enumerate(inc):
+        if len(l) != 3 or len({ei for ei, _ in l}) != 3: continue
+        arms = []
+        for ei, end in l:
+            op = oriented(edges[ei], end); cum = arclen(op)
+            t = at_s(op, min(15.0, 0.5 * cum[-1]), cum)[0, :2] - nodes[n]; arms.append((ei, end, t / (np.linalg.norm(t) or 1)))
+        for k in range(3):
+            (ri, rend, rt), (ai, aend, at_), (bi, bend, bt) = arms[k], arms[(k + 1) % 3], arms[(k + 2) % 3]
+            R, A, B = edges[ri], edges[ai], edges[bi]
+            if np.dot(at_, bt) > math.cos(math.radians(150)) or not all(map(road, (R, A, B))): continue
+            if _is_link(A) or _is_link(B) or A['a'] == A['b'] or B['a'] == B['b'] or R['a'] == R['b']: continue
+            low = R.get('attr', {}).get('oneway') and \
+                CLS_RANK.get(_base(R), 0) < min(CLS_RANK.get(_base(A), 0), CLS_RANK.get(_base(B), 0))
+            if not (_is_link(R) or low): continue
+            ca, cb = np.dot(rt, at_), np.dot(rt, bt)
+            if max(ca, cb) < math.cos(TAPER_ANGLE): continue
+            m1, m2, t1 = ((ai, aend), (bi, bend), at_) if ca >= cb else ((bi, bend), (ai, aend), bt)
+            side = float(np.sign(rt[0] * t1[1] - rt[1] * t1[0]) or 1.0)       # ramp left (1) / right of M1, from the meet
+            cand.append({'n': n, 'r': (ri, rend), 'm1': m1, 'm2': m2, 'side': side}); break
+    mains = Counter(ei for c in cand for ei in (c['m1'][0], c['m2'][0])); ramps = Counter(c['r'][0] for c in cand)
+    ok = [not (c['r'][0] in mains or c['m1'][0] in ramps or c['m2'][0] in ramps) for c in cand]
+    if not all(ok): why["ramp is another meet's main road"] = ok.count(False)
+    n_all = len(cand)
+    at = {c['n']: c for c, k in zip(cand, ok) if k}
+    s_cap = {n: 0.5 * arclen(edges[c['r'][0]]['pts'])[-1] - 5 if ramps[c['r'][0]] > 1 else np.inf   # a taper at
+             for n, c in at.items()}                                                                # each end: half each
+    left = {}
+    while True:                           # a meet that stays a junction ends its neighbours' road: fit again until stable
+        fits = {}
+        for n, c in at.items():
+            f, bad = _taper_fit(edges, deg, c, _chain(edges, deg, c, at), s_cap[n])
+            if f: fits[n] = f
+            else: left[n] = bad
+        if len(fits) == len(at): break
+        at = {n: at[n] for n in fits}
+    left = [(nodes[n], b) for n, b in left.items() if n not in fits]
+    why.update(b for _, b in left)
+    recs = []
+    for n, f in fits.items():
+        c = at[n]; ri, rend = c['r']; R = edges[ri]
+        R['pts'] = f['pts'] if rend == 0 else f['pts'][::-1]
+        tp = list(R.get('taper', (False, False))); tp[rend] = True; R['taper'] = tp
+        recs.append({**{k: v for k, v in f.items() if k != 'pts'}, 'N': nodes[c['n']].copy(), 'n': c['n'],
+                     'main': edges[c['m1'][0]], 'main2': edges[c['m2'][0]], 'ramp': R, 'rend': rend, 'w': R['w']})
+    # the through road: one strip across the meet when its two halves are alike
+    parent, idx, merged = {}, {id(e): i for i, e in enumerate(edges)}, 0
+    def find(e):
+        while id(e) in parent: e = parent[id(e)]
+        return e
+    for r in recs:
+        A, B, n = find(r['main2']), find(r['main']), r['n']
+        if A is B or A['a'] == A['b'] or B['a'] == B['b'] or n not in (A['a'], A['b']) or n not in (B['a'], B['b']): continue
+        if A['kind'] != B['kind'] or A['w'] != B['w'] or A.get('attr') != B.get('attr'): continue
+        pa, na = (A['pts'], A['a']) if A['b'] == n else (A['pts'][::-1], A['b'])
+        pb, nb = (B['pts'], B['b']) if B['a'] == n else (B['pts'][::-1], B['a'])
+        E = {**A, 'a': na, 'b': nb, 'pts': np.vstack([pa, pb[1:]])}
+        edges[idx[id(A)]] = E; edges[idx[id(B)]] = None; idx[id(E)] = idx[id(A)]
+        parent[id(A)] = parent[id(B)] = E; merged += 1
+    for r in recs:                                                 # the extra lane, anchored in world x/z
+        E = r['main'] = find(r['main']); r.pop('main2'); F = _Frame(E['pts'])
+        sN, sD = F.project([r['N'], r['dirpt']])[0]; dr = 1.0 if sD >= sN else -1.0
+        xy = lambda u: F.at(sN + dr * u)[0][0, :2].round(2).tolist()
+        E.setdefault('widen', []).extend([(r['side'] * dr, *xy(0), *xy(r['LD']), 0.0, r['w']),
+                                          (r['side'] * dr, *xy(r['LD']), *xy(r['TP']), r['w'], r['w'])])
+    nodes, edges = compact(nodes, edges)
+    if log:
+        log(f'ramp tapers: {len(recs)} of {n_all} ramp meets (through road joined into one strip at '
+            f'{merged}); left as junctions: {dict(why)}; at x,z: taper m / sideways pull m:',
+            ', '.join(f"{r['N'][0]:.0f},{r['N'][1]:.0f}: {r['TP']:.0f}/{r['pull']}" for r in recs[:60]),
+            '· left as junctions at x,z:', ', '.join(f'{p[0]:.0f},{p[1]:.0f} ({b})' for p, b in left[:30]))
+    return nodes, edges, recs
+
+
+def taper_heights(edges, recs, grade=0.03):
+    """Through the taper and the gore the ramp takes the main road's surface at its offset (height + cross slope),
+    then eases back to its own profile (over enough length to add at most ~`grade` of slope). After harmonize."""
+    for r in recs:
+        M, R = r['main'], r['ramp']
+        if len(M['out']) < 2 or len(R['out']) < 2: continue
+        F = _Frame(M['out']); o = R['out']
+        tg = np.gradient(o[:, :2], axis=0); tg /= np.maximum(np.hypot(*tg.T), 1e-9)[:, None]
+        nr = np.stack([tg[:, 1], -tg[:, 0]], 1)
+        if r['rend'] == 1: o, nr = o[::-1], nr[::-1]                 # views: from the meet side, writes go to R['out']
+        sm, lat = F.project(o[:, :2]); row, nm = F.at(sm)
+        sN, sD = F.project([r['N'], r['dirpt']])[0]; dr = 1.0 if sD >= sN else -1.0
+        u = (sm - sN) * dr; sr = arclen(o)
+        kg = np.nonzero(u >= r['ug'])[0]; kg = int(kg[0]) if len(kg) else len(o) - 1
+        ty, tc = row[:, 2] + row[:, 3] * lat, row[:, 3] * (nr * nm).sum(1)
+        E = float(np.clip(abs(ty[kg] - o[kg, 2]) / grade, 30.0, max(10.0, 0.8 * (sr[-1] - sr[kg]))))
+        w = 1 - _smoothstep((sr - sr[kg]) / E); w[-1] = 0.0                   # the far end stays on its junction
+        o[:, 2] = o[:, 2] * (1 - w) + ty * w; o[:, 3] = o[:, 3] * (1 - w) + tc * w
+
+
+def taper_pieces(recs):
+    """Per taper: the gore (flat piece in the V where ramp and main road part: from the nose, where they stop
+    touching, to where they are GORE_W apart; heights from the two road edges; written into tile.json junctions
+    with gore: true) and the lane add / drop wedge on the main road (0 -> lane width over LANE_END; not written,
+    only carved and kept clear of trees: the main strip's `widen` describes it)."""
+    rnd = lambda P, y, f: [round(float(P[0]), 2), round(float(P[1]), 2), round(float(y), 3), int(f)]
+    gores, wedges = [], []
+    for r in recs:
+        M, R = r['main'], r['ramp']
+        if len(M['out']) < 2 or len(R['out']) < 2: continue
+        F = _Frame(M['out']); hm, hr = M['w'] / 2, R['w'] / 2
+        sN, sD = F.project([r['N'], r['dirpt']])[0]; dr = 1.0 if sD >= sN else -1.0; sd = r['side'] * dr
+        def edge(s, off=0.0):                                      # main road edge on the ramp's side (+ off beyond)
+            row, n = F.at(s); o = sd * (hm + np.broadcast_to(off, (len(row),)))
+            return row[:, :2] + o[:, None] * n, row[:, 2] + row[:, 3] * o
+        us = np.linspace(0, r['LD'], 11); Pm, ym = edge(sN + dr * us); Po, yo = edge(sN + dr * us, r['w'] * us / r['LD'])
+        ring = [rnd(p, y, 0) for p, y in zip(Pm, ym)] + [rnd(p, y, 0) for p, y in zip(Po[:0:-1], yo[:0:-1])]
+        cp, cy = edge(np.array([sN + dr * r['LD'] * 2 / 3]), r['w'] / 3)
+        wedges.append({'kind': M['kind'], 'wedge': True, 'c': rnd(cp[0], cy[0], 0)[:3], 'ring': ring})
+        o = R['out'][::-1] if r['rend'] == 1 else R['out']
+        tg = np.gradient(o[:, :2], axis=0); tg /= np.maximum(np.hypot(*tg.T), 1e-9)[:, None]
+        nr = np.stack([tg[:, 1], -tg[:, 0]], 1) * (-1 if r['rend'] == 1 else 1)      # the ramp's own left (R order)
+        sm, _ = F.project(o[:, :2]); u = (sm - sN) * dr
+        fl = np.sign((nr * (sd * F.at(sm)[1])).sum(1))[:, None]                    # flips nr to point away from main
+        inner = o[:, :2] - hr * fl * nr; yin = o[:, 2] - hr * fl[:, 0] * o[:, 3]
+        gap = sd * F.project(inner)[1] - hm
+        k0 = np.nonzero((u <= r['TP'] + 2) & (gap < 0.3))[0]
+        if not len(k0): continue
+        i0 = int(k0[-1]); hi = np.nonzero((np.arange(len(o)) > i0) & ((gap >= GORE_W) | (u >= r['ze'])))[0]
+        i1 = int(hi[0]) if len(hi) else len(o) - 1
+
+        def piece(a, b):                  # the gore between ramp points a and b, fanned from its middle (or None)
+            mp, my = edge(sm[a:b + 1]); lo = a if a == i0 else a - 1          # (at the nose the edges meet)
+            ring = [rnd(p, y, 0) for p, y in zip(mp, my)] + [rnd(p, y, 0) for p, y in zip(inner[b:lo:-1], yin[b:lo:-1])]
+            if b == i1: ring[b - a][3] = 1                             # the open end (main edge -> ramp edge)
+            P = np.array([q[:2] for q in ring]); C = P.mean(0); Pn = np.roll(P, -1, 0)
+            cr = (P[:, 0] - C[0]) * (Pn[:, 1] - C[1]) - (P[:, 1] - C[1]) * (Pn[:, 0] - C[0])
+            if not (cr * np.sign(cr.sum()) > -1e-3).all(): return None        # every fan triangle inside the V
+            (sc,), (lc,) = F.project(C); row, _ = F.at(sc)                   # centre: the main road's surface extended
+            return {'kind': M['kind'], 'gore': True, 'c': rnd(C, row[0, 2] + row[0, 3] * lc, 0)[:3], 'ring': ring}
+        # in pieces of ~20 m (ramp points are ~2 m apart): one fan over a long gore would turn the road's vertical
+        # curve into chords (bumps of 10+ cm on a 90 m gore)
+        cuts = list(range(i0, i1, 10)) + [i1]
+        if len(cuts) > 2 and cuts[-1] - cuts[-2] < 4: cuts.pop(-2)
+        for a, b in zip(cuts[:-1], cuts[1:]):
+            if b - a < 2: continue
+            g = piece(a, b)
+            if g is None and b - a >= 4: g = [piece(a, (a + b) // 2), piece((a + b) // 2, b)]
+            gores += [q for q in (g if isinstance(g, list) else [g]) if q]
+    return gores, wedges
+
+
+def _proj_s(o, cum, p):
+    """Arc length along polyline o (cumulative lengths cum) of the point on it nearest to p."""
+    a, d = o[:-1, :2], np.diff(o[:, :2], axis=0); L2 = np.maximum((d * d).sum(1), 1e-12)
+    t = np.clip(((p[:2] - a) * d).sum(1) / L2, 0, 1); k = int(np.argmin(np.hypot(*(a + d * t[:, None] - p[:2]).T)))
+    return cum[k] + t[k] * math.sqrt(L2[k])
+
+
+def widen_on(e, pc):
+    """The main road's extra lane on one written piece pc of its out polyline (tile.json `widen`):
+    [[side, s0, s1, w0, w1], ...] with s in metres along the piece, or None."""
+    if not e.get('widen'): return None
+    o = e['out']; cum = arclen(o); s0 = _proj_s(o, cum, pc[0]); Lp = arclen(pc)[-1]; out = []
+    for side, xa, za, xb, zb, w0, w1 in e['widen']:
+        sa, sb = _proj_s(o, cum, np.array([xa, za])) - s0, _proj_s(o, cum, np.array([xb, zb])) - s0
+        if sb < sa: sa, sb, w0, w1 = sb, sa, w1, w0
+        lo, hi = max(sa, 0.0), min(sb, Lp)
+        if hi - lo < 0.5: continue
+        wl = lambda s: w0 + (w1 - w0) * (s - sa) / max(sb - sa, 1e-9)
+        out.append([int(side), round(lo, 2), round(hi, 2), round(wl(lo), 2), round(wl(hi), 2)])
+    return out or None
