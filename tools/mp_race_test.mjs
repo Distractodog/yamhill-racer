@@ -49,6 +49,10 @@ try {
   await host.click('#ch-menu .ch-item'); await sleep(200);          // in MP a race row opens the Invite step
   await host.click('#mp-invite-out [data-a="invite"]'); await sleep(500);
   check('guest sees invite', await guest.evaluate(() => getComputedStyle(document.getElementById('mp-invite-in')).display === 'block'));
+  check('invite leaves the corner map visible', await guest.evaluate(() => {
+    const a = document.getElementById('mp-invite-in').getBoundingClientRect(), b = document.getElementById('minimap').getBoundingClientRect();
+    return a.top >= b.bottom || a.bottom <= b.top || a.left >= b.right || a.right <= b.left;
+  }));
   await guest.screenshot({ path: `${shots}/guest-invite.png` });
   await guest.click('#mp-invite-in [data-a="yes"]');
   await sleep(1000);

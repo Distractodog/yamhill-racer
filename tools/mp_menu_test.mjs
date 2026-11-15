@@ -33,13 +33,22 @@ try {
   await guest.click('#mp-join');
   await guest.waitForFunction(() => game.multiplayer.mp.inGame && game.tuning.accel === 51);
   assert.deepEqual(await current(guest), await current(host)); assert.deepEqual(await saved(guest), guestSaved);
-  assert.equal(await guest.$eval('#mp-world', el => el.disabled), true);
+  // the guest sees the host's current world setting checked, and can't change it
+  const checked = page => page.$eval('#mp-panel', p => [...p.querySelectorAll('[name="mp-mode"]')].filter(el => el.checked).map(el => el.value));
+  assert.equal(await guest.$eval('#mp-world', el => el.inert), true);
+  assert.deepEqual(await checked(guest), ['host']); assert.deepEqual(await checked(host), ['host']);
   assert.equal(await guest.$eval('#tuning-controls', el => el.inert), true);
   await host.click('[name="mp-mode"][value="own"]');
   await guest.waitForFunction(() => !document.getElementById('tuning-controls').inert);
   assert.deepEqual(await current(guest), own);
+  assert.deepEqual(await checked(guest), ['own'], 'guest radio follows the host to own');
+  if (out) await guest.screenshot({ path: out + '/mp-guest-own.png' });
+  const radio = await (await guest.$('[name="mp-mode"][value="host"]')).boundingBox();   // a guest's real click changes nothing
+  await guest.mouse.click(radio.x + radio.width / 2, radio.y + radio.height / 2);
+  assert.deepEqual(await checked(guest), ['own']); assert.deepEqual(await checked(host), ['own']);
   await host.click('[name="mp-mode"][value="host"]');
   await guest.waitForFunction(() => game.tuning.accel === 51);
+  assert.deepEqual(await checked(guest), ['host'], 'guest radio follows the host back to host');
   await host.evaluate(() => { game.tuning.accel = 54; game.atmosphere.setPreset('rain', false); });
   await guest.waitForFunction(() => game.tuning.accel === 54 && game.atmosphere.preset === 'rain');
   if (out) { await host.screenshot({ path: out + '/mp-host.png' }); await guest.screenshot({ path: out + '/mp-guest.png' }); }

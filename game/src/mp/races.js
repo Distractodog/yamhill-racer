@@ -5,7 +5,8 @@ import { createRaceCore, esc } from './racecore.js';
 const CSS = `
 .mp-panel { position: fixed; z-index: 30; background: #142016f2; color: #fff; border-radius: 14px; box-shadow: 0 10px 40px #0008;
   padding: 16px 18px; font: 14px system-ui, sans-serif; display: none; width: min(340px, 90vw); }
-#mp-invite-in { top: 90px; right: 18px; } #mp-invite-out { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+#mp-invite-in { top: 240px; right: 14px; } #mp-invite-out { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+@media (max-width: 600px) { #mp-invite-in { top: 170px; } }   /* below the corner map (14 + 210 px, 140 px on small screens) */
 .mp-panel h3 { margin: 0 0 10px; font-size: 17px; } .mp-panel label, .mp-panel .mp-row { display: flex; gap: 8px; padding: 4px 0; align-items: center; }
 .mp-panel .mp-row em { margin-left: auto; opacity: .8; font-style: normal; }
 .mp-panel button, .ch-panel .mp-invite-btn { font: inherit; font-weight: 700; border: 0; border-radius: 8px; padding: 8px 14px; margin: 10px 8px 0 0; cursor: pointer; background: #ffd23f; color: #222; }

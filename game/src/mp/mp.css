@@ -6,7 +6,8 @@
 #mp-panel input:not([type=radio]) { box-sizing: border-box; display: block; width: 100%; padding: 9px; background: #ffffff12; color: white; border: 1px solid #ffffff60; border-radius: 6px; font: inherit; }
 #mp-join-code { text-transform: uppercase; letter-spacing: .18em; }
 #mp-panel fieldset { border: 1px solid #ffffff40; border-radius: 8px; margin: 16px 0 8px; }
-#mp-panel fieldset:disabled { color: #d1d8d2; }
+#mp-panel input[type=radio] { accent-color: #ffd23f; }
+#mp-world[inert] { color: #d1d8d2; }
 #mp-players { list-style: none; padding: 0; }
 #mp-players li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; overflow-wrap: anywhere; }
 #mp-status, #mp-host-note, #mp-settings-note { color: #ffd76a; line-height: 1.5; }

@@ -80,7 +80,8 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
     button.textContent = mp.inGame ? 'Multiplayer' : 'Play multiplayer';
     $('title').textContent = button.textContent; $('connect').hidden = mp.inGame; $('game').hidden = !mp.inGame;
     $('code').textContent = mp.me.code; $('room').textContent = mp.roomCode || '';
-    $('world').disabled = !mp.isHost; $('host-note').hidden = mp.isHost;
+    // guests see the host's choice checked but can't change it (inert, not disabled: a disabled radio's dot is near invisible)
+    $('world').inert = !mp.isHost; $('world').setAttribute('aria-disabled', String(!mp.isHost)); $('host-note').hidden = mp.isHost;
     panel.querySelectorAll('[name="mp-mode"]').forEach(el => { el.checked = el.value === world.mode; });
     $('players').replaceChildren();
     for (const player of mp.players.values()) {
