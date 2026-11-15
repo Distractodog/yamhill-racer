@@ -54,9 +54,9 @@ export class Jet extends Vehicle {
   }
 
   // ---------------------------------------------------------------- ground pose from the three wheels
-  groundPose(x, z, yaw, rot) {
+  groundPose(x, z, yaw, rot, y) {
     const W = this.world, s = Math.sin(yaw), c = Math.cos(yaw);
-    const pt = ([gx, gz]) => { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; return [px, W.heightAt(px, pz), pz]; };
+    const pt = ([gx, gz]) => { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; return [px, W.heightAt(px, pz, y), pz]; };
     const N = pt(GEAR[0]), L = pt(GEAR[1]), R = pt(GEAR[2]);
     const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2, mz = (L[2] + R[2]) / 2;
     _fw.set(N[0] - mx, N[1] - my, N[2] - mz).normalize();
@@ -121,12 +121,13 @@ export class Jet extends Vehicle {
     let worstRoll = 0, wet = false;
     for (const wh of this.wheels) {
       const px = this.pos.x + c * wh.x + s * wh.z, pz = this.pos.z - s * wh.x + c * wh.z;
-      const sc = W.surfaceAt(px, pz); wh.surf = sc; wh.contact = true; wh.comp = 0.2;
-      if (W.waterLevelAt(px, pz) > W.heightAt(px, pz)) wet = true;
+      const py = _w.set(wh.x, -GEAR_H, wh.z).applyQuaternion(this.quat).y + this.pos.y;
+      const sc = W.surfaceAt(px, pz, py); wh.surf = sc; wh.contact = true; wh.comp = 0.2;
+      if (W.waterLevelAt(px, pz) > W.heightAt(px, pz, py)) wet = true;
       worstRoll = Math.max(worstRoll, ROLL[sc] ?? 1);
-      wh.contactPoint.set(px, W.heightAt(px, pz), pz);
+      wh.contactPoint.set(px, W.heightAt(px, pz, py), pz);
     }
-    this.surface = W.surfaceAt(this.pos.x, this.pos.z);
+    this.surface = W.surfaceAt(this.pos.x, this.pos.z, this.pos.y);
     if (wet && Math.abs(this.v) > 2) { this.crash('water'); return; }
     // lift from the wings at the rotation angle (takes weight off the wheels; enough of it = take-off)
     const q = this.v * this.v;
@@ -151,7 +152,7 @@ export class Jet extends Vehicle {
     else this.rot = Math.max(0, this.rot - 0.25 * dt);
     // follow the ground
     const nx = this.pos.x + Math.sin(this.yaw) * this.v * dt, nz = this.pos.z + Math.cos(this.yaw) * this.v * dt;
-    const ny = this.groundPose(nx, nz, this.yaw, this.rot);
+    const ny = this.groundPose(nx, nz, this.yaw, this.rot, this.pos.y);
     const vyNew = (ny - this.pos.y) / dt;
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
     // ground falling away faster than gravity can follow (crest / ramp lip): it's in the air
@@ -184,7 +185,7 @@ export class Jet extends Vehicle {
     const W = this.world; let low = Infinity;
     for (const [x, z] of GEAR) {
       _w.set(x, -GEAR_H, z).applyQuaternion(this.quat).add(this.pos);
-      low = Math.min(low, _w.y - Math.max(W.heightAt(_w.x, _w.z), W.waterLevelAt(_w.x, _w.z)));
+      low = Math.min(low, _w.y - Math.max(W.heightAt(_w.x, _w.z, _w.y), W.waterLevelAt(_w.x, _w.z)));
     }
     return low;
   }
@@ -257,14 +258,14 @@ export class Jet extends Vehicle {
     for (const wh of this.wheels) { wh.contact = false; wh.spin *= 1 - dt; }
 
     // ------------------------------------------------ ground, trees, buildings
-    const gh = W.heightAt(this.pos.x, this.pos.z);
+    const gh = W.heightAt(this.pos.x, this.pos.z, this.pos.y);
     this.agl = this.pos.y - GEAR_H - Math.max(gh, W.waterLevelAt(this.pos.x, this.pos.z));
     const descent = -this.vel.y;
     this.pullUp = this.agl < 200 && descent > 3 && this.agl / descent < 5;
     if (this.airTime > 0.2 && this.wheelsAGL() < 0) {
       _up.set(0, 1, 0).applyQuaternion(this.quat); _fw.set(0, 0, 1).applyQuaternion(this.quat);
       const sink = -this.vel.y, kmh = s * 3.6, slide = Math.abs(this.vel.dot(_lt.set(1, 0, 0).applyQuaternion(this.quat)));
-      const wet = W.waterLevelAt(this.pos.x, this.pos.z) > W.heightAt(this.pos.x, this.pos.z);
+      const wet = W.waterLevelAt(this.pos.x, this.pos.z) > W.heightAt(this.pos.x, this.pos.z, this.pos.y);
       if (!wet && _up.y > t.landUp && sink < t.landSink && _fw.y > -0.12 && kmh < t.landKmh && slide < 12 && this.gear > 0.8) this.land(sink);
       else this.crash(wet ? 'water' : sink >= t.landSink ? 'hard' : 'impact');
       return;
@@ -272,7 +273,7 @@ export class Jet extends Vehicle {
     let scrape = 0;
     for (const [x, y, z] of BODY) {
       _w.set(x, y, z).applyQuaternion(this.quat).add(this.pos);
-      const pen = W.heightAt(_w.x, _w.z) - 0.1 - _w.y;
+      const pen = W.heightAt(_w.x, _w.z, _w.y) - 0.1 - _w.y;
       if (pen > 0) {
         // a tail scrape (nose high on take-off / landing, barely sinking) just bumps; anything else is a crash
         _up.set(0, 1, 0).applyQuaternion(this.quat);
@@ -322,7 +323,7 @@ export class Jet extends Vehicle {
     this.yaw = Math.atan2(_fw.x, _fw.z);
     this.v = Math.max(0, this.vel.x * Math.sin(this.yaw) + this.vel.z * Math.cos(this.yaw));
     this.mode = 'ground'; this.rot = clamp(Math.asin(clamp(_fw.y, -1, 1)), 0, 0.22); this.vy = 0;
-    this.pos.y = this.groundPose(this.pos.x, this.pos.z, this.yaw, this.rot);
+    this.pos.y = this.groundPose(this.pos.x, this.pos.z, this.yaw, this.rot, this.pos.y);
     this.landing = Math.min(1, sink / 9); this.stall = false; this.pullUp = false;
     if (this.airTime > 1.5) this.say(sink < 2.5 ? 'Smooth landing' : 'Landed', 2);   // not for every hop off a bump
   }
@@ -341,7 +342,7 @@ export class Jet extends Vehicle {
     let penetration = -Infinity;
     for (const [x, y, z] of [[0, -0.7, 0], ...BODY]) {
       _w.set(x, y, z).applyQuaternion(this.quat).add(this.pos);
-      penetration = Math.max(penetration, Math.max(this.world.heightAt(_w.x, _w.z), this.world.waterLevelAt(_w.x, _w.z)) - _w.y);
+      penetration = Math.max(penetration, Math.max(this.world.heightAt(_w.x, _w.z, _w.y), this.world.waterLevelAt(_w.x, _w.z)) - _w.y);
     }
     this.grounded = penetration > 0;
     if (this.grounded) {
@@ -354,7 +355,7 @@ export class Jet extends Vehicle {
     }
     this.ang.multiplyScalar(Math.exp(-0.22 * dt));
     this.edgeTurn();
-    this.agl = Math.max(0, this.pos.y - this.world.heightAt(this.pos.x, this.pos.z));
+    this.agl = Math.max(0, this.pos.y - this.world.heightAt(this.pos.x, this.pos.z, this.pos.y));
   }
 
   crash(why) {
