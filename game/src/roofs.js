@@ -78,11 +78,11 @@ export function createVehicleWorld(world,vehicle) {
   }
   const queries = {
     roofAt, canReachRoof,
-    heightAt: (x,z)=>Math.max(world.heightAt(x,z),roofAt(x,z)),
-    surfaceAt: (x,z)=>roofAt(x,z)>world.heightAt(x,z)?6:world.surfaceAt(x,z),
-    normalAt: (x,z,out)=> {
+    heightAt: (x,z,y)=>Math.max(world.heightAt(x,z,y),roofAt(x,z)),
+    surfaceAt: (x,z,y)=>roofAt(x,z)>world.heightAt(x,z,y)?6:world.surfaceAt(x,z,y),
+    normalAt: (x,z,out,y)=> {
       const h=roofAt(x,z);
-      if(h<=world.heightAt(x,z)) return world.normalAt(x,z,out);
+      if(h<=world.heightAt(x,z,y)) return world.normalAt(x,z,out,y);
       const a=roofAt(x-0.1,z),b=roofAt(x+0.1,z),c=roofAt(x,z-0.1),d=roofAt(x,z+0.1);
       return out.set(Number.isFinite(a)&&Number.isFinite(b)?(a-b)/0.2:0,1,Number.isFinite(c)&&Number.isFinite(d)?(c-d)/0.2:0).normalize();
     }
