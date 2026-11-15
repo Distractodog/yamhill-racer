@@ -9,13 +9,15 @@ from each tile's own satellite / tree-height data.
 
 Per tile, game/assets/tiles/<tx>_<tz>/:
   height.bin    float32 (HN+2*HM)^2 heights on a 4 m grid: the tile's 501^2 vertices plus HM vertices of margin
-  surface.bin   uint8 2000^2 surface classes at 1 m (0 grass, 1 forest floor, 5 pond bed, 6 building pad, 7 track)
+  surface.bin   uint8 2000^2 surface classes at 1 m (0 grass, 1 forest floor, 5 pond / river bed, 6 building pad, 7 track)
   ground.png    2048^2 stylised ground colours
   (written packed by default — height.bin.gz, surface.bin.gz, ponds.bin.gz, tile.json.gz, trees.bin.gz, ground.webp, see tilefmt.py;
    v3 quantizes heights within 1 cm and tree positions within 2 cm, preserving raster bytes;
    YR_PACK=0 writes the plain files above)
   trees.bin     float32 [x, z, height, broadleaf] per tree
-  tile.json     buildings, road/trail strips (render + physics pieces), ponds
+  tile.json     buildings, road/trail strips (render + physics pieces; `bridge`: true / 'truss' on bridge decks;
+                ramp tapers: `widen` on main roads, `gore` pieces, see the strip writer), ponds, river pools
+                (`rivers`, tools/rivers.py)
 game/assets/world.json: tile size, list of tiles, spawn, height grid info.
 """
 import json, math, os, sys, time
@@ -27,7 +29,7 @@ from skimage.morphology import skeletonize
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
-import mapdata, align, roadnet, tilefmt
+import mapdata, align, roadnet, tilefmt, rivers
 from fetch_tiles import TILE, MARGIN, TX, TZ, TILE_SET, HSTEP, CX, CY, K, R
 import fetch_tiles
 RIM_R = 22500                                     # drivable radius of the round map (m)
@@ -125,7 +127,11 @@ ROAD_W = {'motorway': 18, 'trunk': 17, 'primary': 16, 'secondary': 15, 'tertiary
 SERVICE_W = {'alley': 5, 'driveway': 5, 'parking_aisle': 6, 'drive-through': 5}
 FLAT_DRIVEWAY = 30.0                 # driveways shorter than this and all parking aisles: flat paving (flat: true)
 PAVED = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street'}
-road_paths, buildings, water_polys = [], [], []
+# bridges (OSM bridge=*): a straight deck between the banks, not carved (roadnet.py); tile.json strips get `bridge`:
+# 'truss' for Sheridan Bridge (the 1939 Parker truss on Bridge Street) and anything tagged bridge:structure=truss
+BRIDGE_TAGS = {'yes', 'viaduct', 'movable', 'trestle', 'cantilever', 'covered'}
+TRUSS_WAYS = {163129655}
+road_paths, buildings, water_polys, river_lines = [], [], [], []
 for e in osm:
     t = e.get('tags', {}); geo = e.get('geometry')
     if not geo: continue
@@ -133,16 +139,19 @@ for e in osm:
     pts = np.stack([wx, wz], 1)
     h = t.get('highway')
     if h:
-        h = h.replace('_link', '')
+        link = h.endswith('_link'); h = h.replace('_link', '')
         if h not in ROAD_W: continue
         paved = h in PAVED or t.get('surface') in ('asphalt', 'paved', 'concrete')
         svc = t.get('service') if h == 'service' else None
         try: lanes = int(t.get('lanes', 0)) or None
         except ValueError: lanes = None
-        attr = {'cls': h + (':' + svc if svc in SERVICE_W else ''), 'lanes': lanes,
+        attr = {'cls': h + ('_link' if link else '') + (':' + svc if svc in SERVICE_W else ''), 'lanes': lanes,
                 'sidewalk': t.get('sidewalk') if t.get('sidewalk') in ('both', 'left', 'right', 'yes', 'separate') else None,
                 'oneway': t.get('oneway') in ('yes', '1', '-1') or t.get('junction') == 'roundabout'}
-        w = SERVICE_W.get(svc, ROAD_W[h])
+        if t.get('bridge') in BRIDGE_TAGS:            # only on bridges, so other roads still merge as before
+            attr['bridge'] = 'truss' if e['id'] in TRUSS_WAYS or t.get('bridge:structure') == 'truss' else True
+        # ramps (OSM *_link, cls keeps `_link`): their own lane width, not their main road's
+        w = roadnet.LINK_W * min(max(lanes or 1, 1), 2) if link else SERVICE_W.get(svc, ROAD_W[h])
         for run in keep_in_map(pts):
             road_paths.append({'kind': 'asphalt' if paved else 'gravel', 'w': w, 'pts': run, 'bridge': t.get('bridge') == 'yes',
                                'attr': attr})
@@ -154,6 +163,10 @@ for e in osm:
         buildings.append({'pts': pts[:-1], 'h': round(hgt, 1)})
     elif t.get('natural') == 'water' and e['type'] == 'way':
         if in_map(pts[:, 0], pts[:, 1], 100).any(): water_polys.append(pts)
+    elif 'waterway' in t and e['type'] == 'way':
+        for run in keep_in_map(pts, 100):
+            rv = rivers.from_osm(t, run)
+            if rv: river_lines.append(rv)
 if os.path.isfile(os.path.join(RAW, 'footprints.geojson')):
     import footprints
     from shapely.geometry import LineString as _LS, Polygon as _PG
@@ -169,7 +182,8 @@ if os.path.isfile(os.path.join(RAW, 'footprints.geojson')):
         else: _kept.append(b)
     log('imported footprints:', len(buildings) - _n_osm, 'kept', len(buildings) - _n_osm - _dropped, '· dropped on roads', _dropped)
     buildings = _kept
-log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys))
+log('osm: roads', len(road_paths), 'buildings', len(buildings), 'water polygons', len(water_polys), 'river/stream lines', len(river_lines),
+    'bridges', sum(1 for r in road_paths if r['attr'].get('bridge')))
 # town ground (fetch_tiles.py fetch_landuse): green = parks / lawns / pitches / cemeteries, grey = parking + lots
 GREEN_LU = {'grass', 'recreation_ground', 'cemetery', 'village_green', 'park', 'pitch', 'playground', 'garden',
             'golf_course', 'sports_centre'}
@@ -372,13 +386,14 @@ nodes, edges = roadnet.compact(nodes, edges)
 # water: nudge / cut each edge (junction ends are kept unless the edge is cut there)
 fixed = []
 for e in edges:
-    for piece, (keep_a, keep_b) in fix_path(e):
+    for piece, (keep_a, keep_b) in (fix_path(e) if not roadnet.is_bridge(e) else [(e, (True, True))]):   # decks stay put
         a = e['a'] if keep_a else len(nodes)
         if not keep_a: nodes.append(piece['pts'][0].copy())
         b = e['b'] if keep_b else len(nodes)
         if not keep_b: nodes.append(piece['pts'][-1].copy())
         fixed.append({'a': a, 'b': b, 'pts': piece['pts'], 'kind': e['kind'], 'w': e['w'], 'attr': e.get('attr', {})})
 nodes, edges = roadnet.compact(nodes, fixed)
+nodes, edges, tapers = roadnet.tapers(nodes, edges, log)      # shallow ramp meets: taper + gore, not a junction
 paths = edges
 deg = Counter([e['a'] for e in edges] + [e['b'] for e in edges])
 log('network: edges', len(edges), 'junctions', sum(1 for v in deg.values() if v >= 3),
@@ -406,6 +421,7 @@ for i, p in enumerate(paths):
     if a.get('sidewalk'): meta['sidewalk'] = a['sidewalk']
     if a.get('oneway'): meta['oneway'] = True
     if cls == 'service:parking_aisle' or (cls == 'service:driveway' and L < FLAT_DRIVEWAY): meta['flat'] = True
+    if a.get('bridge'): meta['bridge'] = a['bridge']
     if a.get('oneway') and _kd is not None:
         mine = np.nonzero(_owner == i)[0]; hits = 0
         for k in mine:
@@ -419,7 +435,7 @@ for i, p in enumerate(paths):
 # stop lines + crosswalks (drawn by roads.js): the ends of a town street where it meets a bigger road
 _RANK = {'motorway': 5, 'trunk': 5, 'primary': 4, 'secondary': 4, 'tertiary': 3, 'unclassified': 2,
          'residential': 1, 'living_street': 1}
-_rank = lambda c: _RANK.get(c.split(':')[0], 0.5 if c.startswith('service') else 0)
+_rank = lambda c: _RANK.get(c.split(':')[0].replace('_link', ''), 0.5 if c.startswith('service') else 0)
 _at = defaultdict(list)
 for i, p in enumerate(paths): _at[p['a']].append(i); _at[p['b']].append(i)
 for i, p in enumerate(paths):
@@ -449,6 +465,7 @@ gh = ndimage.gaussian_filter(gh, 0.7)
 # smooth a little under every strip so cars don't catch air on 1-2 m lidar lumps
 _pimg = Image.new('L', (GHW, GHH), 0); _pd = ImageDraw.Draw(_pimg)
 for p in paths:
+    if roadnet.is_bridge(p): continue                       # the ground under a bridge keeps its shape
     tp = [((x - GX0) / HSTEP, (z - GZ0) / HSTEP) for x, z in p['pts']]
     _pd.line(tp, fill=255, width=max(2, int(round(p['w'] / HSTEP))), joint='curve')
 on_path = np.asarray(_pimg).astype(np.float32) / 255
@@ -488,15 +505,26 @@ _ghs = ndimage.gaussian_filter(gh, 2.0)
 _gz, _gx = np.gradient(_ghs, HSTEP)
 J = roadnet.junction_layout(nodes, edges)
 planes, plane_y = roadnet.profiles(nodes, edges, J, _hfun(gh), lambda x, z: float(_hfun(_ghs)(x, z)[0]),
-                                   lambda x, z: (float(_hfun(_gx)(x, z)[0]), float(_hfun(_gz)(x, z)[0])))
+                                   lambda x, z: (float(_hfun(_gx)(x, z)[0]), float(_hfun(_gz)(x, z)[0])), log=log)
 log('roads matched to an overlapping bigger road:', roadnet.harmonize(edges, J))
-juncs = roadnet.junction_rings(J, edges, planes, plane_y)
-# pond beds are never carved; the 1-cell rim around them can be, as long as it stays above that pond's water
-_lv = np.array([-np.inf] + [p['level'] for p in ponds_g], np.float32)
+roadnet.taper_heights(edges, tapers)
+gores, wedges = roadnet.taper_pieces(tapers)                  # wedges: the lane add / drop, carved but not written
+juncs = roadnet.junction_rings(J, edges, planes, plane_y) + gores
+log('gore pieces', len(gores), '· lane wedges', len(wedges))
+# rivers + streams: pools stepping down each line, bed carved, banks kept dry (tools/rivers.py); after the road
+# heights (so roads don't dip into them), before the road carve (which fills them back in under culverts)
+RIVER_ID0 = len(ponds_g) + 1
+river_levels, river_wet = rivers.build(gh, GX0, GZ0, HSTEP, river_lines, pond_gid,
+                                       np.array([-np.inf] + [p['level'] for p in ponds_g]), RIVER_ID0, log)
+# pond beds are never carved; the 1-cell rim around them can be, as long as it stays above that pond's water.
+# River pools are free to carve (a road over a stream fills it in).
+_lv = np.array([-np.inf] + [p['level'] for p in ponds_g] + [-np.inf] * len(river_levels), np.float32)
 _protect = ndimage.maximum_filter(_lv[pond_gid], size=3) + 0.15
-_protect[pond_gid > 0] = np.inf
-nv, mx = roadnet.carve(gh, GX0, GZ0, HSTEP, edges, juncs, _protect)
+_protect[(pond_gid > 0) & (pond_gid < RIVER_ID0)] = np.inf
+nv, mx = roadnet.carve(gh, GX0, GZ0, HSTEP, edges, juncs + wedges, _protect)
 log(f'roads carved: {nv} height vertices moved (max {mx:.1f} m), junction pieces {len(juncs)}')
+nv, mx = roadnet.under_bridges(gh, GX0, GZ0, HSTEP, edges, _protect)
+log(f'bridge decks: {sum(map(roadnet.is_bridge, edges))} strips, ground lowered under them at {nv} vertices (max {mx:.1f} m)')
 del _ghs, _gx, _gz
 
 # ---------------------------------------------------------------- 6. per tile
@@ -555,7 +583,7 @@ for tx, tz in TILES:
     path_m = raster(lambda d: [d.line([to_px(x, z) for x, z in p['pts']], fill=255, width=int(p['w']), joint='curve') for p in paths
                                if p['pts'][:, 0].max() > rx0 - M - 20 and p['pts'][:, 0].min() < rx1 + M + 20
                                and p['pts'][:, 1].max() > rz0 - M - 20 and p['pts'][:, 1].min() < rz1 + M + 20]
-                    + [d.polygon([to_px(q[0], q[1]) for q in jn['ring']], fill=255) for jn in juncs
+                    + [d.polygon([to_px(q[0], q[1]) for q in jn['ring']], fill=255) for jn in juncs + wedges
                        if rx0 - M - 60 < jn['c'][0] < rx1 + M + 60 and rz0 - M - 60 < jn['c'][1] < rz1 + M + 60])
     tb = [b for b in buildings if rx0 - M < b['pts'][:, 0].mean() < rx1 + M and rz0 - M < b['pts'][:, 1].mean() < rz1 + M]
     bld_m = raster(lambda d: [d.polygon([to_px(x, z) for x, z in b['pts']], fill=255) for b in tb if len(b['pts']) >= 3])
@@ -573,6 +601,7 @@ for tx, tz in TILES:
         ia0, ia1 = max(sa.start, hi0), min(sa.stop, hi0 + HN); ja0, ja1 = max(sb.start, hj0), min(sb.stop, hj0 + HN)
         if ia1 <= ia0 or ja1 <= ja0: continue
         wet_h[ia0 - hi0:ia1 - hi0, ja0 - hj0:ja1 - hj0] |= wet[ia0 - sa.start:ia1 - sa.start, ja0 - sb.start:ja1 - sb.start]
+    wet_h |= river_wet[hi0:hi0 + HN, hj0:hj0 + HN]
     wet_core = np.asarray(Image.fromarray(wet_h.astype(np.uint8) * 255).resize((TILE, TILE), Image.BILINEAR)) > 100
 
     # ---- surface classes (core, 1 m)
@@ -633,6 +662,7 @@ for tx, tz in TILES:
     gx = np.clip(gx, rx0 + 0.01, rx1 - 0.01); gz = np.clip(gz, rz0 + 0.01, rz1 - 0.01)
     px = np.clip((gx - (rx0 - M)).astype(int), 0, SAT_N - 1); pz = np.clip((gz - (rz0 - M)).astype(int), 0, SAT_N - 1)
     path_d = ndimage.distance_transform_edt(~path_m); bld_d = ndimage.distance_transform_edt(~bld_m)
+    water_m[M:M + TILE, M:M + TILE] |= wet_core                      # no trees in rivers either
     keep = tree[pz, px] & (path_d[pz, px] > 1.2) & (bld_d[pz, px] > 4) & ~water_m[pz, px]
     edge = ndimage.binary_dilation(tree, iterations=3) & ~tree
     keep |= edge[pz, px] & (rng.random(gx.size) < 0.12) & (path_d[pz, px] > 3) & (bld_d[pz, px] > 6) & ~water_m[pz, px]
@@ -641,9 +671,28 @@ for tx, tz in TILES:
     tilefmt.write_bytes(out, 'trees.bin', T.tobytes(), PACK)
 
     # ---- strips: exact pieces for drawing, padded pieces for physics (a strip's width can reach over the edge)
+    # Ramp meets (roadnet.tapers) in tile.json:
+    #  - a ramp strip keeps its OSM class with `_link` in `cls` (e.g. 'trunk_link'), is one lane wide (w 6.5 m;
+    #    13 m when tagged 2+ lanes) and, near a taper, runs right beside its main road (edges touching), its surface
+    #    the main road's surface extended (height + cross slope) through the taper and the gore
+    #  - `widen` on the main road's strip: [[side, s0, s1, w0, w1], ...] an extra lane on that side (side 1 = left of
+    #    the strip's point order, -1 = right) from s0 to s1 m along this piece, its width going linearly w0 -> w1 m.
+    #    Each taper writes two ranges: the lane add / drop at the meet (0 -> lane width over ~30 m; nothing else is
+    #    under it: drawing and physics must add it) and the full lane (w0 = w1, already paved by the ramp strip
+    #    running alongside: there it marks the lane, e.g. for lane lines, and must not be drawn twice)
+    #  - gore pieces in `junctions` / `physJunctions`: like junction pieces ({kind, c, ring}, fan from c) plus
+    #    `gore: true`: the flat V between the main road's edge and the ramp's edge where they part, from the nose
+    #    (touching) to ~5 m apart; heights taken from the two road edges; a long gore comes as consecutive pieces of
+    #    ~20 m (sharing their cross edges; ring flag 1 only on the last one's open end)
+    #  - no fan junction where a taper meets: the through road runs on as one strip (or two strips with an ordinary
+    #    2-road joint when its two halves differ)
     render, phys = [], []
-    piece = lambda p, pc: {'kind': p['kind'], 'w': p['w'], **p['meta'], 'pts': np.round(pc[:, :2], 2).tolist(),
-                           'yc': [[round(float(y), 3), round(float(c), 4)] for y, c in pc[:, 2:4]]}
+    def piece(p, pc):
+        q = {'kind': p['kind'], 'w': p['w'], **p['meta'], 'pts': np.round(pc[:, :2], 2).tolist(),
+             'yc': [[round(float(y), 3), round(float(c), 4)] for y, c in pc[:, 2:4]]}
+        wd = roadnet.widen_on(p, pc)
+        if wd: q['widen'] = wd
+        return q
     for p in paths:
         o = p['out']
         if roadnet.arclen(o)[-1] < 0.5: continue                     # fully swallowed by its junctions
@@ -657,16 +706,18 @@ for tx, tz in TILES:
     pr = tile_rect(tx, tz, pad=40)
     tj = [jn for jn in juncs if rx0 <= jn['c'][0] < rx1 and rz0 <= jn['c'][1] < rz1]
     pj = [jn for jn in juncs if any(pr[0] <= q[0] <= pr[2] and pr[1] <= q[1] <= pr[3] for q in jn['ring'])]
-    # ---- ponds touching this tile
-    tponds = {}
+    # ---- ponds + river pools touching this tile
+    tponds, trivers = {}, {}
     for k in np.unique(pid_pad[pid_pad > 0]):
-        tponds[int(k)] = ponds_g[k - 1]['level']
+        if k < RIVER_ID0: tponds[int(k)] = ponds_g[k - 1]['level']
+        else: trivers[int(k)] = river_levels[k - RIVER_ID0]
     tilefmt.write_bytes(out, 'tile.json', json.dumps({'tx': tx, 'tz': tz, 'buildings': [{'pts': np.round(b['pts'], 2).tolist(), 'h': b['h']} for b in tb
                                                    if rx0 <= b['pts'][:, 0].mean() < rx1 and rz0 <= b['pts'][:, 1].mean() < rz1],
-               'paths': render, 'physPaths': phys, 'junctions': tj, 'physJunctions': pj, 'ponds': tponds}).encode(), PACK)
+               'paths': render, 'physPaths': phys, 'junctions': tj, 'physJunctions': pj, 'ponds': tponds,
+               **({'rivers': trivers} if trivers else {})}).encode(), PACK)
     tilefmt.write_bytes(out, 'ponds.bin', pid_pad.astype(np.uint16).tobytes(), PACK)
     world_tiles.append([tx, tz])
-    log(f'tile {tx},{tz}: trees {len(T)}, buildings {len(tb)}, strips {len(render)}, ponds {len(tponds)} ({time.time() - t1:.0f}s)')
+    log(f'tile {tx},{tz}: trees {len(T)}, buildings {len(tb)}, strips {len(render)}, ponds {len(tponds)}, river pools {len(trivers)} ({time.time() - t1:.0f}s)')
 
 # ---------------------------------------------------------------- 7. world.json
 json.dump({'tile': TILE, 'hstep': HSTEP, 'hn': HN, 'hm': HM, 'surfN': TILE, 'tiles': world_tiles,

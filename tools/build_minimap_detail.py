@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw
 import tilefmt
 from imagecodec_v3 import encode_detail
 from campusmap_v3 import paint_track
+from minimap_roads import paint_roads
 
 ROAD = {
     'asphalt': ((65, 70, 79), (245, 245, 235), 14),
@@ -26,19 +27,7 @@ def bake_detail(world, assets, tx, tz):
     draw = ImageDraw.Draw(img)
     for building in tile['buildings']:
         draw.polygon([px(p) for p in building['pts']],fill=(210,206,198),outline=(105,101,95),width=1)
-    for kind in ('trail','gravel','asphalt'):
-        fill,edge,width = ROAD[kind]
-        paths = [[px(p) for p in road['pts']] for road in tile['paths'] if road['kind']==kind]
-        for junction in tile.get('junctions',[]):
-            if junction['kind'] != kind: continue
-            ring = junction['ring']
-            for i,p in enumerate(ring):
-                if p[3] == 0:
-                    q = ring[(i+1)%len(ring)]
-                    paths.append([px(junction['c']),px([(p[0]+q[0])/2,(p[1]+q[1])/2])])
-        for color,w in ((edge,width+4),(fill,width)):
-            for points in paths:
-                if len(points)>1: draw.line(points,fill=color,width=w,joint='curve')
+    paint_roads(draw, [tile], px, 1, ROAD)
     paint_track(img, x0, z0, 1)
     return img
 

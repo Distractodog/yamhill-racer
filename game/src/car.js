@@ -109,11 +109,11 @@ export class Car extends Vehicle {
     const reach = t.restLength + RADIUS;
     for (const wh of this.wheels) {
       _w.copy(wh.mount).applyQuaternion(this.quat).add(this.pos);
-      let gh = W.heightAt(_w.x, _w.z);
+      let gh = W.heightAt(_w.x, _w.z, _w.y);
       const wl = W.waterLevelAt(_w.x, _w.z);
       const wet = wl > gh;
       if (wet && skimming) gh = wl;                       // fast enough: the water surface holds you up
-      W.normalAt(_w.x, _w.z, _n);
+      W.normalAt(_w.x, _w.z, _n, _w.y);
       if (wet && skimming) _n.set(0, 1, 0);
       const denom = _up.dot(_n);
       const dist = denom > 0.25 ? ((_w.y - gh) * _n.y) / denom : 99;
@@ -122,7 +122,7 @@ export class Car extends Vehicle {
       if (dist < reach) {
         wh.contact = true; contacts++;
         wh.comp = Math.min(reach - dist, t.restLength);
-        const sc = W.surfaceAt(_w.x, _w.z);
+        const sc = W.surfaceAt(_w.x, _w.z, _w.y);
         wh.surf = wet ? 5 : (sc === 5 ? 0 : sc); counts[wh.surf]++;          // dry pond bank counts as grass
         const cv = (wh.comp - wh.prevComp) / dt;
         const Fz = Math.max(0, t.springK * wh.comp + t.damping * cv);
@@ -309,11 +309,11 @@ export class Car extends Vehicle {
     let worst = 0;
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
       _w.set(BOX_C.x + sx * BOX_H.x, BOX_C.y + sy * BOX_H.y, BOX_C.z + sz * BOX_H.z).applyQuaternion(this.quat).add(this.pos);
-      const pen = W.heightAt(_w.x, _w.z) - _w.y;
+      const pen = W.heightAt(_w.x, _w.z, _w.y) - _w.y;
       if (pen > worst) { worst = pen; _r.copy(_w).sub(this.pos); }
     }
     if (worst > 0) {
-      W.normalAt(this.pos.x, this.pos.z, _n);
+      W.normalAt(this.pos.x, this.pos.z, _n, this.pos.y);
       this.pos.addScaledVector(_n, worst);
       _v.copy(this.ang).cross(_r).add(this.vel);
       const vn = _v.dot(_n);
@@ -330,7 +330,7 @@ export class Car extends Vehicle {
     const R = 1.15;
     for (const zo of [-1.4, 0, 1.4]) {
       _w.set(0, 0, zo).applyQuaternion(this.quat).add(this.pos);
-      if (_w.y - this.world.heightAt(_w.x, _w.z) > 14) continue;
+      if (_w.y - this.world.heightAt(_w.x, _w.z, _w.y) > 14) continue;
       this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr) => {
         const dx = _w.x - tx, dz = _w.z - tz, d = Math.hypot(dx, dz), min = R + tr;
         if (d < min && d > 1e-4) {

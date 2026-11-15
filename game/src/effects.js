@@ -65,10 +65,10 @@ export class Effects {
     this.bodyBlob = mk(2.4, 4.9, 0.5);
   }
 
-  placeBlob(m, x, z, yaw, above, world) {
-    const h = world.heightAt(x, z);
+  placeBlob(m, x, z, yaw, above, world, y) {
+    const h = world.heightAt(x, z, y);
     m.position.set(x, h + 0.03, z);
-    const n = world.normalAt(x, z, this._n ||= new THREE.Vector3());   // roof-aware worlds need an out vector
+    const n = world.normalAt(x, z, this._n ||= new THREE.Vector3(), y);   // roof-aware worlds need an out vector
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
     m.rotateY(yaw);
     m.material.opacity = m.userData.op * Math.max(0, 1 - above / 2.5);
@@ -122,7 +122,7 @@ export class Effects {
     const mw = car.mesh.userData.wheels;
     mw.forEach((g, i) => {
       const p = new THREE.Vector3(); g.holder.getWorldPosition(p);
-      this.placeBlob(this.tyreBlobs[i], p.x, p.z, yaw + (g.front ? g.holder.rotation.y : 0), p.y - g.r - W.heightAt(p.x, p.z), W);
+      this.placeBlob(this.tyreBlobs[i], p.x, p.z, yaw + (g.front ? g.holder.rotation.y : 0), p.y - g.r - W.heightAt(p.x, p.z, p.y), W, p.y);
     });
     for (let i = mw.length; i < this.tyreBlobs.length; i++) this.tyreBlobs[i].visible = false;   // bike: 2 tyres, jet: 3
     if (car.kind !== this.kind) {                       // vehicle switched: blob size + fresh tyre marks
@@ -130,7 +130,7 @@ export class Effects {
       this.bodyBlob.scale.set(bw / 2.4, 1, bl / 4.9); this.last = [null, null, null, null];
     }
     const rp = car.renderPos;
-    this.placeBlob(this.bodyBlob, rp.x, rp.z, yaw, rp.y - (car.kind === 'jet' ? 1.6 : 0.55) - W.heightAt(rp.x, rp.z), W);
+    this.placeBlob(this.bodyBlob, rp.x, rp.z, yaw, rp.y - (car.kind === 'jet' ? 1.6 : 0.55) - W.heightAt(rp.x, rp.z, rp.y), W, rp.y);
     if (car.burning && car.mode === 'crashed') {        // jet wreck: black smoke
       for (let k = 0; k < 2; k++) if (Math.random() < dt * 30) {
         this.emit(car.pos, car.vel, 7, 1.5); const i = (this.pI + this.PN - 1) % this.PN;

@@ -2,6 +2,8 @@
 // Heights are baked by the build (tools/roadnet.py), which also carved the ground just below every road.
 import * as THREE from 'three';
 import { campusDrive } from './campusdrive.js';
+import { roadHalfWidth } from './ramps.js';
+import { laneWedges, rampStripMarks, goreMarks, roadPoint } from './rampmarks.js';
 
 const TOP = { campus: 0x25272a, asphalt: 0x50535c, gravel: 0xb9a888, trail: 0xc98d55 };
 const SIDE = { campus: 0x202225, asphalt: 0x44474f, gravel: 0xa39472, trail: 0xb27a47 };
@@ -54,33 +56,40 @@ export function roadBatches(list, samples = 1500) {
   return out;
 }
 
+// Share the marking eligibility rule with the ramp painter, including link classes of MAIN roads.
+export function edgeLines(r, school) {
+  const base = r.osm?.split(':')[0].replace(/_link$/, '');
+  return r.kind === 'asphalt' && !r.flat && ((MAIN.has(base) && !r.hasSidewalk) || school || r.osm === undefined);
+}
+
 // cross-section columns of a strip: [offset left of centre, height offset, colour key of the quad to the next column]
 function columns(r, school, far) {
   const { hw, kind, osm } = r;
+  const skirt = r.bridge ? -1.2 : -3, flare = r.bridge ? 0 : 1.2;
   if (osm === undefined) {                       // older tiles: exactly the old layout
-    if (far) return [[hw + 1.2, -3, 'side'], [hw, 0, 'top'], [-hw, 0, 'side'], [-(hw + 1.2), -3, null]];
+    if (far) return [[hw + flare, skirt, 'side'], [hw, 0, 'top'], [-hw, 0, 'side'], [-(hw + flare), skirt, null]];
     const lineW = kind === 'asphalt' ? 0.35 : 0;
-    const offs = kind === 'asphalt' ? [hw + 1.2, hw + 0.4, hw, hw - 0.5, hw - 0.5 - lineW, 0.12, -0.12,
-      -(hw - 0.5 - lineW), -(hw - 0.5), -hw, -(hw + 0.4), -(hw + 1.2)] : [hw + 1.2, hw + 0.4, hw, 0, -hw, -(hw + 0.4), -(hw + 1.2)];
+    const offs = kind === 'asphalt' ? [hw + flare, hw + (r.bridge ? 0 : 0.4), hw, hw - 0.5, hw - 0.5 - lineW, 0.12, -0.12,
+      -(hw - 0.5 - lineW), -(hw - 0.5), -hw, -(hw + (r.bridge ? 0 : 0.4)), -(hw + flare)] : [hw + flare, hw + (r.bridge ? 0 : 0.4), hw, 0, -hw, -(hw + (r.bridge ? 0 : 0.4)), -(hw + flare)];
     const K = offs.length;
     return offs.map((o, k) => {
       let key = k <= 1 || k >= K - 3 ? 'side' : 'top';
       if (kind === 'asphalt' && (k === 3 || k === K - 5)) key = 'line';
       else if (kind === 'asphalt' && k === 5) key = 'dash';
-      return [o, k === 0 || k === K - 1 ? -3 : k === 1 || k === K - 2 ? -0.3 : 0, k === K - 1 ? null : key];
+      return [o, k === 0 || k === K - 1 ? skirt : k === 1 || k === K - 2 ? -0.3 : 0, k === K - 1 ? null : key];
     });
   }
   const [swL, swR] = r.sw, base = osm.split(':')[0];
   const paint = kind === 'asphalt' && !r.flat;
-  const edges = paint && ((MAIN.has(base) && !r.hasSidewalk) || school);
+  const edges = edgeLines(r, school);
   const centre = paint && !school && MAIN.has(base) && !r.oneway;
   const top = r.flat ? 'pave' : 'top';
   const cols = [];
   const side = (sw, sgn) => {                    // outer part of one side, listed from the outside in
     const o = q => sgn * q;
-    if (sw) return [[o(hw + sw + 1.2), -3, 'side'], [o(hw + sw + 0.3), KERB - 0.3, 'side'], [o(hw + sw), KERB, 'walk'],
+    if (sw) return [[o(hw + sw + flare), skirt, 'side'], [o(hw + sw + (r.bridge ? 0 : 0.3)), KERB - 0.3, 'side'], [o(hw + sw), KERB, 'walk'],
       [o(hw + 0.15), KERB, 'kerb'], [o(hw), KERB, 'kerb'], [o(hw), 0, top]];
-    return [[o(hw + 1.2), -3, 'side'], [o(hw + 0.4), -0.3, 'side'], [o(hw), 0, top]];
+    return [[o(hw + flare), skirt, 'side'], [o(hw + (r.bridge ? 0 : 0.4)), -0.3, 'side'], [o(hw), 0, top]];
   };
   cols.push(...side(swL, 1));
   if (far) cols[cols.length - 1][2] = top;
@@ -109,28 +118,40 @@ function colourOf(key, style, dashOn) {
 }
 
 // one batch → { pos, col } triangles (world coordinates)
-function stripTriangles(batch, far) {
+function stripTriangles(D, batch, far) {
   const P = [], C = [];
   const step = far ? 2 : 1;
   for (const { r, a, b } of batch) {
     const { x, z, y, c, lx, lz } = r;
     const school0 = campusRoad(x[a], z[a], r.kind);
-    let cols = columns(r, school0, far), K = cols.length;
-    const at = (i, k) => { const [o, dy] = cols[k]; return [x[i] + lx[i] * o, y[i] + c[i] * o + dy, z[i] + lz[i] * o]; };
-    for (let i = a; i < b; i += step) {
-      const j = Math.min(b, i + step);
+    const special = !!r.widen || !!r.osm?.split(':')[0].endsWith('_link');
+    // Keep columns() independent of ramp geometry (the bridge package also adjusts its skirts).
+    const layout = school => columns(r, school, far).map(q =>
+      special && (q[2] === 'line' || (q[2] === 'dash' && r.osm?.includes('_link'))) ? [q[0], q[1], 'top'] : q);
+    let cols = layout(school0), K = cols.length;
+    const at = (i, k) => { let [o, dy] = cols[k];
+      if (r.widen && Math.abs(o) >= r.hw) o += Math.sign(o) * (roadHalfWidth(r,i,Math.sign(o))-r.hw);
+      if (r.widen && Math.abs(o)<r.hw) return roadPoint(r,r.s,r.s[i],o,.02);
+      return [x[i] + lx[i] * o, y[i] + c[i] * o + dy, z[i] + lz[i] * o]; };
+    for (let i = a; i < b; i += r.widen ? 1 : step) {
+      const j = Math.min(b, i + (r.widen ? 1 : step));
       const school = campusRoad((x[i] + x[j]) / 2, (z[i] + z[j]) / 2, r.kind);
-      if (r.osm !== undefined && school !== school0) { cols = columns(r, school, far); K = cols.length; }
+      if (r.osm !== undefined && school !== school0) { cols = layout(school); K = cols.length; }
       const approach = r.kind !== 'trail' && campusDrive((x[i] + x[j]) / 2, (z[i] + z[j]) / 2);
       const style = approach ? 'campus' : school ? 'asphalt' : r.kind;
       const dashOn = !school && Math.floor(i / 2) % 2 === 0;
       for (let k = 0; k < K - 1; k++) {
+        if (r.widen && cols[k][1] === 0 && cols[k+1][1] === 0 && (cols[k][2] !== 'dash' || !dashOn)) continue;
         const rgb = colourOf(cols[k][2], style, dashOn);
         const p0 = at(i, k), p1 = at(i, k + 1), q1 = at(j, k + 1), q0 = at(j, k);
         P.push(...p0, ...p1, ...q1, ...p0, ...q1, ...q0);
         for (let t = 0; t < 6; t++) C.push(...rgb);
       }
     }
+    if (r.widen) laneWedges(r, a, b, far, P, C, RGB[TOP[r.kind]], RGB[SIDE[r.kind]]);
+    if (!far && special && r.kind === 'asphalt' && !r.flat) rampStripMarks(D, r, a, b, P, C, RGB[LINE], (x,z) => {
+      return edgeLines(r, campusRoad(x,z,r.kind));
+    });
     if (!far && r.stop) stopMarks(r, a, b, P, C);
   }
   return { P, C };
@@ -171,7 +192,7 @@ function stopMarks(r, a, b, P, C) {
 
 // one batch of strips as one mesh in world coordinates (far = the cheap version: no markings, half the samples)
 export function buildRoads(D, groundMat, batch, far = false) {
-  const { P, C } = stripTriangles(batch, far);
+  const { P, C } = stripTriangles(D, batch, far);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
   g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(C), 3));
@@ -206,7 +227,19 @@ export function* roadLODSteps(D, groundMat, batch) {
 
 // Junction pieces: a fan from the centre over the ring (road ends joined by curved corners), plus a sloped skirt
 // along the open (corner) edges so the piece meets the ground like the strips' sides do.
-export function buildJunctions(list, groundMat) {
+export function buildJunctions(list, groundMat, far) {
+  if (far === undefined && list.some(j => j.gore)) {
+    const group = new THREE.Group(), gores = list.filter(j => j.gore), ordinary = list.filter(j => !j.gore);
+    if (ordinary.length) group.add(buildJunctions(ordinary, groundMat, false));
+    const xs = gores.flatMap(j => j.ring.map(q => q[0])), zs = gores.flatMap(j => j.ring.map(q => q[1]));
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+    const rad = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) / 2;
+    const lod = new THREE.LOD(); lod.position.set(cx, 0, cz);
+    for (const [cheap, dist] of [[false, 0], [true, FAR_AT + rad]]) {
+      const mesh = buildJunctions(gores, groundMat, cheap); mesh.position.set(-cx, 0, -cz); lod.addLevel(mesh, dist);
+    }
+    group.add(lod); return group;
+  }
   const P = [], Cc = [];
   const tri = (a, b, d, col) => {
     // keep every face pointing up / outward-up
@@ -221,6 +254,7 @@ export function buildJunctions(list, groundMat) {
     const c = [j.c[0], j.c[2], j.c[1]];
     const v = q => [q[0], q[2], q[1]];
     for (let k = 0; k < n; k++) tri(c, v(R[k]), v(R[(k + 1) % n]), top);
+    if (j.gore && !far) goreMarks(j, P, Cc, RGB[LINE]);
     for (let k = 0; k < n; k++) {
       if (!R[k][3]) continue;
       const a = R[k], b = R[(k + 1) % n];

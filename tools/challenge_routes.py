@@ -46,7 +46,10 @@ CHALLENGES = [
          ramp_every=350, run=45, bend=0.5, gate_clear=30),
     dict(id='bike-north-scramble', vehicle='bike', name='North woods scramble', desc='Campus up through the north trails to the far ridge, jumps all the way.',
          via=[(-600, 40), (-1140, -380), (-1000, -820), (-560, -1000), (-260, -760)], cost=DIRT, gap=220,
-         ramp_every=330, run=45, bend=0.5, gate_clear=30),
+         ramp_every=330, run=45, bend=0.5, gate_clear=30,
+         # The blanket 22 m hairpin opening here includes forest beside the trail.
+         # Keep riders in the bend instead of allowing a high-speed orbit outside it.
+         wall_caps=[dict(x=-20, z=-330, radius=70, half=6)]),
     dict(id='bike-gravel-run', vehicle='bike', name='Gravel run', desc='Campus out along the gravel roads to the northeast fields.',
          via=[(-200, -60), (250, -280), (720, -1240), (1300, -1240)], cost={'gravel': 1.0, 'trail': 1.1, 'asphalt': 3.0}, gap=300,
          ramp_every=450, run=70, bend=0.4, gate_clear=40),
@@ -235,7 +238,13 @@ for c in CHALLENGES:
         return abs((_hd[b] - _hd[a] + np.pi) % (2 * np.pi) - np.pi)
     _hw0 = half_width
     def half_width(j):
-        return max(_hw0(j), 11.0) if turn_at(j) > math.radians(100) else _hw0(j)
+        hw = max(_hw0(j), 11.0) if turn_at(j) > math.radians(100) else _hw0(j)
+        for cap in c.get('wall_caps', []):
+            d = float(np.hypot(F[j][0] - cap['x'], F[j][1] - cap['z']))
+            # Ease back to the normal corridor over the outer 20 m, avoiding a wall step.
+            blend = min(1.0, max(0.0, (cap['radius'] - d) / 20.0))
+            hw = min(hw, hw + (cap['half'] - hw) * blend)
+        return hw
     track = [[round(float(F[j][0]), 2), round(float(F[j][1]), 2), round(half_width(j), 2)]
              for j in list(range(0, len(F), 2)) + [len(F) - 1]]
     simple = resample(line, 8.0)

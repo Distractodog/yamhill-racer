@@ -73,7 +73,7 @@ export class Glider {
     const c = this.car, W = c.world; let low = Infinity;
     for (const wh of c.wheels) {
       (wh.mount ? _w.copy(wh.mount) : _w.set(0, 0, wh.z || 0)).applyQuaternion(c.quat).add(c.pos);
-      low = Math.min(low, _w.y - Math.max(W.heightAt(_w.x, _w.z), W.waterLevelAt(_w.x, _w.z)));
+      low = Math.min(low, _w.y - Math.max(W.heightAt(_w.x, _w.z, _w.y), W.waterLevelAt(_w.x, _w.z)));
     }
     return low - (c.wheelReach ? c.wheelReach() : c.t.restLength + 0.38);
   }
@@ -197,7 +197,7 @@ export class Glider {
     if (this.t > 0.3 && this.agl < 0.05) {
       const sink = -c.vel.y, upY = _up.set(0, 1, 0).applyQuaternion(c.quat).y;
       const noseDown = _fw.set(0, 0, 1).applyQuaternion(c.quat).y < -0.5;
-      const wet = W.waterLevelAt(c.pos.x, c.pos.z) > W.heightAt(c.pos.x, c.pos.z);
+      const wet = W.waterLevelAt(c.pos.x, c.pos.z) > W.heightAt(c.pos.x, c.pos.z, c.pos.y);
       if (upY > P.landUp && sink < P.landSink && !noseDown) {
         this.fold(wet ? 'water' : 'landed');
         this.say(wet ? 'Splashdown' : sink < 4 ? 'Smooth landing' : 'Landed', 1.8);
@@ -206,7 +206,7 @@ export class Glider {
     }
     if (this.t > 0.3) {
       if (c.collideGround) c.collideGround();
-      else if (c.pos.y < W.heightAt(c.pos.x, c.pos.z) + 0.25) c.hit = 1;     // a body without a ground box (bike)
+      else if (c.pos.y < W.heightAt(c.pos.x, c.pos.z, c.pos.y) + 0.25) c.hit = 1;     // a body without a ground box (bike)
       if (c.hit > 0) { this.crash('crash'); return; }
     }
     if (this.hitTree()) return;
