@@ -5,12 +5,13 @@
 // Plain scratch tiles are adapted in memory for the current packed-v3 game reader; game files stay untouched.
 // Adds an overhead-gore close-up at the lane separation when taper metadata is available.
 // Records page errors and 5 s frame timings per view; compare the same views against the baseline branch.
+// --audit <ramps-audit.json> captures every audit row; omit --assets to use the rebuilt world.
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 
-const SPOTS = {
+let SPOTS = {
   'RJ-001': { x: 3621, z: 2363, name: 'Sheridan highway exit' },
   'RJ-004': { x: 20268, z: -9741, name: 'McMinnville highway exit' },
   'RJ-045': { x: 17438, z: -8664, name: 'West bypass left merge' },
@@ -18,7 +19,13 @@ const SPOTS = {
 
 const args = process.argv.slice(2), opt = {};
 for (let i = 0; i < args.length; i += 2) opt[args[i].replace(/^--/, '')] = args[i + 1];
-if (!opt.out) { console.log('usage: node tools/ramp_mark_shots.mjs --out <dir> [--assets <dir>[,<dir>]] [--url <game url>] [--only RJ-001,...]'); process.exit(1); }
+if (opt.audit) {
+  const audit = JSON.parse(await fs.readFile(opt.audit, 'utf8'));
+  SPOTS = Object.fromEntries((audit.rows || audit).map(r => [r.id, {
+    x: r.x, z: r.z, name: `${r.type}: ${r.main?.name || r.main?.ref || r.id}`,
+  }]));
+}
+if (!opt.out) { console.log('usage: node tools/ramp_mark_shots.mjs --out <dir> [--assets <dir>[,<dir>]] [--audit <audit.json>] [--url <game url>] [--only RJ-001,...]'); process.exit(1); }
 await fs.mkdir(opt.out, { recursive: true });
 const only = opt.only ? new Set(opt.only.split(',')) : null;
 if (only) for (const id of only) if (!SPOTS[id]) throw Error(`Unknown spot ${id}; choose ${Object.keys(SPOTS).join(', ')}`);

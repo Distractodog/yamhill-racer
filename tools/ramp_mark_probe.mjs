@@ -1,16 +1,16 @@
 // Node-only geometry QA. Supply one or more scratch asset roots, e.g.:
 // node tools/ramp_mark_probe.mjs data/raw/rj2/new-sh data/raw/rj2/new-w data/raw/rj2/new-mc
 import fs from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import assert from 'node:assert/strict';
 import { prepRoad } from '../game/src/data.js';
 import { buildRoads, buildJunctions, edgeLines } from '../game/src/roads.js';
-import { readTileData } from '../game/src/tilepack.js';
+import { decodeGeometry } from '../game/src/geometrycodec_v3.js';
 import { roadArc, roadPoint, laneWidth, rampNoses } from '../game/src/rampmarks.js';
 import { roadEdge, triangleHeight } from '../game/src/ramps.js';
 import * as THREE from 'three';
 const roots = process.argv.slice(2);
 assert(roots.length, 'supply scratch asset roots');
-const ab = async f => { const b = await fs.readFile(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
 const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
 const white = new THREE.Color(0xf2f2ea), yellow = new THREE.Color(0xf3c63c);
 function quads(mesh, rgb) {
@@ -51,7 +51,8 @@ for (const root of roots) {
   const W = JSON.parse(await fs.readFile(root + '/world.json'));
   for (const name of await fs.readdir(root + '/tiles')) {
     const dir = root + '/tiles/' + name + '/';
-    const tile = W.packed ? (await readTileData(f => ab(dir + f), W.packed)).tile : JSON.parse(await fs.readFile(dir + 'tile.json'));
+    const tile = W.packed ? decodeGeometry(JSON.parse(gunzipSync(await fs.readFile(dir + 'tile.json.gz')))) : JSON.parse(await fs.readFile(dir + 'tile.json'));
+    if (!tile.paths.some(p=>p.widen || p.cls?.includes('_link')) && !tile.junctions.some(j=>j.gore)) continue;
     const roads = tile.paths.map((p,i) => prepRoad(p,i)).filter(Boolean), D = { renderRoads: roads };
     const batch = roads.filter(r => r.widen || r.osm?.includes('_link')).map(r => ({r,a:0,b:r.n-1}));
     const near = buildRoads(D, mat, batch), far = buildRoads(D, mat, batch, true);

@@ -3,6 +3,7 @@
 // Without --url it serves game/ itself on a free local port; --assets then swaps in the tiles that a scratch build
 // (YR_TILES=2_1,3_1 YR_ASSETS=<dir> python tools/build_tiles.py) wrote, so decks can be looked at before a rebuild
 // (e.g. --assets <scratch-a>,<scratch-b> for 2_1,3_1 and 9_-4,10_-5). Every other file comes from game/.
+// --audit <bridges-audit.json> replaces the short spot list with every audit row; omit --assets for rebuilt tiles.
 // Per spot (car hidden and frozen): `side` 60 m off the deck, square to it; `under` low beside the river / on the road
 // below, looking at the crossing; `driver` on the deck 40 m before the spot, looking along it. Prints the deck's
 // heights every 10 m and whether the strip under the spot carries `bridge`. Page errors exit nonzero. Look at the images.
@@ -11,7 +12,7 @@ import http from 'node:http';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 
-const SPOTS = {
+let SPOTS = {
   'BR-009': { x: 3594, z: 1340, name: 'Sheridan Bridge (truss) over the South Yamhill' },
   'creek': { x: 5418, z: 1737, name: 'Hwy 18 creek bridge' },
   'BR-013': { x: 5147, z: 1811, name: 'Hwy 18 over the South Yamhill' },
@@ -24,7 +25,16 @@ const SPOTS = {
 
 const args = process.argv.slice(2), opt = {};
 for (let i = 0; i < args.length; i += 2) opt[args[i].replace(/^--/, '')] = args[i + 1];
-if (!opt.out) { console.log('usage: node tools/bridge_mesh_shots.mjs --out <dir> [--assets <dir>[,<dir>]] [--url <game url>] [--only BR-009,...]'); process.exit(1); }
+if (opt.audit) {
+  const audit = JSON.parse(await fs.readFile(opt.audit, 'utf8'));
+  SPOTS = Object.fromEntries((audit.rows || audit).map(r => {
+    const tags = r.tags?.[r.deck_way_id] || {};
+    const supported = r.roads?.some(p => p.way_id === r.deck_way_id && p.rendered_class);
+    return [r.id, { x: r.x, z: r.z, name: `${r.type}: ${r.under}`, under: ['overpass', 'underpass'].includes(r.type),
+      expectBridge: !!supported && !!tags.bridge && !['no', 'false', '0'].includes(tags.bridge) }];
+  }));
+}
+if (!opt.out) { console.log('usage: node tools/bridge_mesh_shots.mjs --out <dir> [--assets <dir>[,<dir>]] [--audit <audit.json>] [--url <game url>] [--only BR-009,...]'); process.exit(1); }
 await fs.mkdir(opt.out, { recursive: true });
 const only = opt.only ? new Set(opt.only.split(',')) : null;
 
@@ -88,9 +98,14 @@ try {
       const g = game; g.vehicles.switchTo('car'); const car = g.vehicles.current;
       const sleep = ms => new Promise(r => setTimeout(r, ms));
       const until = async (f, label) => { const t = performance.now(); while (!f()) { if (performance.now() - t > 120000) throw Error('timed out: ' + label); await sleep(100); } };
-      car.step = () => {}; g.keys.clear();
-      const hold = () => { car.pos.set(s.x, car.pos.y, s.z); car.vel.set(0, 0, 0); car._lastLoaded = null; car.savePrev(); car.interpolate(0); };
-      hold(); const timer = setInterval(hold, 100);
+      g.keys.clear(); g.setCam(2);
+      const hold = () => {
+        const y = g.world.loadedAt(s.x, s.z) ? g.world.heightAt(s.x, s.z) + .75 : car.pos.y;
+        car.pos.set(s.x, y, s.z); car.vel.set(0, 0, 0); car.ang.set(0, 0, 0);
+        car._lastLoaded = null; car.savePrev(); car.interpolate(0);
+      };
+      car.step = hold; hold(); g.camera.position.set(s.x, car.pos.y + 5, s.z);
+      const timer = setInterval(hold, 100);
       try { await until(() => g.world.loadedAt(s.x, s.z) && g.world.pendingTiles() === 0, 'tiles at the spot'); } finally { clearInterval(timer); }
       car.mesh.visible = false;
       // nearest render strip to the spot (a `bridge` one if any within 25 m): its direction there; then the nearest
@@ -119,7 +134,7 @@ try {
     console.log(`${id} ${s.name} (${s.x}, ${s.z}): deck ${info.deck.toFixed(2)} terrain ${info.terrain.toFixed(2)} ` +
       `water ${info.water === null ? '-' : info.water.toFixed(2)} strip ${JSON.stringify(info.strip)} below ${JSON.stringify(info.below)}`);
     console.log('  along the deck [m, heightAt, terrain]:', JSON.stringify(info.prof));
-    if (!info.strip?.bridge) { console.log('PAGE ERROR', id, 'no bridge strip: supply the BR-2 scratch assets'); failed = true; }
+    if (!info.strip?.bridge && s.expectBridge !== false) { console.log('PAGE ERROR', id, 'expected bridge strip missing from loaded tiles'); failed = true; }
     const geometry = await page.evaluate(() => {
       const meshes = []; game.world.group.traverse(o => {
         if (o.name === 'bridges' || o.name === 'bridges-far') meshes.push({ name: o.name, visible: o.visible, triangles: o.geometry.attributes.position.count / 3 });

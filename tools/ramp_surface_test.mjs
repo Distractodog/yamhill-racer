@@ -18,6 +18,7 @@ for (const [tx, tz] of W.tiles) {
     tbuf: ab(`${folder}/trees.bin`), pbuf: ab(`${folder}/ponds.bin`),
     tile: JSON.parse(fs.readFileSync(`${folder}/tile.json`)),
   };
+  if (!data.tile.paths.some(p => p.widen) && !data.tile.junctions.some(j => j.gore)) continue;
   const td = makeTileData(W, tx, tz, data);
   const grid = new Map(), key = (x,z) => `${Math.floor(x/10)},${Math.floor(z/10)}`;
   function add(A,B,C) {

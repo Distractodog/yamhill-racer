@@ -7,7 +7,7 @@ import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 const DT = 1 / 120, T = 256, TX = 100, TZ = 100, X = TX * T, Z = TZ * T;
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 const deck = (x, z) => 12 + 0.02 * (z - Z) + 0.03 * (x - X);
-function fixture(bridge = true) {
+function fixture(bridge = true, ramp = false) {
   const W = { tile: T, hstep: 2, hn: T / 2 + 1, hm: 2, tiles: [[TX, TZ]],
     extent: [X - T / 2, Z - T / 2, X + T / 2, Z + T / 2], spawn: [X, Z] };
   const N = W.hn + 2 * W.hm, H = new Float32Array(N * N), P = new Uint16Array(N * N);
@@ -21,6 +21,7 @@ function fixture(bridge = true) {
     { kind: 'gravel', w: 14, pts: [[X - 110, Z - 40], [X + 110, Z - 40]], yc: [[0, 0], [0, 0]] },
     { kind: 'asphalt', w: 14, bridge, pts: [[X, Z - 110], [X, Z + 110]], yc: [[9.8, 0.03], [14.2, 0.03]] },
   ];
+  if (ramp) Object.assign(paths[1], { cls: 'trunk_link', widen: [[1, 0, 220, 0, 6.5]] });
   const td = makeTileData(W, TX, TZ, { hbuf: H.buffer, pbuf: P.buffer, sbuf: S.buffer,
     tbuf: new ArrayBuffer(0), tile: { paths, physPaths: paths, rivers: { 1: 0.5 } } });
   const world = makeWorld(W); world.add(td); return world;
@@ -102,5 +103,15 @@ const worlds = [true, 'truss'].map(bridge => {
   console.log(`PASS: bridge=${JSON.stringify(bridge)} query thresholds, surfaces, water and normals`);
   return world;
 });
+for (const bridge of [true, 'truss']) {
+  const world = fixture(bridge, true); queries(world); worlds.push(world);
+  near(world.heightAt(X + 8, Z, 0), 0, 'below widened bridge lane');
+  near(world.heightAt(X + 8, Z, 12), deck(X + 8, Z), 'on widened bridge lane');
+  console.log(`PASS: bridge=${JSON.stringify(bridge)} with ramp triangles and widened lane`);
+}
 for (const world of worlds) { underpass(world); overpass(world); river(world); }
 console.log('PASS: bridge queries and car physics');
+if (process.argv[2]) {
+  const { checkBridgeWorld } = await import('./bridge_world_test.mjs');
+  await checkBridgeWorld(process.argv[2]);
+}
