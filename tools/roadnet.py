@@ -784,9 +784,8 @@ def _taper_fit(edges, deg, c, chain, s_cap=np.inf):
     b = _smoothstep((un - TP) / BL); lat_new = D + b * _plus(side * ln - D)
     Pn = Qn + (side * (lat_new - side * ln))[:, None] * F.at(un)[1]
     g = np.nonzero(lat_new - D >= GORE_W)[0]
-    new = np.vstack([Pn, rp[rc > s_ze + 0.5, :2]])
     return {'TP': TP, 'LD': LD, 'BL': BL, 'ze': float(un[-1]), 'ug': float(un[g[0]] if len(g) else un[-1]),
-            'D': D, 'side': side, 'pts': new, 'dirpt': F.at(min(10.0, F.L))[0][0, :2].copy(),
+            'D': D, 'side': side, 'head': Pn, 's_ze': s_ze, 'dirpt': F.at(min(10.0, F.L))[0][0, :2].copy(),
             'pull': round(float(np.interp(TP, uu, dd)), 1)}, None
 
 
@@ -845,9 +844,12 @@ def tapers(nodes, edges, log=None):
     recs = []
     for n, f in fits.items():
         c = at[n]; ri, rend = c['r']; R = edges[ri]
-        R['pts'] = f['pts'] if rend == 0 else f['pts'][::-1]
+        # splice this end's re-laid part onto the ramp as it is now: a ramp tapering at both ends keeps both (each
+        # fit stays within its own half, s_cap, so the far half it keeps is the other end's, already re-laid or not)
+        op = oriented(R, rend); new = np.vstack([f['head'], op[arclen(op) > f['s_ze'] + 0.5, :2]])
+        R['pts'] = new if rend == 0 else new[::-1]
         tp = list(R.get('taper', (False, False))); tp[rend] = True; R['taper'] = tp
-        recs.append({**{k: v for k, v in f.items() if k != 'pts'}, 'N': nodes[c['n']].copy(), 'n': c['n'],
+        recs.append({**{k: v for k, v in f.items() if k not in ('head', 's_ze')}, 'N': nodes[c['n']].copy(), 'n': c['n'],
                      'main': edges[c['m1'][0]], 'main2': edges[c['m2'][0]], 'ramp': R, 'rend': rend, 'w': R['w']})
     # the through road: one strip across the meet when its two halves are alike
     parent, idx, merged = {}, {id(e): i for i, e in enumerate(edges)}, 0
