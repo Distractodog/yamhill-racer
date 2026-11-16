@@ -1,10 +1,13 @@
 // The world controller is DOM-free so its lifecycle can be tested with a fake Net.
 export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}, lock = () => {}, timers = globalThis }) {
-  let mode = 'host', bump = true, snapshot = null, last = '', pending = null;
+  let mode = 'host', bump = true, snapshot = null, last = '', pending = null, sinceClock = 0;
+  const CLOCK_SEND = 30000;
   const listeners = [];
   const on = (type, fn) => { mp.on(type, fn); listeners.push([type, fn]); };
-  const read = () => ({ bump, tuning: structuredClone(tuning), atmosphere: { preset: atmosphere.preset } });
-  function apply(settings) {
+  // atmosphere: what the host shares (a change sends at once); its day/night clock goes with every send and every
+  // CLOCK_SEND ms, and guests ease into it (daycycle.js follow)
+  const read = () => ({ bump, tuning: structuredClone(tuning), atmosphere: atmosphere.shared ? atmosphere.shared() : { preset: atmosphere.preset } });
+  function apply(settings, restoring = false) {
     for (const kind of ['car', 'bike', 'jet']) {
       const source = settings?.tuning?.[kind];
       for (const key of Object.keys(tuning[kind])) {
@@ -12,15 +15,20 @@ export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}
         if (typeof value === 'number' && Number.isFinite(value)) tuning[kind][key] = value;
       }
     }
-    if (typeof settings?.atmosphere?.preset === 'string') atmosphere.setPreset(settings.atmosphere.preset, false);
+    if (restoring && atmosphere.unfollow) atmosphere.unfollow();
+    else if (atmosphere.follow) { if (settings?.atmosphere) atmosphere.follow(settings.atmosphere); }
+    else if (typeof settings?.atmosphere?.preset === 'string') atmosphere.setPreset(settings.atmosphere.preset, false);
     refresh();
   }
   function restore() {
-    if (snapshot) { apply(snapshot); snapshot = null; }
+    if (snapshot) { apply(snapshot, true); snapshot = null; }
     lock(false);
   }
   function publish() {
-    if (mp.inGame && mp.isHost) { const settings = read(); last = JSON.stringify(settings); mp.send({ t: 'world', mode, settings }); }
+    if (!mp.inGame || !mp.isHost) return;
+    const settings = read(); last = JSON.stringify(settings); sinceClock = 0;
+    if (atmosphere.clock) settings.atmosphere = { ...settings.atmosphere, ...atmosphere.clock() };
+    mp.send({ t: 'world', mode, settings });
   }
   on('connected', () => { mode = 'host'; bump = true; if (mp.isHost) publish(); });
   on('world', message => {
@@ -35,7 +43,10 @@ export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}
   const interval = timers.setInterval(() => {
     if (!mp.inGame || !mp.isHost) return;
     const next = JSON.stringify(read());
-    if (next === last) return;
+    if (next === last) {
+      if (atmosphere.clock && mode === 'host' && (sinceClock += 100) >= CLOCK_SEND) publish();
+      return;
+    }
     last = next; timers.clearTimeout(pending);
     pending = timers.setTimeout(() => { pending = null; publish(); }, 300);
   }, 100);
@@ -66,16 +77,16 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
   const toast = document.createElement('div'); toast.id = 'mp-toasts'; toast.setAttribute('role', 'status'); toast.setAttribute('aria-live', 'polite'); document.body.append(toast);
   let toastTimer, busy = false;
   function say(text) { toast.textContent = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.textContent = ''; }, 4500); }
-  const note = document.createElement('p'); note.id = 'mp-settings-note'; note.hidden = true; note.textContent = 'The host controls tuning and atmosphere while everyone uses the host’s settings.';
+  const note = document.createElement('p'); note.id = 'mp-settings-note'; note.hidden = true; note.textContent = 'The host controls tuning, time of day and weather while everyone uses the host’s settings.';
   document.getElementById('settings-title').parentElement.after(note);
   function lock(locked) {
     note.hidden = !locked;
-    for (const id of ['tuning-controls', 'atmosphere-presets']) { const el = document.getElementById(id); el.inert = locked; el.setAttribute('aria-disabled', String(locked)); }
+    for (const id of ['tuning-controls', 'atmosphere-controls']) { const el = document.getElementById(id); el.inert = locked; el.setAttribute('aria-disabled', String(locked)); }
     for (const controller of gui.controllersRecursive()) controller.disable(locked);
   }
   const world = createWorldSettings({ mp, tuning, atmosphere, lock, refresh: () => {
     gui.controllersRecursive().forEach(c => c.updateDisplay());
-    document.querySelectorAll('[data-preset]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.preset === atmosphere.preset)));
+    settings.refreshAtmosphere?.();
   } });
   let names = new Map(mp.players);
   function render() {

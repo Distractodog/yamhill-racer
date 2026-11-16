@@ -26,7 +26,7 @@ try {
   await page.keyboard.press('Escape');
   await openMenu(page); await shot('open');
   assert.deepEqual(await page.$$eval('#menu-panel > *', items => items.map(el => el.id)),
-    ['mp-button', 'vehicles-button', 'garage-button', 'atmosphere-button', 'settings-button', 'help-button', 'suggest-button']);
+    ['mp-button', 'vehicles-button', 'garage-button', 'settings-button', 'help-button', 'suggest-button']);
   await page.keyboard.press('KeyW');
   assert.equal(await page.evaluate(() => game.keys.size), 0);
   await page.focus('#suggest-button'); await page.keyboard.press('Tab');
@@ -40,7 +40,6 @@ try {
     ['mp-button', '#mp-panel', '#mp-close'],
     ['vehicles-button', '#veh-menu', '#veh-menu .vp-close'],
     ['garage-button', '#cosmetic-garage', '.garage-close'],
-    ['atmosphere-button', '#atmosphere-content', '#settings-close'],
     ['settings-button', '#tuning-content', '#settings-close'],
     ['help-button', '#help-content', '#settings-close'],
   ]) {

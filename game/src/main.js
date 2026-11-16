@@ -104,7 +104,8 @@ if (world.surfaceAt(spawn[0], spawn[1]) !== 3) spawn = world.placeOn(sx, sz, 4, 
 car.reset(...spawn);
 const effects = new Effects(scene);
 const drivingFX = new DrivingFX(scene);
-const atmosphere = createAtmosphere({ scene, sun, sunDirection: SUN_DIR, world });
+// day/night cycle + weather (atmosphere.js, daycycle.js); ?daySpeed=60 runs the clock 60× faster (testing)
+const atmosphere = createAtmosphere({ scene, sun, sunDirection: SUN_DIR, world, speed: Number(new URLSearchParams(location.search).get('daySpeed')) || 1 });
 settings.bindAtmosphere(atmosphere, atmosphere.presets);
 const vehicleLights = createVehicleLights(scene);
 const audio = new CarAudio();

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createWorldSettings } from '../game/src/mp/menu.js';
+import { createDayCycle } from '../game/src/daycycle.js';
 class FakeNet {
   me = { id: 'guest' }; inGame = true; isHost = false; players = new Map([['host', { host: true }]]); listeners = new Map(); sent = [];
   on(t, fn) { if (!this.listeners.has(t)) this.listeners.set(t, new Set()); this.listeners.get(t).add(fn); }
@@ -30,4 +31,27 @@ atmosphere.preset = 'midday'; poll(); assert.equal(timeouts.size, 1); for (const
 controller.setMode('own'); assert.equal(mp.sent.at(-1).mode, 'own');
 mp.isHost = false; const count = mp.sent.length; controller.setMode('host'); assert.equal(mp.sent.length, count);
 controller.dispose(); assert.equal(poll, null); assert.equal([...mp.listeners.values()].every(set => set.size === 0), true); assert.ok(refreshes > 0);
-console.log('PASS: world sync, repeated snapshots/restores, all disconnect paths, host authorization, debounce, atmosphere persistence, disposal');
+// Day/night cycle (daycycle.js): the host sends its clock with every change and every 30 s; a guest follows it and
+// goes back to its own settings afterwards.
+{
+  const hostCycle = createDayCycle({ seed: 2 }), guestCycle = createDayCycle({ seed: 8, settings: { cycle: false, look: 'golden', weather: 'clear' } });
+  const hostNet = new FakeNet(); hostNet.isHost = true; hostNet.me = { id: 'host' };
+  const hostWorld = createWorldSettings({ mp: hostNet, tuning: structuredClone(own), atmosphere: hostCycle, timers });
+  hostNet.emit('connected'); const first = hostNet.sent.at(-1).settings.atmosphere;
+  assert.equal(first.cycle, true); assert.equal(first.time, 0); assert.equal(first.speed, 1); assert.equal(typeof first.raining, 'boolean');
+  for (let i = 0; i < 100; i++) hostCycle.update(1);
+  for (let i = 0; i < 299; i++) poll();
+  assert.equal(hostNet.sent.length, 1, 'no clock resend before 30 s'); poll(); assert.equal(hostNet.sent.length, 2, 'clock resent every 30 s');
+  assert.equal(hostNet.sent.at(-1).settings.atmosphere.time, 100);
+  hostCycle.jump('night'); poll(); assert.equal(timeouts.size, 1, 'a jump is a change'); for (const fn of timeouts.values()) fn(); timeouts.clear();
+  const sent = hostNet.sent.at(-1); assert.equal(sent.settings.atmosphere.time, 33 * 60);
+  hostWorld.dispose();
+  const guestNet = new FakeNet(), guestWorld = createWorldSettings({ mp: guestNet, tuning: structuredClone(own), atmosphere: guestCycle, timers });
+  guestNet.emit('world', { ...sent, from: 'host' });
+  assert(guestCycle.following); assert.equal(guestCycle.phase, 'night'); assert.equal(guestCycle.settings.cycle, true);
+  guestNet.emit('world', { ...sent, from: 'host', mode: 'own' });
+  assert(!guestCycle.following); assert.deepEqual(guestCycle.settings, { cycle: false, look: 'golden', weather: 'clear' });
+  guestNet.emit('world', { ...sent, from: 'host' }); guestNet.emit('disconnected'); assert(!guestCycle.following);
+  guestWorld.dispose();
+}
+console.log('PASS: world sync, repeated snapshots/restores, all disconnect paths, host authorization, debounce, atmosphere persistence, disposal, day/night clock + weather to guests');

@@ -5,14 +5,12 @@ export function createSettings() {
   const panel = document.getElementById('settings-panel');
   const settingsButton = document.getElementById('settings-button');
   const helpButton = document.getElementById('help-button');
-  const atmosphereButton = document.getElementById('atmosphere-button');
-  const atmosphereContent = document.getElementById('atmosphere-content');
   const title = document.getElementById('settings-title');
   const tuning = document.getElementById('tuning-content');
   const help = document.getElementById('help-content');
   const closeButton = document.getElementById('settings-close');
   let current = null, ready = false, changed = () => {}, beforeOpen = () => {}, returnFocus = null;
-  let external = null;
+  let external = null, refreshAtmosphere = () => {};
   const menu = createGameMenu({
     onOpen: () => { close(); closeExternal(); closeWelcome(); beforeOpen(); },
     onChange: () => changed(),
@@ -39,24 +37,23 @@ export function createSettings() {
   function close() {
     if (!current) return;
     current = null; panel.hidden = true;
-    settingsButton.setAttribute('aria-expanded', 'false'); helpButton.setAttribute('aria-expanded', 'false'); atmosphereButton.setAttribute('aria-expanded', 'false');
+    settingsButton.setAttribute('aria-expanded', 'false'); helpButton.setAttribute('aria-expanded', 'false');
     changed(); returnFocus?.focus({ preventScroll: true });
   }
-  function show(view, trigger = view === 'tuning' ? settingsButton : view === 'atmosphere' ? atmosphereButton : helpButton) {
+  function show(view, trigger = view === 'tuning' ? settingsButton : helpButton) {
     if (!ready) return;
     closeExternal();
     if (current === view) { close(); return; }
     menu.close(); beforeOpen(); returnFocus = trigger?.closest('#menu-panel') ? document.getElementById('menu-button') : trigger; current = view;
-    title.textContent = view === 'tuning' ? 'Vehicle tuning' : view === 'atmosphere' ? 'Atmosphere' : 'How to play';
-    tuning.hidden = view !== 'tuning'; help.hidden = view !== 'help'; atmosphereContent.hidden = view !== 'atmosphere'; panel.hidden = false;
+    title.textContent = view === 'tuning' ? 'Settings' : 'How to play';
+    tuning.hidden = view !== 'tuning'; help.hidden = view !== 'help'; panel.hidden = false;
     settingsButton.setAttribute('aria-expanded', String(view === 'tuning'));
     helpButton.setAttribute('aria-expanded', String(view === 'help'));
-    atmosphereButton.setAttribute('aria-expanded', String(view === 'atmosphere'));
+    refreshAtmosphere();
     changed(); closeButton.focus({ preventScroll: true });
   }
   settingsButton.addEventListener('click', () => show('tuning'));
   helpButton.addEventListener('click', () => show('help'));
-  atmosphereButton.addEventListener('click', () => show('atmosphere'));
   document.getElementById('settings-help').addEventListener('click', () => show('help'));
   closeButton.addEventListener('click', close);
   addEventListener('keydown', e => {
@@ -102,21 +99,46 @@ export function createSettings() {
     get open() { return current !== null || welcomeOpen || external !== null || menu.open; }, close() { menu.close(); close(); closeExternal(); }, showWelcome, closeWelcome,
     openExternal(panel, onClose) { menu.close(); closeExternal(); closeWelcome(); close(); beforeOpen(); external = { panel, close: onClose }; changed(); },
     get welcomeOpen() { return welcomeOpen; },
+    // Settings → Time of day & weather (atmosphere.js): cycle on/off, jump the clock, weather, or one fixed look
     bindAtmosphere(atmosphere, presets = atmosphere.presets) {
+      const cycle = document.getElementById('atmo-cycle'), options = document.getElementById('atmo-cycle-options');
+      const fixed = document.getElementById('atmo-fixed'), now = document.getElementById('atmo-now');
       const host = document.getElementById('atmosphere-presets');
+      const option = (parent, data, value, text) => {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'atmo-option'; button.dataset[data] = value; button.textContent = text;
+        parent.append(button); return button;
+      };
+      const times = atmosphere.phases.map(p => option(document.getElementById('atmo-time'), 'time', p.id, p.name));
+      const weathers = [['random', 'Random'], ['clear', 'Always clear'], ['rain', 'Always rain']].map(([id, name]) => option(document.getElementById('atmo-weather'), 'weather', id, name));
       host.replaceChildren();
-      const buttons = [];
-      const refresh = () => buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.preset === atmosphere.preset)));
+      const looks = [];
       for (const preset of presets) {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'atmosphere-option'; button.dataset.preset = preset.id;
         const swatch = document.createElement('span'); swatch.className = 'atmosphere-swatch'; swatch.setAttribute('aria-hidden', 'true');
         const label = document.createElement('span'); label.textContent = preset.name || preset.label || preset.id;
-        button.append(swatch, label); button.addEventListener('click', () => { atmosphere.setPreset(preset.id); refresh(); });
-        buttons.push(button); host.append(button);
+        button.append(swatch, label); button.addEventListener('click', () => atmosphere.setPreset(preset.id));
+        looks.push(button); host.append(button);
       }
-      refresh(); atmosphereButton.disabled = false;
+      cycle.addEventListener('change', () => atmosphere.set({ cycle: cycle.checked }));
+      times.forEach(b => b.addEventListener('click', () => atmosphere.jump(b.dataset.time)));
+      weathers.forEach(b => b.addEventListener('click', () => atmosphere.set({ weather: b.dataset.weather })));
+      const phaseName = id => atmosphere.phases.find(p => p.id === id)?.name || '';
+      refreshAtmosphere = () => {
+        const s = atmosphere.settings;
+        cycle.checked = s.cycle; options.hidden = !s.cycle; fixed.hidden = s.cycle;
+        now.textContent = s.cycle ? `· ${phaseName(atmosphere.phase)}${atmosphere.rain > .5 ? ', raining' : ''}` : '';
+        times.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === atmosphere.phase)));
+        weathers.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.weather === s.weather)));
+        looks.forEach(b => b.setAttribute('aria-pressed', String(!s.cycle && b.dataset.preset === s.look)));
+      };
+      atmosphere.onChange?.(refreshAtmosphere);
+      // the phase and rain move on by themselves: keep the open panel current
+      setInterval(() => { if (current === 'tuning') refreshAtmosphere(); }, 1000);
+      refreshAtmosphere();
     },
+    refreshAtmosphere: () => refreshAtmosphere(),
     ready(onChange, onOpen) { changed = onChange; beforeOpen = onOpen; ready = true; menu.ready(); settingsButton.disabled = false; helpButton.disabled = false; showWelcome(); },
   };
 }

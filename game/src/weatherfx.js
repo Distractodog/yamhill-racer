@@ -1,6 +1,6 @@
 // Nearby rain, one reusable line buffer and one draw call. Cosmetic only.
 import * as THREE from 'three';
-const WIDTH = 44, HEIGHT = 30, COUNT = 360;
+const WIDTH = 44, HEIGHT = 30, COUNT = 360, OPACITY = .35;
 const wrap = (n, span) => ((n % span) + span) % span - span / 2;
 export function createRain({ scene, count = COUNT } = {}) {
   const n = Number.isFinite(count) ? Math.max(1, Math.min(COUNT, Math.floor(count))) : COUNT;
@@ -10,13 +10,20 @@ export function createRain({ scene, count = COUNT } = {}) {
   for (let i = 0; i < n; i++) { seeds[i * 3] = random() * WIDTH; seeds[i * 3 + 1] = random() * HEIGHT; seeds[i * 3 + 2] = random() * WIDTH; }
   const geometry = new THREE.BufferGeometry();
   const position = new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage); geometry.setAttribute('position', position);
-  const material = new THREE.LineBasicMaterial({ color: '#c1d7df', transparent: true, opacity: .35, depthWrite: false, fog: true });
+  const material = new THREE.LineBasicMaterial({ color: '#c1d7df', transparent: true, opacity: OPACITY, depthWrite: false, fog: true });
   const mesh = new THREE.LineSegments(geometry, material); mesh.name = 'nearby-rain'; mesh.frustumCulled = false; mesh.visible = false; mesh.renderOrder = 2;
   scene.add(mesh);
+  // 0..1: a shower fading in / out thins the streaks; none = no buffer work and no draw
+  function setAmount(value) {
+    if (disposed) return;
+    const a = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+    enabled = a > .01; mesh.visible = enabled; material.opacity = OPACITY * a;
+  }
   return {
     get active() { return enabled; },
     get count() { return n; },
-    setEnabled(value) { if (disposed) return; enabled = !!value; mesh.visible = enabled; },
+    setEnabled(value) { setAmount(value ? 1 : 0); },
+    setAmount,
     update(dt, camera) {
       if (!enabled || disposed || !camera) return;
       const at = camera.position || camera;
