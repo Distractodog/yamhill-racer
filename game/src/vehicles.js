@@ -1,9 +1,11 @@
-// Vehicle garage: the car, the dirt bike and the jet, which one you're in, and the V picker.
+// Vehicle garage: the car, the dirt bike and the jet (or another aircraft type), which one you're in, and the V picker.
 // `player` is a stand-in that always points at the vehicle you're in, so code that was handed "the car" once
 // (challenges, pin guide, effects, sound, camera) follows a switch without knowing about it.
 import { Car } from './car.js';
 import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
+import { Heli } from './heli.js';
+import { typeInfo } from './vehicletypes.js';
 import { activeProxy } from './vehicle.js';
 import { createVehicleTypeSelector } from './vehicletypeselector.js';
 
@@ -36,14 +38,19 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   const all = { car, bike, jet };
   // Obsolete saved selections no longer choose a vehicle on startup.
   try { globalThis.localStorage?.removeItem('yr-vehicle-1'); } catch {}
-  const types = createVehicleTypeSelector(all, { canSwitch });
+  // a jet type with its own flight model (vehicletypes.js physics.flight) flies its own vehicle in the jet's slot
+  const heli = new Heli(world), flights = { heli };
+  const jetFor = id => flights[typeInfo('jet', id)?.physics?.flight] || jet;
+  const types = createVehicleTypeSelector(all, { canSwitch, vehicleFor: (kind, id) => kind === 'jet' ? jetFor(id) : all[kind] });
+  all.jet = jetFor(types.getType('jet'));
   let cur = car, sel = 0, open = false;
   scene.add(car.mesh);
   const player = activeProxy(() => cur);
   const listeners = [];
 
   // put `next` where the current vehicle is, facing the same way (a jet switched to in the air keeps flying)
-  function switchTo(kind, { place = true } = {}) {
+  // air: an aircraft type swap in flight keeps flying at exactly this height, however low
+  function switchTo(kind, { place = true, air = false } = {}) {
     const next = all[kind]; if (!next) return false;
     if (next === cur) return true;
     const p = cur.pos.clone(), yaw = cur.heading(), sp = cur.vel.length();
@@ -53,7 +60,8 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     next.safe = cur.safe.slice();
     next._lastLoaded = cur._lastLoaded;
     if (place) {
-      if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
+      if (kind === 'jet' && air) keepFlying(next, p, cur.vel, yaw);
+      else if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
       else next.reset(p.x, p.z, yaw);
     }
     scene.add(next.mesh);
@@ -61,6 +69,33 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     listeners.forEach(f => f(next));
     return true;
   }
+
+  // an aircraft swapped in flight takes over at exactly this spot and height (placeInAir alone keeps a floor above the
+  // ground for other switches)
+  function keepFlying(v, p, vel, yaw) {
+    const sp = vel.length();
+    v.placeInAir(p.x, p.y, p.z, (sp < 5 ? 0 : Math.atan2(vel.x, vel.z)) || yaw, Math.max(400, sp * 3.6));
+    v.pos.y = p.y; v.afterReset();
+  }
+
+  // Garage type change in flight: flying stays flying. To / from a type with its own flight model, the jet slot's
+  // vehicle is swapped in place; between types of the same vehicle (the selector resets it onto the ground) it is put
+  // back in the air where it was.
+  let flight = null;
+  const setType = types.setType;
+  types.setType = (kind, id) => {
+    const v = all.jet;
+    flight = kind === 'jet' && cur === v && v.mode === 'air' ? { p: v.pos.clone(), vel: v.vel.clone(), yaw: v.heading() } : null;
+    try { return setType(kind, id); } finally { flight = null; }
+  };
+  types.onTypeChange(kind => {
+    if (kind !== 'jet') return;
+    const next = jetFor(types.getType('jet')), was = all.jet;
+    if (next !== was) {
+      all.jet = next; next.respawn = was.respawn; was.respawn = null;
+      if (cur === was) switchTo('jet', { air: was.mode === 'air' });
+    } else if (flight && cur === next) keepFlying(next, flight.p, flight.vel, flight.yaw);
+  });
 
   // ---- V picker
   if (typeof document !== 'undefined') {
@@ -71,7 +106,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   function render() {
     menu.innerHTML = `<h2>Vehicles</h2>` + VEHICLES.map((v, i) =>
       `<button class="veh-item${i === sel ? ' sel' : ''}${v.kind === cur.kind ? ' cur' : ''}" data-k="${v.kind}">
-        <span class="veh-icon">${v.icon}</span><span><div class="veh-name">${all[v.kind]?.name || v.name}</div><div class="veh-help">${all[v.kind]?.typePhysics?.noWheelie ? v.help.replace('Shift wheelie · ', '') : v.help}</div></span>
+        <span class="veh-icon">${v.icon}</span><span><div class="veh-name">${all[v.kind]?.name || v.name}</div><div class="veh-help">${all[v.kind]?.help || (all[v.kind]?.typePhysics?.noWheelie ? v.help.replace('Shift wheelie · ', '') : v.help)}</div></span>
         <span class="veh-key">${i + 1}</span></button>`).join('') +
       `<div class="veh-hint">1–${VEHICLES.length}, ↑/↓ + Enter or click · V or Esc to close${canSwitch() ? '' : ' · switching ends the race you\'re in'}</div>`;
     menu.querySelectorAll('.veh-item').forEach(b => b.addEventListener('click', () => pick(b.dataset.k)));
@@ -92,7 +127,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   }, true);
 
   return {
-    player, all, car, bike, jet, switchTo, show, close, ...types,
+    player, all, car, bike, get jet() { return all.jet; }, heli, aircraft: [jet, heli], switchTo, show, close, ...types,
     get current() { return cur; }, get open() { return open; },
     onSwitch(f) { listeners.push(f); },
   };

@@ -334,6 +334,7 @@ function buildBody(kind, colors, tune, type = null) {
   model.visible = false;
   if (kind === 'jet') ud.setGear(1);
   const pz = makePuppet(kind, model, tune);
+  pz.type = typeInfo(kind, type)?.id || type;
   pz.typePhysics = type ? typeInfo(kind, type)?.physics || null : null;      // Car syncMesh: wheel radius, body lean
   const lenses = createVehicleLightLenses(model, kind);                        // after the merge: lenses stay their own
   return { kind, type, model, pz, lenses, anim: { w: [], ws: [], jc: [0, 0, 0] }, wreck: false, gp: null };
@@ -547,7 +548,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     const pz = b.pz, kind = b.kind, moving = mode !== 'hold' && mode !== 'early';
     pz.renderPos.copy(P); pz.renderQuat.copy(Q); pz.vel.copy(moving ? V : W.set(0, 0, 0));
     animate(pz, animAt(r.track.buf, now() - DELAY, b.anim), r, V, F, dt, moving);
-    SYNC[kind].call(pz, dt);
+    (pz.mesh.userData.syncMesh || SYNC[kind]).call(pz, dt);     // a type with its own animation (helicopter rotors)
     if (kind === 'jet') {
       const wreck = pz.mode === 'crashed';
       if (wreck !== b.wreck) { b.wreck = wreck; wreckLook(pz.mesh, wreck); }
@@ -720,7 +721,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
       frontYaw: r3(ud.wheels[0]?.holder.rotation.y ?? 0), roll: r3(ud.bodyPivot?.rotation.z ?? ud.lean?.rotation.z ?? 0),
       pitch: r3(ud.bodyPivot?.rotation.x ?? ud.rider?.rotation.x ?? 0), bars: ud.bars ? r3(ud.bars.rotation.y) : null,
       wheel: ud.wheel ? r3(ud.wheel.rotation.z) : null,
-      gear: b.kind === 'jet' ? r3(pz.gear) : null, flame: b.kind === 'jet' ? (ud.flame.visible ? r3(ud.flame.scale.z) : 0) : null,
+      gear: b.kind === 'jet' ? r3(pz.gear) : null, flame: b.kind === 'jet' ? (ud.flame?.visible ? r3(ud.flame.scale.z) : 0) : null, rotor: ud.mainRotor ? r3(ud.mainRotor.rotation.y) : null,
       glider: b.gp ? r3(b.gp.open) : 0,
       lights: b.lenses.group.visible ? b.lenses.group.children.filter(o => o.visible).map(o => o.name.replace('vehicle-light-', '')) : [] };
   };

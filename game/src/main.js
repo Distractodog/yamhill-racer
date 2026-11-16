@@ -165,7 +165,7 @@ settings.ready(clearKeys, () => {
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
 const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, gui, beforeOpen: () => garage.close() });
-const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, vehicles.jet],
+const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft],
   predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
 addEventListener('keydown', e => {
   if (e.gameUI) return;
@@ -178,7 +178,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
   if ((e.code === 'KeyL' || e.key?.toLowerCase() === 'l') && !e.repeat) vehicleLights.toggle(atmosphere.night);
   if (e.code === 'KeyU' && !e.repeat) toggleUnits();
-  if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.glide) vehicles.current.glide.toggle(); else vehicles.current.say?.('The jet has its own wings', 1.5); }
+  if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.glide) vehicles.current.glide.toggle(); else vehicles.current.say?.(vehicles.current.mesh.userData.mainRotor ? 'The helicopter has no glider' : 'The jet has its own wings', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => { keys.delete(e.code); letters.delete(e.code); });
@@ -279,7 +279,7 @@ function updateJetCamera(dt) {
   const upB = tmp.set(0, 1, 0).lerp(jUp, roll).normalize();
   if (camMode === 2) {
     camCeiling = Infinity;
-    camera.position.copy(rp).addScaledVector(jUp, 1.05).addScaledVector(fw, 2.9);
+    camera.position.copy(rp).addScaledVector(jUp, v.cam?.eye?.[0] ?? 1.05).addScaledVector(fw, v.cam?.eye?.[1] ?? 2.9);   // eye: aircraft types' seat
     camLook.copy(camera.position).add(fw.clone().multiplyScalar(50));
     camera.up.copy(jUp);
   } else {

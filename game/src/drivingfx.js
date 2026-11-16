@@ -54,7 +54,7 @@ export class DrivingFX {
         this.p.copy(wheel.contactPoint);this.p.y+=.1;this.emit(this.p,car.vel,GRAVEL,.045,.5,18,Math.min(7,speed*.1));
       }
     }
-    const flying=car.kind==='jet' && car.mode==='air' && speed>75;
+    const flying=car.kind==='jet' && car.mode==='air' && speed>75 && !car.mesh?.userData?.mainRotor;   // wing tips (not a helicopter)
     if(this.trailTick>=.035){
       this.trailTick%=.035;
       for(let side=0;side<2;side++){

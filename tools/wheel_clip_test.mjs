@@ -1,4 +1,5 @@
-// Real physics + all type models, without a renderer. Run through the heavy-check gate.
+// Real car/bike physics + all their type models, without a renderer. Run through the heavy-check gate.
+// Aircraft use their own gear animation and flight tests, not car/bike suspension or wheel arches.
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
@@ -135,7 +136,7 @@ function make(kind,id,world=flat()) {
   const v = kind === 'car' ? new Car(world,{...TUNING_DEFAULTS}) : new Bike(world,{...BIKE});
   applyVehicleType(v,id); baseline(v.mesh); v.reset(0,0,0); return v;
 }
-for (const [kind,types] of Object.entries(VEHICLE_TYPES)) for (const type of types) {
+for (const [kind,types] of Object.entries(VEHICLE_TYPES).filter(([kind])=>kind!=='jet')) for (const type of types) {
   const v = make(kind,type.id);
   for(const [i,w] of v.mesh.userData.wheels.entries()){
     assert.equal(drawnWheelY(v.mesh,i,w.holder.position.y),w.holder.position.y,`${type.id}: parked pose must not lower`);
@@ -201,7 +202,7 @@ const mp={ me:{id:'me'}, now:()=>now, players:new Map(),
   on(t,f){ if(!listeners.has(t))listeners.set(t,new Set());listeners.get(t).add(f); },
   off(t,f){listeners.get(t)?.delete(f);}, emit(t,m){for(const f of listeners.get(t)||[])f(m);} };
 const remotes=makeRemotes({scene,camera,mp,fx:false});
-for(const [kind,types] of Object.entries(VEHICLE_TYPES)) for(const type of types) {
+for(const [kind,types] of Object.entries(VEHICLE_TYPES).filter(([kind])=>kind!=='jet')) for(const type of types) {
   const id=type.id, reference=make(kind,type.id), remoteBaseline=baseline(reference.mesh);
   mp.emit('roster',{players:[{id,name:id,skin:{vehicle:kind,type:id}}]});
   for(const compression of [null,0,10,100]) {
