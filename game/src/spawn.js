@@ -41,6 +41,7 @@ export function createSpawn() {
   }
   return {
     get blocked() { return choosing || loading; },
+    get loading() { return loading; },      // a chosen point (or H) is streaming in
     get pickerAllowed() { return !choosing; },
     get point() { return spawn && [...spawn]; },
     start(deps) {

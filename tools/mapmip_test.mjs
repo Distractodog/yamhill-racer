@@ -2,8 +2,8 @@
 // mapimageworker.js) and batched patches, mapview.js (still / moving, the moved old drawing), minimapdetail.js load:false.
 //   node tools/mapmip_test.mjs
 import assert from 'node:assert/strict';
-import { drawMapImage, prepareMapImage, mapImageRevision, levelTiles, pickMapLevel, LEVEL_FACTORS } from '../game/src/mapimage.js';
-import { createSettle, snapshotPlace, SETTLE_MS } from '../game/src/mapview.js';
+import { drawMapImage, prepareMapImage, mapImageRevision, mapImageReady, warmMapImage, levelTiles, pickMapLevel, LEVEL_FACTORS } from '../game/src/mapimage.js';
+import { createSettle, snapshotPlace, SETTLE_MS, easeZoom, ZOOM_EASE_MS, wheelEases, drawRatio, createQuiet, QUIET_MS } from '../game/src/mapview.js';
 import { createMapDetail } from '../game/src/minimapdetail.js';
 const tick = () => new Promise(r => setTimeout(r, 0));
 
@@ -126,6 +126,48 @@ globalThis.createImageBitmap = (...a) => { bitmapCalls.push(a); return new Promi
   delete globalThis.document;
 }
 
+{ // spawn map / gestures (map-lag round 2): levels ready promise, nothing new uploaded or the original drawn mid-gesture,
+  // level tiles warmed coarsest first
+  const pic = { width: 9600, height: 9600 }, worker = fakeWorker();
+  prepareMapImage(pic, { bytes: 1 }, { worker });
+  let ready = false; mapImageReady(pic).then(() => { ready = true; });
+  const W = 1350, H = 800, s = Math.min(W, H) / 9600, ox = W / 2 - 4800 * s, oy = H / 2 - 4800 * s;
+  let ctx = fakeCtx(W, H); drawMapImage(ctx, pic, ox, oy, s, { load: false });
+  assert.equal(ctx.draws.length, 0, 'moving before the levels exist: not the 9600² original (background only)');
+  worker.onmessage({ data: levelMsg(.5) }); worker.onmessage({ data: levelMsg(.25) }); await tick();
+  assert(!ready, 'two of three levels: not ready yet');
+  worker.onmessage({ data: levelMsg(.125) }); await tick();
+  assert(ready, 'all levels: ready');
+  // warm-up: one tile per call, ⅛ first, then ¼, then ½; each 1 px at (0, 0); then false
+  const warm = fakeCtx(W, H), order = [];
+  while (warmMapImage(warm, pic)) order.push(warm.draws.at(-1).src.level);
+  const n = f => levelTiles(9600 * f, 9600 * f).length;
+  assert.equal(order.length, n(.5) + n(.25) + n(.125), 'every level tile once');
+  assert.deepEqual([...new Set(order)], [.125, .25, .5], 'coarsest first');
+  assert(warm.draws.every(d => d.a.join() === '0,0,1,1'), 'drawn 1 px big');
+  assert.equal(warmMapImage(warm, pic), false);
+  // a patch that arrived while moving is not drawn (first upload) until a still frame; the ½ copy shows instead
+  const s2 = .6, ox2 = W / 2 - 3000 * s2, oy2 = H / 2 - 3000 * s2;
+  drawMapImage(fakeCtx(W, H), pic, ox2, oy2, s2);
+  const job = worker.posted.at(-1);
+  assert.equal(job.type, 'patches');
+  worker.onmessage({ data: { id: job.id, patches: job.rects.map(r => ({ key: r.key, sx: r.sx, sy: r.sy, bitmap: { width: r.sw, height: r.sh, patch: r.key } })) } });
+  ctx = fakeCtx(W, H); drawMapImage(ctx, pic, ox2, oy2, s2, { load: false });
+  assert(ctx.draws.length > 0 && ctx.draws.every(d => d.src.level === .5), 'moving: new patches not drawn yet');
+  ctx = fakeCtx(W, H); drawMapImage(ctx, pic, ox2, oy2, s2);
+  assert(ctx.draws.every(d => d.src.patch), 'still: the patches');
+  ctx = fakeCtx(W, H); drawMapImage(ctx, pic, ox2, oy2, s2, { load: false });
+  assert(ctx.draws.every(d => d.src.patch), 'moving again: patches already shown are drawn');
+  // a worker that never makes levels: done is still announced, and an error resolves it too
+  const pic2 = { width: 9600, height: 9600 }, w2 = fakeWorker(); prepareMapImage(pic2, { bytes: 1 }, { worker: w2 });
+  let r2 = false; mapImageReady(pic2).then(() => { r2 = true; }); w2.onmessage({ data: { levelsDone: true } }); await tick(); assert(r2, 'levelsDone: ready');
+  const pic3 = { width: 9600, height: 9600 }, w3 = fakeWorker(); prepareMapImage(pic3, { bytes: 1 }, { worker: w3 });
+  let r3 = false; mapImageReady(pic3).then(() => { r3 = true; }); w3.onerror(new Event('error')); await tick(); assert(r3, 'worker error: ready');
+  ctx = fakeCtx(W, H); drawMapImage(ctx, pic3, ox, oy, s, { load: false });
+  assert.equal(ctx.draws[0]?.src, pic3, 'no worker and no levels: the original even while moving (as before)');
+  let r4 = false; mapImageReady({}).then(() => { r4 = true; }); await tick(); assert(r4, 'never prepared: ready at once');
+}
+
 // ---- mapview.js
 {
   const st = createSettle();
@@ -149,6 +191,28 @@ globalThis.createImageBitmap = (...a) => { bitmapCalls.push(a); return new Promi
   assert.equal(snapshotPlace(snap, 0, 0, snap.s * 3), null, 'stretched 3×: not used (blurry)');
   assert.equal(snapshotPlace(snap, 0, 0, snap.s / 9), null, 'shrunk 9×: not used');
   assert.equal(snapshotPlace(null, 0, 0, 1), null);
+  // eased zoom: ~95 % of the way after 3τ (120 ms) at 60 fps, never past the goal, in and out alike, ends exactly on it
+  for (const [z0, goal] of [[1, 1.6 ** 3], [40, 40 / 1.6], [4, 4 * Math.exp(.18)]]) {
+    let z = z0, t = 0, done = false, prev = z0;
+    while (!done && t < 1000) {
+      ({ zoom: z, done } = easeZoom(z, goal, 1000 / 60)); t += 1000 / 60;
+      assert(goal > z0 ? z >= prev && z <= goal : z <= prev && z >= goal, 'monotone, never past the goal'); prev = z;
+      if (Math.abs(t - 3 * ZOOM_EASE_MS) < 9) assert(Math.abs(Math.log(z / z0)) >= .93 * Math.abs(Math.log(goal / z0)), `${z0} → ${goal}: ≥ 93 % at ~120 ms`);
+    }
+    assert(done && z === goal && t < 400, `${z0} → ${goal}: arrives (${t.toFixed(0)} ms)`);
+  }
+  assert.equal(easeZoom(2, 3, 0).zoom, 2, 'no time, no step');
+  assert(easeZoom(2, 3, 1e6).done, 'a long frame: there');
+  // wheel: a mouse notch eases; a trackpad's pinch (ctrlKey) or small scroll deltas are applied at once
+  assert(wheelEases({ deltaY: -100, deltaMode: 0 }) && wheelEases({ deltaY: 3, deltaMode: 1 }), 'notches (pixels or lines) ease');
+  assert(!wheelEases({ deltaY: -6, deltaMode: 0, ctrlKey: true }) && !wheelEases({ deltaY: -120, deltaMode: 0, ctrlKey: true }), 'pinch: at once');
+  assert(!wheelEases({ deltaY: 4, deltaMode: 0 }), 'two-finger scroll: at once');
+  // moving frames at pixel ratio 1 (a Retina screen draws ¼ of the pixels); still: the full ratio
+  assert.equal(drawRatio(2, true), 1); assert.equal(drawRatio(2, false), 2); assert.equal(drawRatio(1, true), 1); assert.equal(drawRatio(.8, true), .8);
+  const q = createQuiet();
+  assert(!q.busy(0), 'no input yet: quiet'); q.touch(100);
+  assert(q.busy(100) && q.busy(100 + QUIET_MS - 1) && !q.busy(100 + QUIET_MS), `busy for ${QUIET_MS} ms after the last input`);
+  q.reset(); assert(!q.busy(101));
 }
 
 // ---- minimapdetail.js draw(…, { load: false }): only images already shown, nothing requested or evicted
@@ -172,4 +236,4 @@ globalThis.createImageBitmap = (...a) => { bitmapCalls.push(a); return new Promi
 }
 // map_lag_test.mjs sends the gesture runner to the page as source text: it must stand alone
 { const { mapGestures } = await import('./lib/maplag.mjs'); assert.equal(typeof new Function(`return (${mapGestures})`)(), 'function'); }
-console.log('PASS: map levels (tiles cover once, level pick, zoomed out never the original, only tiles in view), patches in one worker job with the ½ copy under them, load:false asks nothing, big views stay cached, worker failure → one at a time, failed job → main thread; settle / moved drawing maths; imagery load:false');
+console.log('PASS: map levels (tiles cover once, level pick, zoomed out never the original, only tiles in view), patches in one worker job with the ½ copy under them, load:false asks nothing, big views stay cached, worker failure → one at a time, failed job → main thread; levels ready promise, moving: no original / no first patch upload, warm-up coarsest first; settle / moved drawing maths, eased zoom, wheel kinds, moving pixel ratio, quiet timer; imagery load:false');

@@ -11,7 +11,7 @@ import { createVehicleLights } from './lights.js';
 import { createAtmosphere } from './atmosphere.js';
 import { CarAudio } from './audio.js';
 import { createDirections } from './directions.js';
-import { createMinimap } from './minimap.js';
+import { createMinimap, preloadMinimap } from './minimap.js';
 import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
 import { Glider, BIKE_GLIDER } from './glider.js';
@@ -78,6 +78,7 @@ for (const k in OLD_DEFAULTS) if (OLD_DEFAULTS[k].includes(tuning[k])) tuning[k]
 const save = () => { try { localStorage.setItem('yr-tuning-2', JSON.stringify(tuning)); } catch {} };
 
 const loadingEl = document.getElementById('loading');
+preloadMinimap();          // the map picture's levels are made (in a worker) while the world loads: the spawn map needs them
 const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Loading map… ${n}/${of}`; });
 const rim = makeRim(world.W.rim);
 scene.add(world.group);
@@ -387,7 +388,7 @@ function updateCamera(dt) {
 
 // ---------------------------------------------------------------- loop
 const STEP = 1 / 120;
-let acc = 0, last = performance.now(), fps = 60, frames = 0, fpsT = 0;
+let acc = 0, last = performance.now(), fps = 60, frames = 0, fpsT = 0, drawn3D = false;
 const speedEl = document.getElementById('speed'), infoEl = document.getElementById('info');
 const vmsgEl = Object.assign(document.createElement('div'), { id: 'veh-msg' }); document.getElementById('hud').append(vmsgEl);
 // bike / jet read-out (throttle, height, warnings…) sits above the speed, clear of the help text bottom-right
@@ -465,7 +466,10 @@ function frame(now) {
   audio.update(car, input, dt);
   updateCamera(dt);
   world.tick?.(now / 1000);
-  world.updateLOD(camera.position, car.vel, respawnHold.blocked || sessionSpawn.blocked ? 8 : 0);   // paused: build faster
+  // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
+  // Paused for ground to load: build faster (not while the spawn map waits for a click: the player may zoom any moment)
+  const mapBusy = minimap.busy;
+  if (!mapBusy) world.updateLOD(camera.position, car.vel, respawnHold.blocked || sessionSpawn.loading ? 8 : 0);
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
@@ -473,10 +477,14 @@ function frame(now) {
   directions.update(dt);
   rimRing?.update(car.renderPos);
   remotes.update(dt);
-  warmup.step();
-  if (warmup.done && !vehicleThumbs.started) vehicleThumbs.start(['car', 'bike', 'jet'].map(k => [k, vehicles.getType(k)]));
-  // while the full map (M) is being zoomed / dragged it gets the frame: the 3D view, dimmed behind it, holds still
-  if (!minimap.moving) renderer.render(scene, camera);
+  // vehicle shader warm-up / pictures: not while the full map is open (a shader compile is a long frame), except while
+  // the chosen start point loads
+  const holdWarmup = minimap.open && !(sessionSpawn.loading && !mapBusy);
+  if (!holdWarmup) warmup.step();
+  if (!holdWarmup && warmup.done && !vehicleThumbs.started) vehicleThumbs.start(['car', 'bike', 'jet'].map(k => [k, vehicles.getType(k)]));
+  // the full map (M, or the spawn map) covers the screen: the 3D view, dimmed behind it, holds its last frame (one is
+  // drawn if there is none yet: the spawn map opens before the first frame)
+  if (!minimap.open || !drawn3D) { renderer.render(scene, camera); drawn3D = true; }
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
@@ -496,7 +504,7 @@ requestAnimationFrame(frame);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(innerWidth, innerHeight); drawn3D = false;    // resizing cleared it: draw one behind an open map
 });
 // for debugging / automated test drives
 window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide, directions };

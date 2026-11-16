@@ -34,7 +34,8 @@ export function prepareMapTile(raw) {
   return {roads,buildings,junctions};
 }
 const trace=(ctx,points,close=false)=>{ctx.beginPath();for(let i=0;i<points.length;i++){const [x,z]=points[i];i?ctx.lineTo(x,z):ctx.moveTo(x,z);}if(close)ctx.closePath();};
-export function createMapDetail(base='./assets/', { fetcher=globalThis.fetch, now=()=>performance.now() }={}) {
+// hold(): a promise for when parsing may run (minimap.js: not during a zoom / drag; a tile's JSON is a long task)
+export function createMapDetail(base='./assets/', { fetcher=globalThis.fetch, now=()=>performance.now(), hold=()=>null }={}) {
   let manifest=null,available=new Set(),revision=0,active=0,clock=0,disposed=false,wanted=[],lastView='',lastRequest='',nextRetryCheck=0,manifestError=false;
   const cache=new Map(),failures=new Map(),pending=new Map();
   const ready=fetcher(base+'world.json').then(r=>{if(!r.ok)throw new Error('Map manifest');return r.json();}).then(w=>{if(disposed)return;manifest=w;available=new Set(w.tiles.map(([x,z])=>`${x}_${z}`));revision++;lastView='';lastRequest='';}).catch(()=>{manifestError=true;revision++;});
@@ -44,7 +45,7 @@ export function createMapDetail(base='./assets/', { fetcher=globalThis.fetch, no
     for(const tile of wanted){if(active>=MAP_DETAIL_LIMITS.concurrent)break;if(cache.has(tile.key)||pending.has(tile.key)||(failures.get(tile.key)||0)>now())continue;
       const controller=new AbortController();pending.set(tile.key,controller);active++;
       const file=manifest.packed?'tile.json.gz':'tile.json';
-      fetcher(`${base}tiles/${tile.key}/${file}`,{signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error('Map detail');return manifest.packed?JSON.parse(new TextDecoder().decode(await gunzip(await r.arrayBuffer()))):r.json();})
+      fetcher(`${base}tiles/${tile.key}/${file}`,{signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error('Map detail');const bytes=manifest.packed?await gunzip(await r.arrayBuffer()):null;await hold();return bytes?JSON.parse(new TextDecoder().decode(bytes)):r.json();})
         .then(raw=>{raw=decodeGeometry(raw);if(disposed)return;failures.delete(tile.key);cache.set(tile.key,{...prepareMapTile(raw),tx:tile.tx,tz:tile.tz,used:++clock});trim();revision++;})
         .catch(e=>{if(e.name!=='AbortError'){failures.set(tile.key,now()+30000);revision++;}})
         .finally(()=>{pending.delete(tile.key);active--;pump();});

@@ -3,7 +3,8 @@
      argus browse (headless Chrome, no server needed besides argus's own). Results go to the console as warnings.
        argus browse 'tools/map_lag_bench.html?phases=zoom in,zoom out&scale=.5' --wait-ms 10000
        argus browse 'tools/map_lag_bench.html?shot=40' --wait-ms 6000      (a still view: fit = 1, 'car' = 40, more = +)
-     ?src=<dir> loads minimap.js from another copy of game/src (default ../game/src/). The car sits in Sheridan. -->
+     ?src=<dir> loads minimap.js from another copy of game/src (default ../game/src/). The car sits in Sheridan.
+     ?dpr=2 makes the page report a Retina pixel ratio (the map canvas gets 4× the pixels, as on a Retina Mac). -->
 <meta charset="utf-8">
 <title>map lag bench</title>
 <style>
@@ -18,6 +19,7 @@
 </style>
 <script type="module">
   const q = new URLSearchParams(location.search);
+  if (q.has('dpr')) Object.defineProperty(window, 'devicePixelRatio', { get: () => Number(q.get('dpr')), configurable: true });
   const src = q.get('src') || '../game/src/';
   const { createMinimap } = await import(src + 'minimap.js');
   const { mapGestures } = await import('./lib/maplag.mjs');
