@@ -73,7 +73,7 @@ function bindModel(model, kind) {
   }
   const parent = kind === 'car' ? model.userData.bodyPivot : kind === 'bike' ? model.userData.lean.children[0] : model;
   const decals = new THREE.Group(); decals.name = 'cosmetic-livery'; parent.add(decals);
-  const scratches = makeScratches(kind, model.userData.decalSpots); parent.add(scratches);
+  const scratches = makeScratches(kind, model.userData.decalSpots, model.userData.scuffPanels); parent.add(scratches);
   const trim = new THREE.MeshLambertMaterial({ color: '#ffffff', flatShading: true });
   const hubs = [];
   for (const w of wheels) {
@@ -82,7 +82,8 @@ function bindModel(model, kind) {
   }
   return { model, kind, materials, vertex, tyres: [...new Set(tyres)], decals, scratches, hubs, trim, signature: '', wearSignature: '' };
 }
-function makeScratches(kind, spots = []) {
+// panels: a model's own scuff places (the race car's sidepod tops), else the car default
+function makeScratches(kind, spots = [], panels = null) {
   const group = new THREE.Group(); group.name = 'cosmetic-scuffs';
   if (typeof document === 'undefined') return group;
   const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128;
@@ -91,7 +92,8 @@ function makeScratches(kind, spots = []) {
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
   const material = new THREE.MeshBasicMaterial({map:texture,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-3});
   const add=(w,h,x,y,z,rx,ry=0)=>{const mesh=new THREE.Mesh(new THREE.PlaneGeometry(w,h),material);mesh.position.set(x,y,z);mesh.rotation.set(rx,ry,0);mesh.renderOrder=4;group.add(mesh);};
-  if(kind==='car')for(const side of [-1,1])add(.42,.65,side*.58,.278,-.22,-Math.PI/2);
+  if(kind==='car'&&!panels)for(const side of [-1,1])add(.42,.65,side*.58,.278,-.22,-Math.PI/2);
+  for(const panel of panels||[])add(...panel);
   if(kind==='bike')for(const side of [-1,1])add(.3,.16,side*.177,.22,-.45,0,side*Math.PI/2);
   if(kind==='jet'&&!spots.length)for(const side of [-1,1])add(1.1,.65,side*2.5,.09,-1.2,-Math.PI/2);
   for(const spot of spots)add(...spot);
