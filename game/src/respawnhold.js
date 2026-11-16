@@ -20,10 +20,11 @@ export function createRespawnHold({ world, vehicles, current = () => null, timeo
     const px = x + a * HOLD_REACH, pz = z + b * HOLD_REACH;
     return world.loadedAt(px, pz) || (world.mapContains && !world.mapContains(px, pz, 0));
   });
-  function check(v, before) {
+  function check(v, before, req) {
     if (ready(v.pos.x, v.pos.z)) { if (hold?.v === v) hold = null; return; }
-    // what the respawn chose: on the wheels at (x, z) facing yaw, or flying (a race's last ring) at this height and speed
-    hold = { v, x: v.pos.x, z: v.pos.z, yaw: v.heading(), air: v.mode === 'air' && !!v.placeInAir, y: v.pos.y, kmh: v.vel.length() * 3.6, t: 0,
+    // what the respawn chose: on the wheels at (x, z) facing yaw, or flying (a race's last ring) at this height and
+    // speed; req: an aircraft's own respawn request (airrespawn.js), replayed once the ground is there
+    hold = { v, x: v.pos.x, z: v.pos.z, yaw: v.heading(), air: v.mode === 'air' && !!v.placeInAir, y: v.pos.y, kmh: v.vel.length() * 3.6, t: 0, req,
       before: before && ready(before[0], before[1]) ? before : null };      // fallback only if verified loaded now
     freeze();
     v.say?.(WAIT, 30);
@@ -39,16 +40,21 @@ export function createRespawnHold({ world, vehicles, current = () => null, timeo
     for (let i = safe.length - 1; i >= 0; i--) if (ready(safe[i][0], safe[i][1])) return safe[i];
     return hold.before && ready(hold.before[0], hold.before[1]) ? hold.before : null;
   }
-  function place(v, spot, air) {
+  // aircraft go through their respawn placement (level, clear ground, crash grace: airrespawn.js), others reset
+  function place(v, spot, air, req = null) {
     hold = null;
-    if (air) v.placeInAir(spot.x, spot.y, spot.z, spot.yaw, spot.kmh); else v.reset(spot.x, spot.z, spot.yaw);
+    if (air && req?.air && v.respawnInAir) v.respawnInAir(...req.air);
+    else if (air) v.placeInAir(spot.x, spot.y, spot.z, spot.yaw, spot.kmh);
+    else if (v.respawnAt) v.respawnAt(req?.ground || [spot.x, spot.z, spot.yaw, spot.refY]);
+    else v.reset(spot.x, spot.z, spot.yaw);
     v._lastLoaded = null; v.say?.('', 0);
   }
   for (const v of vehicles) {
     const original = v.resetToSafe;
     v.resetToSafe = function (...args) {
       const before = [this.pos.x, this.pos.z, this.heading()];
-      const r = original.apply(this, args); check(this, before); return r;
+      this.lastRespawn = null;
+      const r = original.apply(this, args); check(this, before, this.lastRespawn); return r;
     };
   }
   return {
@@ -60,15 +66,15 @@ export function createRespawnHold({ world, vehicles, current = () => null, timeo
       const now = current();
       if (now && now !== hold.v) {           // switched vehicle while held: the new one waits here instead
         hold.v.say?.('', 0);
-        hold.v = now; hold.air = hold.air && !!now.placeInAir;
+        hold.v = now; hold.air = hold.air && !!now.placeInAir; if (hold.req?.ground) hold.req = null;
         now.say?.(hold.t > timeout ? LONG : WAIT, 30);
       }
       const v = hold.v;
       hold.t += dt;
-      if (ready(hold.x, hold.z)) { place(v, hold, hold.air); return; }
+      if (ready(hold.x, hold.z)) { place(v, hold, hold.air, hold.req); return; }
       if (hold.t > timeout) {
         const f = fallback();
-        if (f) { place(v, { x: f[0], z: f[1], yaw: f[2] ?? hold.yaw }, false); return; }
+        if (f) { place(v, { x: f[0], z: f[1], yaw: f[2] ?? hold.yaw, refY: f[3] }, false); return; }
         if (hold.t - dt <= timeout) v.say?.(LONG, 1e9);
       }
       freeze();

@@ -8,6 +8,7 @@
 // flip, crash + automatic respawn (all five aircraft), a held respawn on ground that loads later (respawnhold.js),
 // a repaint in the Garage while the wreck tumbles (the wreck used to put back the paint it had at the crash), a type
 // change while wrecked, and another player's copy (mp remotes paintedModel). While wrecked the wreck colour shows.
+// (grace = 0 before each forced crash: right after a respawn jet.js would turn the crash into a reset, airrespawn.js)
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createVehicles } from '../game/src/vehicles.js';
@@ -79,7 +80,7 @@ for (const kind of ['car', 'bike', 'jet']) {
     (v.flipUpright || (() => v.reset(v.pos.x, v.pos.z, 0))).call(v); g.drawn(`F in ${id}`);
     if (kind === 'jet') {
       v.placeInAir(0, 300, 0, 0, 400); g.drawn(`air start ${id}`);
-      v.crash('impact'); const wreck = new THREE.Color(v.mesh.userData.wreckColor ?? 0x3a3a3a).getHexString();
+      v.grace = 0; v.crash('impact'); const wreck = new THREE.Color(v.mesh.userData.wreckColor ?? 0x3a3a3a).getHexString();
       for (let i = 0; i < 60; i++) g.frame();
       assert([...paintOf(v.mesh).body].every(h => h === wreck), `${id}: the wreck colour holds while it tumbles (wear isn't painted over it)`);
       let f = 0; while (v.mode === 'crashed' && f++ < 600) g.frame();
@@ -91,20 +92,20 @@ for (const kind of ['car', 'bike', 'jet']) {
 // the Garage repaints while the wreck tumbles: the respawn shows the new paint at once (not the paint from the crash)
 for (const id of types('jet')) {
   const s = game({ jet: id }); s.vehicles.switchTo('jet'); const v = s.vehicles.current;
-  s.cosmetics.set('jet', { body: '#ffffff' }); v.placeInAir(0, 300, 0, 0, 400); v.crash('impact');
+  s.cosmetics.set('jet', { body: '#ffffff' }); v.placeInAir(0, 300, 0, 0, 400); v.grace = 0; v.crash('impact');
   for (let i = 0; i < 30; i++) s.frame();
   s.cosmetics.set('jet', { body: '#000000' });
   let f = 0; while (v.mode === 'crashed' && f++ < 600) s.frame();
   s.drawn(`${id}: repainted black during the wreck, respawn`); s.holds(`${id} repainted during the wreck`);
   // a type change while wrecked
-  v.placeInAir(0, 300, 0, 0, 400); v.crash('impact'); for (let i = 0; i < 30; i++) s.frame();
+  v.placeInAir(0, 300, 0, 0, 400); v.grace = 0; v.crash('impact'); for (let i = 0; i < 30; i++) s.frame();
   const other = types('jet').find(t => t !== id); s.vehicles.setType('jet', other); s.drawn(`${id} → ${other} while wrecked`);
   s.vehicles.setType('jet', id); s.drawn(`back to ${id}`); s.holds(`back to ${id} after a wrecked type change`);
 }
 // a respawn held on ground that hasn't loaded: paint right when it is placed
 {
   const s = game(); s.vehicles.switchTo('jet'); const v = s.vehicles.current;
-  v.safe = [[3000, 0, 0]]; v.placeInAir(0, 300, 0, 0, 400); v.crash('impact');
+  v.safe = [[3000, 0, 0]]; v.placeInAir(0, 300, 0, 0, 400); v.grace = 0; v.crash('impact');
   loaded = false; let f = 0; while (v.mode === 'crashed' && f++ < 600) s.frame();
   assert(s.hold.blocked, 'respawn held on unloaded ground'); s.drawn('held respawn (waiting for the ground)');
   for (let i = 0; i < 30; i++) s.frame(); loaded = true; s.frame();

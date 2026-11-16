@@ -119,8 +119,17 @@ function colourOf(key, style, dashOn) {
 
 // one batch → { pos, col } triangles (world coordinates)
 function stripTriangles(D, batch, far) {
+  const steps = stripTriangleSteps(D, batch, far); let r;
+  while (!(r = steps.next()).done);
+  return r.value;
+}
+// the same, yielding 'road-strips' every STRIP_SLICE samples, so a dense town block (one merged mesh, meshmerge.js)
+// is built over several frames instead of in one ~10–50 ms step
+const STRIP_SLICE = 300;
+function* stripTriangleSteps(D, batch, far) {
   const P = [], C = [];
   const step = far ? 2 : 1;
+  let work = 0;
   for (const { r, a, b } of batch) {
     const { x, z, y, c, lx, lz } = r;
     const school0 = campusRoad(x[a], z[a], r.kind);
@@ -134,6 +143,7 @@ function stripTriangles(D, batch, far) {
       if (r.widen && Math.abs(o)<r.hw) return roadPoint(r,r.s,r.s[i],o,.02);
       return [x[i] + lx[i] * o, y[i] + c[i] * o + dy, z[i] + lz[i] * o]; };
     for (let i = a; i < b; i += r.widen ? 1 : step) {
+      if (++work % STRIP_SLICE === 0) yield 'road-strips';
       const j = Math.min(b, i + (r.widen ? 1 : step));
       const school = campusRoad((x[i] + x[j]) / 2, (z[i] + z[j]) / 2, r.kind);
       if (r.osm !== undefined && school !== school0) { cols = layout(school); K = cols.length; }
@@ -153,6 +163,7 @@ function stripTriangles(D, batch, far) {
       return edgeLines(r, campusRoad(x,z,r.kind));
     });
     if (!far && r.stop) stopMarks(r, a, b, P, C);
+    yield 'road-strips';
   }
   return { P, C };
 }
@@ -192,7 +203,15 @@ function stopMarks(r, a, b, P, C) {
 
 // one batch of strips as one mesh in world coordinates (far = the cheap version: no markings, half the samples)
 export function buildRoads(D, groundMat, batch, far = false) {
-  const { P, C } = stripTriangles(D, batch, far);
+  return roadMesh(stripTriangles(D, batch, far), groundMat);
+}
+// buildRoads in slices (stripTriangleSteps)
+export function* buildRoadsSteps(D, groundMat, batch, far = false) {
+  const tris = yield* stripTriangleSteps(D, batch, far);
+  yield 'road-mesh';
+  return roadMesh(tris, groundMat);
+}
+function roadMesh({ P, C }, groundMat) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
   g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(C), 3));
@@ -218,7 +237,7 @@ export function* roadLODSteps(D, groundMat, batch) {
   const lod = new THREE.LOD();
   lod.position.set(cx, 0, cz);
   for (const [far, dist] of [[true, FAR_AT + rad], [false, 0]]) {
-    const m = buildRoads(D, groundMat, batch, far); m.position.set(-cx, 0, -cz);   // geometry stays in world coords
+    const m = yield* buildRoadsSteps(D, groundMat, batch, far); m.position.set(-cx, 0, -cz);   // geometry stays in world coords
     lod.addLevel(m, dist);                   // addLevel keeps the levels sorted by distance
     yield far ? 'roads-far' : 'roads-near';
   }

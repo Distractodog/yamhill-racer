@@ -11,7 +11,8 @@
 // types: { car: [ids…], bike: [...], jet: [...] } (vehicletypes.js VEHICLE_TYPES ids, the default first).
 // Parts: switch (V, twice round), types (vehicles.setType), garage (the Garage's Type menu, all three tabs), reset
 // (R near, R far there and back), crash (jet crash respawns near, and far there and back), home (H after a far R).
-export async function hitchSuite(win, { types = {}, only = null, repeat = 3, paint = '#000000', settle = 1200, log = () => {} } = {}) {
+// settleWait: how long (ms) to wait for streaming to go quiet before measuring (start, and before each H)
+export async function hitchSuite(win, { types = {}, only = null, repeat = 3, paint = '#000000', settle = 1200, settleWait = 30000, log = () => {} } = {}) {
   const g = win.game, doc = win.document, raf = win.requestAnimationFrame.bind(win);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const frames = n => new Promise(r => { let k = 0; const f = () => (++k >= n ? r() : raf(f)); raf(f); });
@@ -51,6 +52,11 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
       const o = g[obj], f = o?.[fn]; if (typeof f !== 'function') continue;
       o[fn] = function (...a) { const t = performance.now(); const out = f.apply(this, a); const fr = win.__hitchFrame; if (fr) fr.parts[`${obj}.${fn}`] = (fr.parts[`${obj}.${fn}`] || 0) + performance.now() - t; return out; };
     }
+    // physics: every vehicle's 120 Hz step (a long frame is followed by up to 12 catch-up steps)
+    for (const veh of new Set([...Object.values(g.vehicles.all), ...(g.vehicles.aircraft || [])])) {
+      const f = veh.step;
+      veh.step = function (...a) { const t = performance.now(); const out = f.apply(this, a); const fr = win.__hitchFrame; if (fr) fr.parts.physics = (fr.parts.physics || 0) + performance.now() - t; return out; };
+    }
     win.requestAnimationFrame = cb => raf(t => {
       win.__hitchFrame = frameStats();
       const s = performance.now(); cb(t); win.__hitchFrame.cb = performance.now() - s;
@@ -84,11 +90,12 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
   const checkPaint = what => { const got = bodyHex(); if (got.length && (got.length !== 1 || got[0] !== paint)) fails.push(`${what}: body paint ${got.join(',')} (want ${paint})`); };
   const v = () => g.vehicles.current;
   const loaded = (x, z) => g.world.loadedAt(x, z);
-  const place = async (x, z, yaw = 0) => {         // like goHome: hold the focus there until the ground is built
+  // like goHome: hold the focus there until the ground is built (all: also wait for every tile in flight)
+  const place = async (x, z, yaw = 0, all = true) => {
     const hold = () => { const c = v(); c.pos.set(x, c.pos.y, z); c.vel.set(0, 0, 0); c._lastLoaded = null; c.savePrev(); c.interpolate(0); };
     hold();
     const end = performance.now() + 60000;
-    while (!loaded(x, z) || g.world.pendingTiles() > 0) { if (performance.now() > end) throw Error(`no ground at ${x},${z}`); await sleep(100); hold(); }
+    while (!loaded(x, z) || (all && g.world.pendingTiles() > 0)) { if (performance.now() > end) throw Error(`no ground at ${x},${z}`); await sleep(100); hold(); }
     v().reset(x, z, yaw); v().safe = []; v()._lastLoaded = null;
   };
   const waitHold = async () => { const t = performance.now(); while (g.respawnHold?.blocked && performance.now() - t < 60000) await sleep(50); return (performance.now() - t) / 1000; };
@@ -106,7 +113,7 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
   if (g.warmup) { await until(() => g.warmup.done, 20000, 'warm-up').catch(e => notes.push(e.message)); }
   notes.push(`warm-up: ${g.warmup ? (g.warmup.done ? 'done' : 'not finished') : 'none in this build'}`);
   // start from a settled world: no tiles still building in the background
-  await until(() => g.world.pendingTiles() === 0, 30000, 'tiles settled').catch(e => notes.push(e.message));
+  await until(() => g.world.pendingTiles() === 0, settleWait, 'tiles settled').catch(e => notes.push(e.message));
   const home = [v().pos.x, v().pos.z], far = [home[0] + 5000, home[1] + 300];
 
   if (want('switch')) for (let i = 1; i <= repeat; i++) for (const kind of ['bike', 'jet', 'car']) {
@@ -149,7 +156,7 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
   const crash = async (label, spot) => {
     const j = v(); j.safe = [[...spot, 0]];
     j.placeInAir(j.pos.x, g.world.heightAt(j.pos.x, j.pos.z) + 200, j.pos.z, Math.PI / 2, 900);
-    await frames(10); j.crash('impact');
+    await frames(10); j.grace = 0; j.crash('impact');          // (a crash within 3 s of the last respawn would only reset it)
     await sleep(300);
     const r = await measure(label, async () => {
       const t = performance.now();
@@ -171,8 +178,8 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
   if (want('home')) {
     g.vehicles.switchTo('car');
     for (let i = 1; i <= repeat; i++) {
-      v().safe = [[...far, 0]]; v().resetToSafe(); await waitHold();                 // out to 5 km (R, held)
-      await until(() => g.world.pendingTiles() === 0, 30000, 'tiles settled').catch(() => {});
+      await place(...far, 0, false);                                                  // out to 5 km (same in every build)
+      await until(() => g.world.pendingTiles() === 0, settleWait, 'tiles settled').catch(() => {});
       const r = await measure(`H go home (5 km) #${i}`, async () => {
         g.sessionSpawn.goHome(); await sleep(50);
         await until(() => !g.sessionSpawn.blocked, 60000, 'go home');

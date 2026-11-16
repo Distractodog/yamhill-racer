@@ -15,7 +15,9 @@ export function prepareMapImage(image, blob) {
 }
 // changes when a patch arrives, for callers that cache what they drew (minimap.js full map)
 export const mapImageRevision = image => sources.get(image)?.revision ?? 0;
-const keep = cache => { while (cache.size > LIMIT) cache.delete(cache.keys().next().value); };
+// evicted patches give their pixels back at once: an ImageBitmap is closed, a canvas shrunk to nothing
+const release = patch => { const c = patch?.canvas; if (!c) return; if (typeof c.close === 'function') c.close(); else { c.width = 0; c.height = 0; } };
+const keep = cache => { while (cache.size > LIMIT) { const k = cache.keys().next().value; release(cache.get(k)); cache.delete(k); } };
 export function drawMapImage(ctx, image, ox, oy, scale) {
   if (!(scale > 0) || !Number.isFinite(scale)) return;
   const width = image.naturalWidth || image.width, height = image.naturalHeight || image.height;
@@ -38,7 +40,7 @@ export function drawMapImage(ctx, image, ox, oy, scale) {
       const sx = Math.max(0, x - PAD), sy = Math.max(0, y - PAD), sw = Math.min(width, x + TILE + PAD) - sx, sh = Math.min(height, y + TILE + PAD) - sy;
       if (!src.busy) {
         src.busy = true;
-        createImageBitmap(src.blob, sx, sy, sw, sh).then(canvas => { cache.set(key, { canvas, sx, sy }); keep(cache); src.revision++; },
+        createImageBitmap(src.blob, sx, sy, sw, sh).then(canvas => { release(cache.get(key)); cache.set(key, { canvas, sx, sy }); keep(cache); src.revision++; },
           () => sources.delete(image)).finally(() => { src.busy = false; });       // failed: cut them as before
       }
       continue;

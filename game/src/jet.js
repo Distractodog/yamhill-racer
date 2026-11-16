@@ -13,6 +13,7 @@
 // World queries only: heightAt / surfaceAt / normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt).
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { GRACE, findGround, airHeight } from './airrespawn.js';
 
 export const JET = {
   gravity: 12,
@@ -56,6 +57,7 @@ export class Jet extends Vehicle {
     this.mode = 'ground'; this.throttle = 0; this.yaw = 0; this.v = 0; this.rot = 0; this.vy = 0;
     this.alpha = 0; this.bank = 0; this.gLoad = 1; this.stall = false; this.stallT = 0; this.agl = 0;
     this.pullUp = false; this.crashT = 0; this.gear = 1; this.respawn = null;
+    this.grace = 0; this.graceAir = false; this.lastRespawn = null;   // respawn crash grace (airrespawn.js)
     this._acc = new THREE.Vector3();
     this.mesh = buildJetModel();
     this.cam = { jet: true };
@@ -94,20 +96,47 @@ export class Jet extends Vehicle {
     return gy + A.gearH * _up.y;
   }
 
-  reset(x, z, yaw) {
+  // y: the height the spot was recorded at (a respawn's safe spot), so ground above it (a bridge deck) doesn't count
+  reset(x, z, yaw, y) {
     this.sit = this.air.tail;
     this.mode = 'ground'; this.yaw = yaw; this.v = 0; this.rot = 0; this.vy = 0; this.throttle = 0;
     this.crashT = 0; this.stall = false; this.gear = 1; this.mesh.userData.wreck(false);
-    this.pos.set(x, this.groundPose(x, z, yaw, 0), z);
+    // stand at the new spot first: the ground queries (roofs) go by where the aircraft is (airrespawn.js)
+    this.pos.set(x, this.world.terrainAt?.(x, z) ?? 0, z); this.vel.set(0, 0, 0);
+    this.pos.y = this.groundPose(x, z, yaw, 0, y);
     this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.steer = 0; this.burning = false; this._acc.set(0, 0, 0); this.stallT = 0; this.airTime = 0;
     this.afterReset();
   }
 
   // R / crash: a challenge can give an air respawn (last ring passed, flying); else the last safe ground spot
   resetToSafe() {
-    if (this.respawn) { const r = this.respawn(); if (r) { this.placeInAir(...r); return; } }
-    super.resetToSafe();
-    if (this.mode === 'crashed') { const [sx, sz] = this.world.spawn; this.reset(sx, sz, 0); }
+    if (this.respawn) { const r = this.respawn(); if (r) { this.respawnInAir(...r); return; } }
+    const s = this.safe.length > 40 ? this.safe[this.safe.length - 40] : this.safe[0];
+    if (s) this.respawnAt(s);
+    else if (this.mode === 'crashed') { const [sx, sz] = this.world.spawn; this.respawnAt([sx, sz, 0]); }
+  }
+  // respawns (airrespawn.js): on the gear on a level, clear stretch by safe spot [x, z, yaw, y], or in the air with
+  // the ground ahead cleared; then GRACE s in which a crash only puts it back
+  footing(x, z, yaw, y) {
+    this.sit = this.air.tail;
+    return findGround(this, x, z, yaw, { yRef: y, pose: (px, pz, pyaw, py) => this.groundPose(px, pz, pyaw, 0, py), body: this.air.body, reach: this.air.half.x });
+  }
+  respawnAt([x, z, yaw, y]) {
+    const g = this.footing(x, z, yaw, y);
+    this.reset(g.x, g.z, yaw, g.y);
+    this.lastRespawn = { ground: [x, z, yaw, y] }; this.grace = GRACE; this.graceAir = false;
+  }
+  respawnInAir(x, y, z, yaw, kmh = 450) {
+    this.placeInAir(x, airHeight(this.world, x, z, yaw, Math.min(kmh, this.air.airKmh), y), z, yaw, kmh);
+    this.lastRespawn = { air: [x, y, z, yaw, kmh] }; this.grace = GRACE; this.graceAir = true;
+  }
+  // a crash within GRACE s of a respawn: no wreck; back on the gear where it is, or back up in the air
+  recover() {
+    const sp = this.vel.length(), yaw = sp > 5 ? Math.atan2(this.vel.x, this.vel.z) : this.heading();
+    if (this.graceAir) {
+      const kmh = Math.max(sp * 3.6, 300);
+      this.placeInAir(this.pos.x, airHeight(this.world, this.pos.x, this.pos.z, yaw, Math.min(kmh, this.air.airKmh), this.pos.y), this.pos.z, yaw, kmh);
+    } else { const g = this.footing(this.pos.x, this.pos.z, yaw); this.reset(g.x, g.z, yaw); }
   }
   placeInAir(x, y, z, yaw, kmh = 450) {
     kmh = Math.min(kmh, this.air.airKmh);
@@ -130,6 +159,7 @@ export class Jet extends Vehicle {
     this._prevVel.copy(this.vel);
     this.throttle = clamp(this.throttle + J.thr * this.t.throttleRate * dt, 0, 1);
     this.hit = 0;
+    if (this.grace > 0 && this.mode !== 'crashed') this.grace -= dt;
     if (this.mode === 'crashed') {
       this.stepWreck(dt);
       if (this.crashT > 4.5) this.resetToSafe();
@@ -397,6 +427,7 @@ export class Jet extends Vehicle {
 
   crash(why) {
     if (this.mode === 'crashed') return;
+    if (this.grace > 0) { this.recover(); return; }      // just respawned: never a wreck (no respawn loop)
     this.mode = 'crashed'; this.crashT = 0; this.burning = true; this.grounded = false;
     this.hit = Math.max(this.hit, 40); this.landing = 1;
     // Keep position and attitude at impact rather than teleporting to a flat wreck on the ground.

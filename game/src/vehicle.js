@@ -45,7 +45,8 @@ export class Vehicle {
     _v.set(0, 0, 1).applyQuaternion(this.quat);
     const last = this.safe[this.safe.length - 1];
     if (!last || Math.hypot(last[0] - this.pos.x, last[1] - this.pos.z) > 6) {
-      this.safe.push([this.pos.x, this.pos.z, Math.atan2(_v.x, _v.z)]); if (this.safe.length > 200) this.safe.shift();
+      // [x, z, yaw, y]: the height lets an aircraft respawn on this ground, not on a deck above it (airrespawn.js)
+      this.safe.push([this.pos.x, this.pos.z, Math.atan2(_v.x, _v.z), this.pos.y]); if (this.safe.length > 200) this.safe.shift();
     }
   }
 
