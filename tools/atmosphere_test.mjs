@@ -5,9 +5,9 @@ import { createTileScenery, sceneryRoadSpot } from '../game/src/scenery.js';
 const scene=new THREE.Scene();scene.background=new THREE.Color();scene.fog=new THREE.Fog(0,1,2);scene.add(new THREE.HemisphereLight());
 const sun=new THREE.DirectionalLight(),sunDirection=new THREE.Vector3();let night;
 const values=new Map([['yr-atmosphere-1','bad-value']]);const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v)};
-const a=createAtmosphere({scene,sun,sunDirection,world:{setNight:n=>night=n},storage});assert.equal(a.preset,'midday');
+const a=createAtmosphere({scene,sun,sunDirection,world:{setNight:n=>night=n},storage});assert.equal(a.preset,'midday');assert.equal(a.settings.cycle,true,'a bad old value starts the day/night cycle');
 for(const p of ATMOSPHERE_PRESETS){assert(a.setPreset(p.id));assert.equal(night,p.night);assert.equal(scene.fog.far,p.far);assert(Math.abs(sunDirection.length()-1)<1e-8);a.update(.016,new THREE.Vector3(10,20,30));}
-assert(!a.setPreset('invalid'));assert.equal(a.preset,'night');assert.equal(values.get('yr-atmosphere-1'),'night');
+assert(!a.setPreset('invalid'));assert.equal(a.preset,'night');assert.deepEqual(JSON.parse(values.get('yr-atmo-2')),{cycle:false,look:'night',weather:'random'});
 a.dispose();assert(!scene.getObjectByName('night-stars'));
 const td={x0:3000,z0:1000,terrainAt:()=>20,renderRoads:[{n:100,kind:'asphalt',hw:7,x:Array.from({length:100},(_,i)=>3500+i*8),z:Array(100).fill(1400)}],buildings:[{h:6,pts:[[3770,1435],[3790,1435],[3790,1450],[3770,1450]]}]};
 const spot=sceneryRoadSpot(td,{x:3800,z:1400});assert(spot);assert(Math.abs(spot.z-1400)>=12);

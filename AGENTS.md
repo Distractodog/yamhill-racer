@@ -62,6 +62,7 @@ sends `Cache-Control: no-store` so edits always load.
 | `node tools/welcome_test.mjs <dir>` | yes | Welcome card shows, blocks game keys, closes with button/Enter/Esc/Space, "don't show again". |
 | `node tools/shot.mjs out.png [x z surfaceClass cam]` | yes | One headless screenshot at a spot (also prints fps). Use it to **look** at your work. |
 | `node tools/lights_test.mjs` / `node tools/lights_shots.mjs <dir>` | screenshots only | Vehicle light logic/anchors; director night views and McMinnville night A/B/A benchmark (use heavy gate). |
+| `node tools/daynight_test.mjs` / `node tools/daynight_shots.mjs --out <dir> [--speed 60]` | shots only | Day/night cycle + random rain (`daycycle.js`, `atmosphere.js`): 50-min clock and phases, keyframe looks and smooth blending, sun/moon/light paths, headlights at dusk, seeded shower scheduler, multiplayer follow, saved settings + migration, per-frame cost. Shots (heavy gate): starts at morning; morning, midday, golden hour, dusk, night, rain; Settings section; ☰ Menu without Atmosphere; one cycle at `?daySpeed` checking no new shader programs; review PNGs. |
 | `node tools/bench.mjs` | yes | 20 s at four fixed spots (McMinnville NE 3rd, Sheridan Main, Willamina Main, campus Main Building). Prints triangles, draw calls, median and p95 frame time, and % of frames over 20 ms. |
 
 Browser tests launch Chrome at `/Applications/Google Chrome.app/...` (macOS); edit the `executablePath` at the top
@@ -104,6 +105,7 @@ x∈[tx·2000−1000, tx·2000+1000], z likewise.
 | `pin.js` | `createPinGuide`: ribbon toward the pin, beacon, top-of-screen arrow + distance, "You made it". |
 | `effects.js` | `Effects`: tyre marks, dust/smoke particles, splashes, contact shadows. |
 | `audio.js` | `CarAudio`: engine from 4 recorded loops pitch-shifted by rpm, plus synthesised tyre/gravel/wind/impact. |
+| `atmosphere.js`, `daycycle.js` | Light, sky, fog, stars, sun/moon discs and rain. `daycycle.js` (pure, no three.js) holds every cycle constant (morning 5 → day 20 → dusk 5 → night 20 min), the preset looks, keyframe blending, sun/moon arcs, the shower scheduler and multiplayer follow; `atmosphere.js` applies it each frame (values only: no lights, fog type or meshes added). `?daySpeed=60` runs the clock 60× faster. Settings → Time of day & weather. |
 | `settings.js` | `createSettings`: Settings / How to play panels, welcome card, keyboard focus + UI input filtering (game keys are blocked while a panel is open: `settings.open`). |
 | `index.html` | HUD markup, panels, welcome card (`#welcome`), credits line (`#credits`), all page CSS. |
 
@@ -183,7 +185,7 @@ loaded return nothing; the vehicles hold the last loaded ground.
   also match by the letter printed on the key (AZERTY/Dvorak) via `e.key`.
 - **localStorage keys:** `yr-tuning-2` (car), `yr-tuning-bike-1`, `yr-tuning-jet-1` (only known keys with real
   numbers are loaded, clamped to the menu range), `yr-best-1` (race best times + splits), `yr-pin-1`,
-  `yr-welcome-hidden-1`. Bump the suffix if you change a stored format.
+  `yr-welcome-hidden-1`, `yr-atmo-2` (day/night cycle on/off, fixed look, weather; replaces `yr-atmosphere-1`). Bump the suffix if you change a stored format.
 - **Surfaces / widths:** trails are drawn 3× real width (~7–12 m) so they're drivable at speed; trees are cleared
   from trails and roads; roads are 12–17 m wide; no kerbs.
 - **Fixed jump ramps** are listed in `assets/ramps.json` (`{name,x,z,yaw,w}`); they survive tile rebuilds as plain

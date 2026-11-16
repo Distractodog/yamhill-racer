@@ -4,6 +4,11 @@ import * as THREE from 'three';
 export function lightsEnabled(night, override = null) {
   return override === null ? night > 0 : override;
 }
+// The L override ends when the automatic choice flips or the look changes at once (a preset or "Time now"), not on
+// the day/night cycle's gradual change of `night` from frame to frame.
+export function nightChanged(last, night) {
+  return last !== null && (lightsEnabled(night) !== lightsEnabled(last) || Math.abs(night - last) > .05);
+}
 
 export function lightAnchors(mesh, kind = 'car') {
   if (mesh.userData.lights) return mesh.userData.lights;
@@ -90,14 +95,14 @@ export function createVehicleLights(scene = null) {
     // lenses for a model before it is first driven (warmup.js compiles them with it)
     prepare(mesh, kind) { return rigFor(mesh, kind); },
     toggle(night = lastNight || 0) {
-      if (lastNight !== null && night !== lastNight) override = null;
+      if (nightChanged(lastNight, night)) override = null;
       lastNight = night;
       override = !lightsEnabled(night, override); return override;
     },
     update(dt, vehicle, night = 0, input = {}) {
       elapsed += dt;
       // A change between day/dusk/night restores automatic operation; L overrides it.
-      if (lastNight !== null && night !== lastNight) override = null;
+      if (nightChanged(lastNight, night)) override = null;
       lastNight = night;
       const mesh = vehicle.mesh;
       const on = lightsEnabled(night, override);

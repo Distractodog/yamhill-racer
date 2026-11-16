@@ -50,7 +50,7 @@ button.onclick=async()=>{
   d.querySelector('#cosmetic-garage [data-save="0"]').click();field.value='#aa3322';field.dispatchEvent(new w.Event('input',{bubbles:true}));d.querySelector('#cosmetic-garage [data-load="0"]').click();assert(g.cosmetics.get(kind).body==='#3478ab','saved look restores paint');
   const done=d.querySelector('.garage-done');done.focus();key(w,'Tab','Tab');assert(d.activeElement===d.querySelector('.garage-close'),'garage Tab wraps focus');
   key(w,'Escape','Escape');assert(!g.garage.open&&g.keys.size===0,'Escape closes garage without stuck keys');
-  openMenu(d);d.querySelector('#atmosphere-button').click();d.querySelector('[data-preset="golden"]').click();assert(g.atmosphere.preset==='golden','atmosphere UI selects golden hour');key(w,'Escape','Escape');
+  openMenu(d);d.querySelector('#settings-button').click();d.querySelector('#atmo-cycle').click();assert(!g.atmosphere.settings.cycle,'Settings turns the day/night cycle off');d.querySelector('[data-preset="golden"]').click();assert(g.atmosphere.preset==='golden','atmosphere UI selects golden hour');key(w,'Escape','Escape');
   w=await load();g=w.game;assert(g.sessionSpawn.blocked&&g.sessionSpawn.point===null,'reload requires a new spawn choice');assert(g.cosmetics.get(kind).body==='#3478ab'&&g.atmosphere.preset==='golden','paint and lighting preferences survive reload');
   assert(errors.length===0,'no page errors or unhandled rejections');results.className='pass';log('ALL FUNCTIONAL UI CHECKS PASSED');
  }catch(error){results.className='fail';log('FAIL '+error.message);if(errors.length)log(errors.join('\n'));}

@@ -16,6 +16,15 @@ body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI'
 #settings-panel .panel-heading h2 { font-size: 24px; letter-spacing: -.5px; }
 #settings-panel .panel-note { font-size: 11px; color: #b1c1b6; border-top: 1px solid #ffffff19; padding-top: 14px; }
 .atmosphere-presets { display: grid; gap: 8px; }
+.atmo-switch { display: flex; align-items: center; gap: 8px; font-weight: 700; margin: 4px 0 10px; cursor: pointer; }
+.atmo-switch input { width: 16px; height: 16px; accent-color: var(--yr-gold); margin: 0; }
+.atmo-now { font-weight: 500; color: var(--yr-muted); }
+.atmo-row { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 8px; margin-bottom: 8px; }
+.atmo-label { color: #d1d8d2; }
+.atmo-seg { display: flex; flex-wrap: wrap; gap: 5px; }
+.atmo-option { flex: 1 1 auto; background: #ffffff08; border: 1px solid #ffffff20; border-radius: 8px; color: var(--yr-paper); font: 600 12px system-ui, sans-serif; padding: 6px 8px; cursor: pointer; }
+.atmo-option:hover { background: #ffffff14; }
+.atmo-option[aria-pressed='true'] { border-color: var(--yr-gold); background: #eac17c22; }
 .atmosphere-option { display: flex; align-items: center; gap: 12px; width: 100%; background: #ffffff08; border: 1px solid #ffffff20; border-radius: 10px; color: var(--yr-paper); font: 600 14px system-ui, sans-serif; text-align: left; padding: 8px; cursor: pointer; }
 .atmosphere-option[aria-pressed='true'] { border-color: var(--yr-gold); background: #eac17c13; }
 .atmosphere-option[aria-pressed='true']::after { content: '✓'; color: var(--yr-gold); margin-left: auto; margin-right: 8px; }

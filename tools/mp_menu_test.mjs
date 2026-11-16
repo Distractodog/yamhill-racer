@@ -19,7 +19,7 @@ try {
     await startGame(page, { relay: RELAY_URL, storage: { 'yr-mp-name-1': i ? 'Guest' : 'Host' } });
     await page.waitForFunction(() => window.game?.multiplayer);
   }));
-  const saved = page => page.evaluate(() => Object.fromEntries(['yr-tuning-2', 'yr-tuning-bike-1', 'yr-tuning-jet-1', 'yr-atmosphere-1'].map(key => [key, localStorage.getItem(key)])));
+  const saved = page => page.evaluate(() => Object.fromEntries(['yr-tuning-2', 'yr-tuning-bike-1', 'yr-tuning-jet-1', 'yr-atmo-2'].map(key => [key, localStorage.getItem(key)])));
   const current = page => page.evaluate(() => ({ tuning: structuredClone(game.multiplayer.tuning), atmosphere: game.atmosphere.preset }));
   await host.evaluate(() => { game.tuning.accel = 51; game.multiplayer.tuning.bike.accel = 33; game.multiplayer.tuning.jet.thrust = 30; game.atmosphere.setPreset('night', false); });
   await guest.evaluate(() => { game.tuning.accel = 21; game.atmosphere.setPreset('golden', false); });
@@ -52,6 +52,11 @@ try {
   assert.deepEqual(await checked(guest), ['host'], 'guest radio follows the host back to host');
   await host.evaluate(() => { game.tuning.accel = 54; game.atmosphere.setPreset('rain', false); });
   await guest.waitForFunction(() => game.tuning.accel === 54 && game.atmosphere.preset === 'rain');
+  // day/night cycle: the guest follows the host's clock and weather (a jump is sent at once)
+  await host.evaluate(() => { game.atmosphere.set({ cycle: true, weather: 'rain' }, false); game.atmosphere.jump('night'); });
+  await guest.waitForFunction(() => game.atmosphere.settings.cycle && game.atmosphere.phase === 'night' && game.atmosphere.rain === 1 && game.atmosphere.following);
+  const clocks = await Promise.all([host, guest].map(p => p.evaluate(() => game.atmosphere.time)));
+  assert(Math.abs(clocks[0] - clocks[1]) < 5, `guest clock ${clocks[1]} follows host ${clocks[0]}`);
   if (out) { await host.screenshot({ path: out + '/mp-host.png' }); await guest.screenshot({ path: out + '/mp-guest.png' }); }
   await host.click('#mp-players button');
   await guest.waitForFunction(() => !game.multiplayer.mp.inGame);
