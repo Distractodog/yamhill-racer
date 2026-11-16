@@ -2,7 +2,7 @@
 //   1. the car parked on a flat roof (campus Gym: parapet + rooftop units), chase camera and a side view;
 //   2. the car on a pitched roof (campus Barn 1, 22° gable), across the slope;
 //   3. the helicopter landed on a roof (Gym), after an S descent;
-//   4. the car jumping from one McMinnville Third Street roof to the next (run-up, in the air, landed).
+//   4. the car hopping from one McMinnville Third Street roof to the next (in the air over the parapet, landed).
 // Serves game/ on 127.0.0.1:8173 if nothing is listening there. Run through the gate:
 //   node tools/roof_shots.mjs --out /tmp/yr-roof-shots
 // Each shot prints the vehicle state (mode, on a roof, wheel contacts vs the roof height, camera height over the roof)
@@ -137,14 +137,12 @@ try {
   check(hs.mode === 'ground' && hs.onRoof && hs.contacts.every(c => Math.abs(c) < 0.05), `heli skids on the drawn roof (${hs.contacts.join(', ')})`);
   await shot('3-heli-on-roof', 'side');
 
-  // 4. car: Third Street roof → the next roof across a 2.5 m gap, 2.3 m lower
+  // 4. car: Third Street roof → the next roof across a 2.5 m gap, 2.3 m lower. Parapets are solid, so the hop starts
+  // in the air 4 m before the edge, 2.5 m up (clear of the 0.45 m parapet), at 79 km/h
   await page.evaluate(() => game.vehicles.switchTo('car'));
   await holdCar(page, { x: JUMP.x + 30, z: JUMP.z, yaw: 0, kind: 'car' });
-  await drop(JUMP.x, JUMP.z, JUMP.yaw, 0.8, JUMP.kmh);
-  await keys(['KeyW']); await wait(300);
-  await shot('4-roof-jump-runup', 'side');
-  await page.waitForFunction(() => !game.vehicles.current.grounded && game.vehicles.current.airTime > 0.15, { timeout: 4000, polling: 20 }).catch(() => {});
-  await keys([], ['KeyW']);
+  await drop(JUMP.x + Math.sin(JUMP.yaw) * 10, JUMP.z + Math.cos(JUMP.yaw) * 10, JUMP.yaw, 2.5, JUMP.kmh);
+  await wait(150);
   await shot('4-roof-jump-air', 'side');
   await page.waitForFunction(() => game.vehicles.current.grounded && game.vehicles.current.airTime === 0, { timeout: 4000, polling: 20 }).catch(() => {});
   await keys(['KeyS']); await wait(1200); await keys([], ['KeyS']); await wait(800);

@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
 import { Jet } from './jet.js';
+import { LEDGE, roofLedge } from './roofs.js';
 import { buildHeliModel, HELI_SKIDS, HELI_SKID_H, HELI_BODY } from './models/heli.js';
 
 export const HELI = {
@@ -68,9 +69,8 @@ export class Heli extends Vehicle {
   groundPose(x, z, yaw, y) {
     const W = this.world, s = Math.sin(yaw), c = Math.cos(yaw), h = [];
     for (const [gx, gz] of HELI_SKIDS) { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; h.push([px, W.heightAt(px, pz, y), pz]); }
-    // skid ends hanging over a ledge (a roof edge) rest on it, level, while the centre is over the top
-    const top = Math.max(h[0][1], h[1][1], h[2][1], h[3][1]);
-    if (top - Math.min(h[0][1], h[1][1], h[2][1], h[3][1]) > 1.5 && W.heightAt(x, z, y) > top - 1.5) for (const p of h) if (top - p[1] > 1.5) p[1] = top;
+    // skid ends hanging over a roof's edge rest on it, level, while the centre is over the roof (terrain: unchanged)
+    if (roofLedge(W, h) && W.heightAt(x, z, y) > h.top - LEDGE) for (const p of h.off) p[1] = h.top;
     const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
     const F = mid(h[0], h[1]), B = mid(h[2], h[3]), L = mid(h[0], h[2]), R = mid(h[1], h[3]);
     _fw.set(F[0] - B[0], F[1] - B[1], F[2] - B[2]).normalize();
@@ -244,14 +244,15 @@ export class Heli extends Vehicle {
       Math.abs(W.heightAt(x - 3, z) - h) < 1 && Math.abs(W.heightAt(x, z - 3) - h) < 1;
   }
 
-  // skid ends on a ledge with the centre past it: true, and out = the flat way off it (from the high ends to the low)
+  // skid ends on a roof's edge with the centre past it: true, and out = the flat way off it (from the centroid of the
+  // ends on the roof to the centroid of those hanging over the drop). Terrain ledges: false (old behaviour).
   ledgeAway(out) {
     const W = this.world, s = Math.sin(this.yaw), c = Math.cos(this.yaw), h = [];
     for (const [gx, gz] of HELI_SKIDS) { const px = this.pos.x + c * gx + s * gz, pz = this.pos.z - s * gx + c * gz; h.push([px, W.heightAt(px, pz, this.pos.y), pz]); }
-    const top = Math.max(...h.map(p => p[1]));
-    if (top - Math.min(...h.map(p => p[1])) <= 1.5 || W.heightAt(this.pos.x, this.pos.z, this.pos.y) > top - 1.5) return false;
-    out.set(0, 0, 0);
-    for (const [x, y, z] of h) { const k = top - y > 1.5 ? 1 : -1; out.x += x * k; out.z += z * k; }
+    if (!roofLedge(W, h) || W.heightAt(this.pos.x, this.pos.z, this.pos.y) > h.top - LEDGE) return false;
+    let hx = 0, hz = 0, nh = 0, lx = 0, lz = 0, nl = 0;
+    for (const p of h) if (h.off.includes(p)) { lx += p[0]; lz += p[2]; nl++; } else { hx += p[0]; hz += p[2]; nh++; }
+    out.set(lx / nl - hx / nh, 0, lz / nl - hz / nh);
     const L = Math.hypot(out.x, out.z) || 1; out.x /= L; out.z /= L;
     return true;
   }

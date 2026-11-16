@@ -182,7 +182,7 @@ export class Car extends Vehicle {
     this.grounded = contacts > 0;
     const firm = contacts >= 2;
     if (contacts) { let b = 0; for (let i = 1; i < 8; i++) if (counts[i] > counts[b]) b = i; this.surface = b; }
-    const grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1);
+    const grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1);   // steep roofs slip
     if (contacts) _nAvg.normalize(); else _nAvg.set(0, 1, 0);
     if (bed >= 2) _F.addScaledVector(_nAvg, -t.downforce * speed * speed * MASS);
 

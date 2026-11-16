@@ -13,6 +13,7 @@
 // World queries only: heightAt / surfaceAt / normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt).
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { LEDGE, onRoofAt, roofLedge } from './roofs.js';
 
 export const JET = {
   gravity: 12,
@@ -76,9 +77,9 @@ export class Jet extends Vehicle {
     const W = this.world, A = this.air, s = Math.sin(yaw), c = Math.cos(yaw);
     const pt = ([gx, gz]) => { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; return [px, W.heightAt(px, pz, y), pz]; };
     const N = pt(A.gear[0]), L = pt(A.gear[1]), R = pt(A.gear[2]);
-    // a wheel hanging over a ledge (a roof edge) rests on it, level, while the centre is over the top
-    const top = Math.max(N[1], L[1], R[1]);
-    if (top - Math.min(N[1], L[1], R[1]) > 1.5 && W.heightAt(x, z, y) > top - 1.5) for (const p of [N, L, R]) if (top - p[1] > 1.5) p[1] = top;
+    // a wheel hanging over a roof's edge rests on it, level, while the centre is over the roof (terrain: unchanged)
+    const pts = [N, L, R];
+    if (roofLedge(W, pts) && W.heightAt(x, z, y) > pts.top - LEDGE) for (const p of pts.off) p[1] = pts.top;
     const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2, mz = (L[2] + R[2]) / 2;
     if (A.tail) _fw.set(mx - N[0], my - N[1], mz - N[2]).normalize();      // tail wheel behind: forward is away from it
     else _fw.set(N[0] - mx, N[1] - my, N[2] - mz).normalize();
@@ -149,7 +150,7 @@ export class Jet extends Vehicle {
     this.grounded = true; this.airTime = 0; this.contacts = 3; this.agl = 0;
     // surface + water under the wheels
     const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
-    let worstRoll = 0, wet = false;
+    let worstRoll = 0, wet = false, onRoof = false;
     for (const wh of this.wheels) {
       const px = this.pos.x + c * wh.x + s * wh.z, pz = this.pos.z - s * wh.x + c * wh.z;
       const py = _w.set(wh.x, -wh.h, wh.z).applyQuaternion(this.quat).y + this.pos.y;
@@ -157,6 +158,7 @@ export class Jet extends Vehicle {
       if (W.waterLevelAt(px, pz) > W.heightAt(px, pz, py)) wet = true;
       worstRoll = Math.max(worstRoll, ROLL[sc] ?? 1);
       wh.contactPoint.set(px, W.heightAt(px, pz, py), pz);
+      if (onRoofAt(W, px, wh.contactPoint.y, pz)) onRoof = true;          // a wheel on a roof (roofs.js)
     }
     this.surface = W.surfaceAt(this.pos.x, this.pos.z, this.pos.y);
     if (wet && Math.abs(this.v) > 2) { this.crash('water'); return; }
@@ -189,8 +191,8 @@ export class Jet extends Vehicle {
     const vyNew = (ny - this.pos.y) / dt;
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
     // ground falling away faster than gravity can follow (crest / ramp lip): it's in the air
-    // (or a ledge: half a metre down in one step, e.g. rolling off a roof's edge, falls instead of snapping down)
-    if (ny < this.pos.y - 0.5 || (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50)) {
+    // (or a ledge: 2 m down in one step; rolling off a roof's edge, half a metre: falls instead of snapping down)
+    if (ny < this.pos.y - (onRoof ? 0.5 : 2) || (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50)) {
       this.toAir(); this.vel.set(Math.sin(this.yaw) * this.v, this.vy, Math.cos(this.yaw) * this.v); return;
     }
     this.vy = vyNew;
@@ -214,8 +216,8 @@ export class Jet extends Vehicle {
     for (const wh of this.wheels) { wh.contact = false; wh.comp = 0; }
   }
 
-  // the ground under the centre is far below the lowest wheel's (a wheel on a roof edge, the centre past it): true,
-  // and out = the flat way off the edge (from that wheel toward the centre)
+  // the lowest wheel is on a roof and the ground under the centre is far below it (the centre is past the roof's edge):
+  // true, and out = the flat way off the edge (from that wheel toward the centre). Terrain ledges: false.
   ledgeAway(out) {
     const W = this.world; let low = Infinity, wx = 0, wz = 0, wy = 0;
     for (const { x, z, h } of this.wheels) {
@@ -223,7 +225,8 @@ export class Jet extends Vehicle {
       const g = W.heightAt(_w.x, _w.z, _w.y), a = _w.y - g;
       if (a < low) { low = a; wx = _w.x; wz = _w.z; wy = g; }
     }
-    if (W.heightAt(this.pos.x, this.pos.z, this.pos.y) > wy - 1.5) return false;
+    const cy = W.heightAt(this.pos.x, this.pos.z, this.pos.y);
+    if (cy > wy - LEDGE || !onRoofAt(W, wx, wy, wz) || onRoofAt(W, this.pos.x, cy, this.pos.z)) return false;
     out.set(this.pos.x - wx, 0, this.pos.z - wz);
     const L = Math.hypot(out.x, out.z) || 1; out.x /= L; out.z /= L;
     return true;

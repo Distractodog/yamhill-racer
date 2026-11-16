@@ -338,30 +338,44 @@ for (const kind of ['car', 'bike', 'heli', 'jet']) {
     check(name, r, goals);
   }
 }
-// (5) roof to roof: run-up, jump the gap, land on the lower roof
-const J = (words.length && !words.some(w => 'jump'.includes(w) || w.includes('jump'))) ? null : findJump();
+// (5) roof to roof: a flat roof, a gap of 2.5–7 m, a lower flat roof
+const J = findJump();
 if (J) console.log(`jump: gap ${J.gap.toFixed(1)} m, drop ${J.drop.toFixed(2)} m from ${J.x.toFixed(2)}, ${J.z.toFixed(2)} yaw ${J.yaw.toFixed(4)}`);
+// Parapets are solid like walls, so a car can't drive off a flat roof: the hop starts in the air 4 m before roof A's
+// edge, 2.5 m up at 79 km/h (clear of A's parapet), crosses the gap and lands on B
 for (const kind of ['car', 'bike']) {
-  const name = `roof-to-roof jump: ${kind}`; if (!want(name) || !J) continue;
-  const v = make(kind), top = roofOf(J.a, J.x, J.z);
-  drop(v, kind, J.x, J.z, J.yaw, top + 0.8, 0, 22);
-  const r = run(v, kind, 4, [J.a, J.b], (t, i, c) => { i.throttle = t < 1 && c.vel.length() < 22 ? 1 : 0; i.brake = t > 1.6 && c.vel.length() > 2 ? 1 : 0; });
+  const name = `roof-to-roof hop over the parapet: ${kind}`; if (!want(name) || !J) continue;
+  const v = make(kind), x = J.x + Math.sin(J.yaw) * 10, z = J.z + Math.cos(J.yaw) * 10, top = roofOf(J.a, x, z);
+  drop(v, kind, x, z, J.yaw, top + 2.5, 0, 22);
+  const r = run(v, kind, 4, [J.a, J.b], (t, i, c) => { i.brake = t > 0.8 && c.vel.length() > 2 ? 1 : 0; });
   check(name, r, [[r.onRoof[1] > 20, 'never landed on the next roof'], [r.roofErr < 0.05, `${(r.roofErr * 100).toFixed(1)} cm off the drawn roof`]]);
 }
-// (6) drive off a roof edge (downtown flat roof): falls cleanly, lands on the street
-for (const kind of ['car', 'bike', 'jet']) {
-  const name = `drive off the downtown roof: ${kind}`; if (!want(name)) continue;
-  const [x, z] = centroid(flatTown.pts), top = roofOf(flatTown, x, z), v = make(kind);
-  // the nearest edge direction
+// (6) driving at a roof's edge: the parapet (as drawn: 0.9 m downtown commercial, 0.45 m on Third Street) stops the
+// vehicle, slow or fast: never through it, never launched up it (no more than 0.3 m above its resting height)
+const parapetRoofs = [['0.9 m parapet', flatTown, ...centroid(flatTown.pts)]];
+if (J) parapetRoofs.push(['0.45 m parapet', J.a, J.x + Math.sin(J.yaw) * 6, J.z + Math.cos(J.yaw) * 6]);
+for (const [label, b, x, z] of parapetRoofs) for (const kind of ['car', 'bike', 'jet']) for (const kmh of kind === 'jet' ? [20] : kind === 'car' ? [10, 70, 150] : [10, 70]) {
+  const name = `${label}, drive at it at ${kmh} km/h: ${kind}`; if (!want(name)) continue;
+  const top = roofOf(b, x, z), v = make(kind);
+  // the nearest edge direction (or, for the hop roof, straight at the gap)
   let best = null;
-  for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8; let s = 0; while (inPoly(flatTown.pts, x + Math.sin(a) * s, z + Math.cos(a) * s)) s += 0.25; if (!best || s < best[1]) best = [a, s]; }
-  drop(v, kind, x, z, best[0], top + 1, 0.5);
-  if (kind === 'jet') { v.mode = 'ground'; }
-  const r = run(v, kind, 7, near(x, z, 40), (t, i, c) => {
-    if (kind === 'jet') { if (t > 0.5) { c.mode === 'ground' && (c.v = 6); } return; }
-    i.throttle = t > 1 && c.vel.length() < 6 ? 0.6 : 0;
+  if (b === J?.a) best = [J.yaw, 0];
+  else for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8; let s = 0; while (inPoly(b.pts, x + Math.sin(a) * s, z + Math.cos(a) * s)) s += 0.25; if (!best || s < best[1]) best = [a, s]; }
+  drop(v, kind, x, z, best[0], top + (kind === 'jet' ? v.air.gearH + 0.05 : 0.8), 0, kmh / 3.6);
+  if (kind === 'jet') { v.mode = 'ground'; v.v = kmh / 3.6; }
+  let rest = Infinity, rise = -Infinity, out = 0, closest = Infinity;
+  const r = run(v, kind, 5, [b], (t, i, c) => {
+    if (kind !== 'jet') i.throttle = c.vel.length() < kmh / 3.6 ? 0.6 : 0;
+    const above = c.pos.y - top;
+    if (t > 0.5 && c.grounded) rest = Math.min(rest, above);
+    if (t > 0.5) rise = Math.max(rise, above);
+    if (!inPoly(b.pts, c.pos.x, c.pos.z)) out++;
+    closest = Math.min(closest, edgeDist(b.pts, c.pos.x, c.pos.z));
   });
-  check(name, r, [[r.everOn, 'never on the roof'], [r.endOn < 0, 'still on the roof'], [r.minY < top - 2, 'never came down']]);
+  // it got there: the centre within its nose length (+ a little) of the parapet
+  const reach = (v.half?.front ?? 2.2) + 0.5;
+  check(name, r, [[closest < reach, `never reached the parapet (closest ${closest.toFixed(2)} m)`], [r.endOn === 0, 'left the roof'], [!out, `centre past the parapet ${out} steps`], [!r.crashed, 'crashed'],
+    [rise - rest < 0.3, `launched: ${(rise - rest).toFixed(2)} m above its resting height`], [r.roofErr < 0.05, `${(r.roofErr * 100).toFixed(1)} cm off the drawn roof`]]);
 }
 // jets on the Space Museum's big flat roof: a low pass (stays flying) and landings on the gear
 {

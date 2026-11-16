@@ -231,7 +231,7 @@ export class Bike extends Vehicle {
     // ------------------------------------------------ riding on the ground: lean → turn, grip, slides
     let leanWant;
     if (drive > 0) {
-      const n = _nAvg, k = drive / 2, grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1), loose = LOOSE[this.surface];
+      const n = _nAvg, k = drive / 2, grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1), loose = LOOSE[this.surface];
       _hp.copy(_fw).addScaledVector(n, -_fw.dot(n)).normalize();
       _vp.copy(this.vel).addScaledVector(n, -this.vel.dot(n));
       const vPlane = _vp.length(), vf = _vp.dot(_hp), reversing = vf < -0.5, av = Math.abs(vf);

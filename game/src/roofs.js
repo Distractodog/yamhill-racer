@@ -4,8 +4,9 @@
 //   * campus and landmark buildings: their parts (campus.js / landmarks.js) on the building's floor;
 //   * town buildings: the parts townbuild.js plans for the mesh (same plan, same floor as townmodel.js);
 //   * flat roofs are flat, gable / hip roofs slope with their pitch (and overhang their walls by `over`),
-//     a flat roof's parapet is a thin rim at the edge, boxes standing on a roof (rooftop units, tower caps,
-//     chimneys) are columns of their own, and a campus porch roof is a canopy (support from above, no walls).
+//     a flat roof's parapet is a thin wall round its edge (solid from both sides), boxes standing on a roof (rooftop
+//     units, tower caps, chimneys) are columns of their own, and a campus porch roof is a canopy (support from
+//     above, no walls). Roofs steeper than ~25° have less grip (roofGrip), so cars slowly slide down them.
 // A roof supports a vehicle only when the vehicle comes at it from above; below a roof its walls block. Walls
 // between a building's blocks (a tower over a lower roof, a house over its garage) block a vehicle on the roof.
 // Terrain queries elsewhere (streaming, spawning, scenery) stay unchanged.
@@ -13,7 +14,8 @@ import { inPoly, partPts, rectPts } from './campus.js';
 import { floorOf, planBuilding, roadContext } from './townbuild.js';
 
 const D2R = Math.PI / 180;
-const RIM = 0.3;          // width of a parapet's top (it is drawn as a thin wall on the roof's edge)
+const PARAPET_STEP = 0.15; // m per step: the most a parapet puts a vehicle back inside it
+const STEEP = [Math.tan(22 * D2R), Math.tan(25 * D2R)], ROOF_SLIP = 0.3;   // grip × ROOF_SLIP on roofs steeper than 25°
 const NUDGE = 0.05;       // a wall's height is read this far inside it
 const ABOVE = 0.05;       // a vehicle's centre this far above a surface is on it, not in it
 const SOFT = 0.06;        // m per step (+ its fall): easing a vehicle off a wall it is coming down beside
@@ -140,13 +142,15 @@ function solidOf(b, world) {
   return s;
 }
 
-// distance from (x, z) to the nearest edge of a polygon
-function edgeDist(pts, x, z) {
+// the nearest point on a polygon's edges to (x, z), into edge.x / edge.z; returns its distance
+const edge = { x: 0, z: 0 };
+function nearestEdge(pts, x, z) {
   let best = Infinity;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     const [x1, z1] = pts[j], [x2, z2] = pts[i], ex = x2 - x1, ez = z2 - z1, L = ex * ex + ez * ez || 1;
     const u = Math.max(0, Math.min(1, ((x - x1) * ex + (z - z1) * ez) / L));
-    best = Math.min(best, Math.hypot(x - x1 - ex * u, z - z1 - ez * u));
+    const d = Math.hypot(x - x1 - ex * u, z - z1 - ez * u);
+    if (d < best) { best = d; edge.x = x1 + ex * u; edge.z = z1 + ez * u; }
   }
   return best;
 }
@@ -184,10 +188,10 @@ function blockTop(k, x, z) {
 }
 
 // The highest drawn surface of footprint b at (x, z) that is no higher than cap (Infinity: the top of the column);
-// -Infinity if there is none. Its uphill slope (rise per metre in x and z) is left in roofGrad. rims = false leaves
-// out the parapets' tops.
+// -Infinity if there is none. Its uphill slope (rise per metre in x and z) is left in roofGrad. (A parapet is a
+// wall, not a surface: see parapetPush.)
 export const roofGrad = { x: 0, z: 0 };
-export function roofSurfaceAt(b, x, z, world, cap = Infinity, rims = true) {
+export function roofSurfaceAt(b, x, z, world, cap = Infinity) {
   const bb = boxOf(b);
   if (x < bb[0] - 3 || x > bb[2] + 3 || z < bb[1] - 3 || z > bb[3] + 3) return -Infinity;
   const s = solidOf(b, world);
@@ -196,7 +200,6 @@ export function roofSurfaceAt(b, x, z, world, cap = Infinity, rims = true) {
     const t = blockTop(k, x, z);
     if (t === -Infinity) continue;
     if (!k.canopy) covered = true;
-    if (rims && k.parapet && t + k.parapet <= cap && t + k.parapet > best && edgeDist(k.pts, x, z) < RIM) { best = t + k.parapet; roofGrad.x = 0; roofGrad.z = 0; }
     if (t <= cap && t > best) { best = t; roofGrad.x = grad.x; roofGrad.z = grad.z; }
   }
   if (!covered && s.low <= cap && s.low > best && inPoly(b.pts, x, z)) { best = s.low; roofGrad.x = 0; roofGrad.z = 0; }
@@ -204,6 +207,45 @@ export function roofSurfaceAt(b, x, z, world, cap = Infinity, rims = true) {
 }
 // the top of the column (the roof seen from above), kept for older callers
 export const buildingRoofAt = (b, x, z, world) => roofSurfaceAt(b, x, z, world);
+
+// how high footprint b's outer wall stands at (x, z) just inside it: the drawn roof there plus its parapet
+function wallTopAt(b, x, z, world) {
+  const s = solidOf(b, world);
+  let best = -Infinity;
+  for (const k of s.blocks) {
+    if (k.canopy) continue;
+    const t = blockTop(k, x, z);
+    if (t > -Infinity) best = Math.max(best, t + k.parapet);
+  }
+  if (best > -Infinity) return best;
+  return s.low > -Infinity && inPoly(b.pts, x, z) ? s.low : s.high;      // a gap between the parts / a reflex corner
+}
+
+// A flat roof's parapet seen from the roof: a thin wall round the edge, as drawn. While any of the vehicle is lower
+// than its top, the body's nose, middle and tail (circles of the body's half width, at most 1.2 m) stay inside it.
+// Driving into it stops the vehicle (no ramp up it, no bounce back); it is put back at most PARAPET_STEP a step.
+// foot = the vehicle's centre height above its wheels / skids. Returns the speed it hit the parapet at.
+const CAR_HALF = { x: 1, front: 2.2, back: -2.2 };
+function parapetPush(v, k, foot) {
+  const p = v.pos, top = k.base + k.parapet;
+  if (p.y < k.base - 0.3 || p.y - foot * 0.9 > top || !inPoly(k.pts, p.x, p.z)) return 0;
+  const h = v.half || CAR_HALF, r = Math.min(h.x, 1.2), q = v.quat;
+  let fx = 2 * (q.x * q.z + q.w * q.y), fz = 1 - 2 * (q.x * q.x + q.y * q.y);
+  const fl = Math.hypot(fx, fz) || 1; fx /= fl; fz /= fl;
+  let worst = 0, budget = PARAPET_STEP;
+  for (const off of [Math.max(0, h.front - r), 0, Math.min(0, h.back + r)]) {
+    const qx = p.x + fx * off, qz = p.z + fz * off, d = nearestEdge(k.pts, qx, qz), inside = inPoly(k.pts, qx, qz);
+    if ((inside && d >= r) || d < 1e-6) continue;
+    // the way back in, away from the parapet
+    let nx = (qx - edge.x) / d, nz = (qz - edge.z) / d;
+    if (!inside) { nx = -nx; nz = -nz; }
+    const pen = Math.min(inside ? r - d : r + d, budget);
+    budget -= pen; p.x += nx * pen; p.z += nz * pen;
+    const vn = v.vel.x * nx + v.vel.z * nz;
+    if (vn < 0) { v.vel.x -= nx * vn * 1.1; v.vel.z -= nz * vn * 1.1; v.hit = Math.max(v.hit, -vn); worst = Math.max(worst, -vn); }
+  }
+  return worst;
+}
 
 // push v out of polygon pts (the shared wall response); top(inside, x, z, y) = the wall's height at a point just
 // inside it. Returns the speed it hit the wall at (0 when it only eased off), -1 = not touching, -2 = above it.
@@ -245,24 +287,42 @@ export function collideBuilding(v, b, R) {
   // up at roof level (or just off this roof), a wall it comes down beside eases it clear; on the ground, walls bounce
   const ease = W.recentRoof?.(b) || p.y - W.terrainAt(p.x, p.z) > 2.5;
   const outer = wallPush(v, b.pts, R, (inside, x, z, y) => {
-    // inside: above some roof of it here, or how deep under its roof (a parapet's top doesn't count)
+    // inside: above some roof of it here, or how deep under its roof
     if (inside && roofSurfaceAt(b, p.x, p.z, W, y - ABOVE) > -Infinity) return -Infinity;
-    const t = inside ? roofSurfaceAt(b, p.x, p.z, W, Infinity, false) : roofSurfaceAt(b, x, z, W);
-    return t > -Infinity ? t : solidOf(b, W).high;      // a reflex corner: the building's top
+    if (!inside) return wallTopAt(b, x, z, W);
+    const t = roofSurfaceAt(b, p.x, p.z, W);
+    return t > -Infinity ? t : solidOf(b, W).high;
   }, ease);
-  if (outer !== -2 || !solidOf(b, W).walls) return Math.max(0, outer);
-  // on (or over) this building: its blocks' own walls, each up to its drawn top
+  if (outer !== -2) return Math.max(0, outer);
+  // on (or over) this building: its blocks' own walls, each up to its drawn top (+ parapet), and the parapets
+  const s = solidOf(b, W), foot = v.wheelReach?.() ?? v.air?.gearH ?? 1.6;
   let worst = 0;
-  for (const k of solidOf(b, W).blocks) {
+  for (const k of s.blocks) {
     if (k.canopy || p.x < k.x0 - R || p.x > k.x1 + R || p.z < k.z0 - R || p.z > k.z1 + R) continue;
+    if (k.parapet) worst = Math.max(worst, parapetPush(v, k, foot));
+    if (!s.walls) continue;
     const top = (inside, x, z) => {
       if (inside) return blockTop(k, p.x, p.z);
       const t = blockTop(k, x, z);
-      return t > -Infinity && k.parapet ? t + k.parapet : t;
+      return t > -Infinity ? t + k.parapet : t;
     };
     worst = Math.max(worst, wallPush(v, k.pts, R, top, ease));
   }
   return worst;
+}
+
+// Contact points [[x, y, z], ...] (wheels, skid ends) straddling a ROOF's edge: the highest is on a roof, and some are
+// off the roof (on the ground beyond it) more than LEDGE below it. Leaves the highest y in pts.top and the points over
+// the drop in pts.off. Terrain steps, ramps and bridge-deck edges never count (the aircraft keep their old behaviour
+// there), nor do the faces of a pitched roof. world = the vehicle's world (createVehicleWorld).
+export const LEDGE = 0.8;
+export const onRoofAt = (world, x, y, z) => (world.roofAt?.(x, z) ?? -Infinity) >= y - 1e-6;
+export function roofLedge(world, pts) {
+  let top = -Infinity, at = null;
+  for (const p of pts) if (p[1] > top) { top = p[1]; at = p; }
+  pts.top = top;
+  pts.off = onRoofAt(world, at[0], top, at[2]) ? pts.filter(p => top - p[1] > LEDGE && !onRoofAt(world, p[0], p[1], p[2])) : [];
+  return pts.off.length > 0;
 }
 
 export function createVehicleWorld(world, vehicle) {
@@ -312,6 +372,11 @@ export function createVehicleWorld(world, vehicle) {
   const queries = {
     roofAt,
     onRoof: () => !!frame().on,
+    // tyre grip factor: 1 off roofs and on flat ones, ROOF_SLIP on a roof face steeper than ~25° (eased in from 22°)
+    roofGrip() {
+      const f = frame(), s = f.on ? Math.hypot(f.gx, f.gz) : 0;
+      return s <= STEEP[0] ? 1 : s >= STEEP[1] ? ROOF_SLIP : 1 + (ROOF_SLIP - 1) * (s - STEEP[0]) / (STEEP[1] - STEEP[0]);
+    },
     // that building held the vehicle up within the last ~second (its walls ease it off rather than bounce it). Reads
     // the last support state only: the wall loop iterates world.buildingsNear's shared list, which a broad-phase
     // refresh here would overwrite.
