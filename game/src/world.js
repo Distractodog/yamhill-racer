@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
-import { readTileData, fetchReader, groundFile } from './tilepack.js';
+import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
 import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
@@ -76,7 +76,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   async function fetchTile(tx, tz) {
     const dir = `${base}tiles/${tx}_${tz}/`;
     const [data, img] = await Promise.all([
-      readTileData(fetchReader(dir), W.packed),         // packed (.gz) or plain files: tilepack.js
+      readTileRaw(fetchReader(dir), W.packed),          // unzipped here, decoded in buildTile's steps: tilepack.js
       // ground colours as four 1024^2 quarters (cropped off the main thread), so each uploads in its own slice
       fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => Promise.all([0, 1, 2, 3].map(q =>
         createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' })))),
@@ -85,8 +85,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   }
 
   // builds one tile's data and meshes, yielding between pieces so the frame budget can pause it
-  function* buildTile(tx, tz, data, img) {
-    const td = yield* makeTileDataSteps(W, tx, tz, data);
+  function* buildTile(tx, tz, raw, img) {
+    const td = yield* makeTileDataSteps(W, tx, tz, yield* decodeTileSteps(raw));
     const g = new THREE.Group(), out = { td, group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], campusItemLods: [], treeMats: null, tgrid: null };
     out.textures = []; out.materials = [];
     const quarterMats = [];
@@ -304,7 +304,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       const gen = buildTile(tx, tz, data, img);
       const finish = v => { world.add(v.td); vis.set(k, v); group.add(v.group); loading.delete(k); lastShadowAt = null; };
       if (now) { let r; while (!(r = gen.next()).done); finish(r.value); }
-      else jobs.push({ gen, finish });
+      else jobs.push({ gen, finish, tx, tz });
     });
   }
 
@@ -328,13 +328,17 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   // vel (m/s, optional): at speed, also load around a point up to AHEAD_S seconds ahead, nearest-to-that-point
   // first, and allow more build time per frame, so the map keeps up even at 1000 km/h
-  function update(cam, vel) {
+  // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
+  function update(cam, vel, extraMs = 0) {
     const sp = vel ? Math.hypot(vel.x, vel.z) : 0, la = Math.min(AHEAD_MAX, sp * AHEAD_S) / (sp || 1);
     const ax = cam.x + (vel ? vel.x * la : 0), az = cam.z + (vel ? vel.z * la : 0);
     const want = new Map();
     for (const [tx, tz] of [...wanted(cam.x, cam.z, LOAD_R), ...(la ? wanted(ax, az, LOAD_R) : [])]) want.set(world.key(tx, tz), [tx, tz]);
     const nx = (cam.x + ax) / 2, nz = (cam.z + az) / 2, d2 = ([tx, tz]) => (tx * T - nx) ** 2 + (tz * T - nz) ** 2;
-    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (loading.size < 3) startLoad(tx, tz);
+    // at most 3 tiles in flight, but the tile under the camera never waits behind look-ahead tiles from before a
+    // respawn / teleport
+    const [cx, cz] = world.tileIndex(cam.x, cam.z);
+    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (loading.size < 3 || (tx === cx && tz === cz)) startLoad(tx, tz);
     for (const [k, v] of vis) {
       const t = world.tiles.get(k); if (!t) continue;
       const dx = Math.max(t.x0 - cam.x, 0, cam.x - (t.x0 + T)), dz = Math.max(t.z0 - cam.z, 0, cam.z - (t.z0 + T));
@@ -343,7 +347,10 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     // Each step's cost is remembered by the label the job yielded just before it (that label tells which piece comes
     // next); a step only starts if its usual cost still fits in what is left of this frame's budget. The first step
     // of a frame always runs, so the queue never stalls.
-    const t0 = performance.now(), budget = FRAME_BUDGET_MS + Math.min(4, sp / 60);
+    const t0 = performance.now(), budget = FRAME_BUDGET_MS + Math.min(4, sp / 60) + extraMs;
+    // nearest tile first, by the same point the loads are ordered by (after a respawn / teleport the queue can still
+    // hold tiles from where the vehicle was)
+    if (jobs.length > 1) jobs.sort((p, q) => d2([p.tx, p.tz]) - d2([q.tx, q.tz]));
     for (let first = true; jobs.length; first = false) {
       const now = performance.now(), j = jobs[0];
       if (!first && now - t0 + (stepCost.get(j.next) || 0) > budget) break;
@@ -378,8 +385,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     casters.forEach((m, i) => { m.count = n[i]; m.instanceMatrix.needsUpdate = true; });
   }
 
-  function updateLOD(cam, vel) {
-    update(cam, vel);
+  function updateLOD(cam, vel, extraMs = 0) {
+    update(cam, vel, extraMs);
     for (const v of vis.values()) {
       v.scenery?.update(cam, sceneryTime, nightAmount);
       for (const c of v.chunks) {

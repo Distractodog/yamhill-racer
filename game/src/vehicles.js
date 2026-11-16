@@ -128,6 +128,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
 
   return {
     player, all, car, bike, get jet() { return all.jet; }, heli, aircraft: [jet, heli], switchTo, show, close, ...types,
+    vehicleFor: (kind, id) => kind === 'jet' ? jetFor(id) : all[kind],     // the vehicle that drives a type
     get current() { return cur; }, get open() { return open; },
     onSwitch(f) { listeners.push(f); },
   };

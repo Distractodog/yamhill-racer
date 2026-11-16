@@ -36,7 +36,9 @@ local.update(.01, vehicles[1], 1); assert.equal(local.spot.parent, scene, 'switc
 assert.equal(local.lenses.group.parent, vehicles[1].mesh.userData.lightMount);
 { const m = vehicles[1].mesh.userData.lightMount, h = vehicles[1].mesh.userData.lights.head[0];
   assert(local.spot.position.distanceTo(m.localToWorld(h.clone().add(new THREE.Vector3(0, .12, 0)))) < 1e-6, 'beam starts at the head lamp'); }
-assert.equal(oldLenses.parent, null, 'switching vehicles disposes the old rig');
+assert.equal(oldLenses.parent, car.mesh.userData.lightMount, 'switching vehicles keeps the old rig on its model (no shader recompile)');
+local.update(.01, car, 1); assert.equal(local.lenses.group, oldLenses, 'switching back reuses that rig');
+local.update(.01, vehicles[1], 1);
 assert.equal(car.mesh.getObjectByName('player-headlight'), undefined);
 // A bike's lights must lean with its body, while the beam stays forward and points down.
 const bike = vehicles[1].mesh;

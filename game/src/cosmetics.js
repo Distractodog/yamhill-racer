@@ -45,6 +45,7 @@ function pickedColors(saved, config, kind) {
 const BUILDERS = { car: buildCarModel, bike: buildBikeModel, jet: buildJetModel };
 const mudColor = new THREE.Color('#66523b'), scratchColor = new THREE.Color('#aeb2b3');
 function disposeTree(group) {
+  if (!group) return;
   const materials = new Set(), geometries = new Set(), textures = new Set();
   group.traverse(o => { if (o.geometry) geometries.add(o.geometry); for (const m of Array.isArray(o.material) ? o.material : o.material ? [o.material] : []) { materials.add(m); if (m.map) textures.add(m.map); } });
   geometries.forEach(g => g.dispose()); textures.forEach(t => t.dispose()); materials.forEach(m => m.dispose());
@@ -151,9 +152,13 @@ function browserStorage() { try { return globalThis.localStorage; } catch { retu
 export function createCosmetics(vehicles, { isUnlocked = () => false, storage = browserStorage() } = {}) {
   let saved = {}, raw = null; try { raw = storage?.getItem(COSMETIC_KEY); saved = JSON.parse(raw || '{}'); } catch {}
   const configs = {}, custom = {}, bindings = {}, wear = {}, listeners = new Set(); let accumulator = 0, forcedWet = 0;
+  // one binding per model, made once: type models are kept and reused (vehicletypes.js typeModel), and binding a model
+  // twice would add its livery / scuff / hub pieces twice
+  const bound = new WeakMap(), previews = new Map();
+  const bindingFor = (model, kind) => { let b = bound.get(model); if (!b) bound.set(model, b = bindModel(model, kind)); return b; };
   // what a kind is painted with now: the player's config, with the current type's factory colours where they picked none
   const effective = kind => withTypeColors(configs[kind], kind, vehicles.getType?.(kind), custom[kind]);
-  for (const kind of Object.keys(BUILDERS).filter(k => vehicles.all[k])) { configs[kind] = sanitizeCosmetics(saved?.[kind], kind, isUnlocked); custom[kind] = pickedColors(saved?.[kind], configs[kind], kind); bindings[kind] = bindModel(vehicles.all[kind].mesh, kind); wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], effective(kind), wear[kind]); }
+  for (const kind of Object.keys(BUILDERS).filter(k => vehicles.all[k])) { configs[kind] = sanitizeCosmetics(saved?.[kind], kind, isUnlocked); custom[kind] = pickedColors(saved?.[kind], configs[kind], kind); bindings[kind] = bindingFor(vehicles.all[kind].mesh, kind); wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], effective(kind), wear[kind]); }
   const persist = () => {
     try {
       if (!storage) return false;
@@ -191,21 +196,38 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
     setWetness(value) { forcedWet = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     refreshUnlocks() { notify(vehicles.current.kind); },
-    createPreview(kind) { const model = vehicles.getType?.(kind) ? buildVehicleTypeModel(kind, vehicles.getType(kind)) : BUILDERS[kind](); const binding = bindModel(model, kind); applyBinding(binding, effective(kind), wear[kind]); return model; },
+    // the Garage's preview model of a kind's current type: built once per type and repainted on each call
+    createPreview(kind) {
+      const type = vehicles.getType?.(kind) || null, key = `${kind}/${type}`;
+      let model = previews.get(key);
+      if (!model) { model = type ? buildVehicleTypeModel(kind, type) : BUILDERS[kind](); previews.set(key, model); }
+      applyBinding(bindingFor(model, kind), effective(kind), wear[kind]); return model;
+    },
+    // paint a model that isn't driven yet (warmup.js), so its livery pieces exist when its shaders are compiled
+    prepare(kind, model) { if (wear[kind]) applyBinding(bindingFor(model, kind), effective(kind), wear[kind]); },
     update(dt, vehicle = vehicles.current) {
       if (!vehicle || !wear[vehicle.kind] || !Number.isFinite(dt)) return;
-      const state = wear[vehicle.kind], speed = vehicle.vel.length();
+      const kind = vehicle.kind, state = wear[kind], speed = vehicle.vel.length();
+      // The paint shows at once whatever put this model on screen or brought it back: a type or vehicle swap (a model
+      // without its binding yet), or the respawn after a crash. A wreck (jet.js / models wreck()) is grey while it
+      // tumbles and puts back the paint it had at the crash, which can be stale (painted in the Garage meanwhile);
+      // wear isn't painted over the wreck.
+      const wrecked = vehicle.mode === 'crashed';
+      if (bindings[kind].model !== vehicle.mesh || (bindings[kind].wrecked && !wrecked)) {
+        bindings[kind] = bindingFor(vehicle.mesh, kind); applyBinding(bindings[kind], effective(kind), state);
+      }
+      bindings[kind].wrecked = wrecked;
       const dirty = vehicle.grounded && [0,1,2,4].includes(vehicle.surface) && speed > 2;
       state.dirt = Math.min(1, state.dirt + (dirty ? dt * Math.min(speed, 50) * .00015 : 0));
       state.scuff = Math.min(1, state.scuff + (vehicle.hit > .1 ? dt * .06 : 0));
       state.wet = vehicle.surface === 5 ? 1 : Math.max(forcedWet, state.wet - dt * .02);
-      accumulator += dt; if (accumulator < .2) return; accumulator = 0;
+      accumulator += dt; if (accumulator < .2 || wrecked) return; accumulator = 0;
       const wearSignature = [state.dirt,state.scuff,state.wet].map(v=>Math.round(v*1000)).join('/');
       if (wearSignature !== bindings[vehicle.kind].wearSignature) applyBinding(bindings[vehicle.kind], effective(vehicle.kind), state);
     },
   };
   vehicles.onTypeChange?.(kind => {
-    bindings[kind] = bindModel(vehicles.all[kind].mesh, kind);
+    bindings[kind] = bindingFor(vehicles.all[kind].mesh, kind);
     applyBinding(bindings[kind], effective(kind), wear[kind]); notify(kind);    // the new type's factory colours too
   });
   return api;

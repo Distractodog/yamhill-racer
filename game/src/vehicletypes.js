@@ -103,11 +103,25 @@ export function applyVehicleType(vehicle, id) {
   }
   if (vehicle.kind === 'jet') vehicle.setAirframe?.(spec.physics);
   // Keep the vehicle instance (challenges/camera/glider refer to it), replacing only its owned model.
-  const old = vehicle.mesh, model = buildVehicleTypeModel(vehicle.kind, spec.id);
-  if (vehicle.kind !== 'jet') primeWheelArch(model);
+  const old = vehicle.mesh, model = typeModel(vehicle, spec.id);
   vehicle.glide?.cancel();
+  if (model === old) return null;
   if (vehicle.glide?.mesh) model.add(vehicle.glide.mesh);
   model.position.copy(old.position); model.quaternion.copy(old.quaternion);
   old.parent?.add(model); old.removeFromParent(); vehicle.mesh = model;
-  return old;
+  return old;          // still this vehicle's model for that type: don't dispose it (changing back reuses it)
+}
+// A vehicle's model for a type, built on first use and then kept, so a type change only swaps meshes: no rebuild,
+// no disposed materials (three.js would compile their shaders again on the next use). warmup.js builds them early.
+export function typeModel(vehicle, id) {
+  const first = vehicle.kind === 'jet' && vehicle.mesh.userData.mainRotor ? 'heli' : VEHICLE_TYPES[vehicle.kind][0].id;
+  const models = vehicle._typeModels ||= new Map([[first, vehicle.mesh]]);     // the model it was built with
+  id = typeInfo(vehicle.kind, id).id;
+  let model = models.get(id);
+  if (!model) {
+    model = buildVehicleTypeModel(vehicle.kind, id);
+    if (vehicle.kind !== 'jet') primeWheelArch(model);
+    models.set(id, model);
+  }
+  return model;
 }

@@ -120,10 +120,12 @@ const preview=cosmetics.createPreview('car');assert.equal(preview.name,'car-truc
   assert.deepEqual(blobOf(),car.mesh.userData.blob.map(x=>+x.toFixed(4)),'hatch blob after a same-kind type change');
   assert.notDeepEqual(blobOf(),truckBlob);
   assert.equal(lights.lenses.group.parent,car.mesh.userData.lightMount,'lenses rebuilt on the new model');
-  assert.equal(old.getObjectByName('vehicle-lenses'),undefined,'no lenses left on the replaced model');
+  assert.equal(old.getObjectsByProperty('name','vehicle-lenses').length,1,'the replaced model keeps its lenses for when it is used again');
   assert.equal(car.mesh.getObjectsByProperty('name','vehicle-lenses').length,1);
   assert.equal(lights.spot.parent,scene);assert(lights.lenses.anchors===car.mesh.userData.lights);
-  lights.dispose();assert(types.setType('car','truck'));
+  assert(types.setType('car','truck'));assert(car.mesh===old,'changing back reuses the truck model (no rebuild, no shader compile)');frame();
+  assert(lights.lenses.group.parent===old.userData.lightMount&&old.getObjectsByProperty('name','vehicle-lenses').length===1,'and its lenses');
+  lights.dispose();
 }
 assert(types.setType('bike','sport'));assert.deepEqual(loadVehicleTypes(storage),{car:'truck',bike:'sport',jet:'fighter'});
 // aircraft types: the prop plane's model, numbers over the jet sliders, Garage preview; back to the original jet
