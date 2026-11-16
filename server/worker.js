@@ -1,7 +1,15 @@
 import { Room, roomAddress } from './relay.mjs';
+import { hit, authorized, statsObject } from './stats.mjs';
+export { Stats } from './stats.mjs';
 
 export default {
   fetch(request, env) {
+    const path = new URL(request.url).pathname;
+    if (path === '/hit') return hit(request, env).catch(() => new Response(null, { status: 503 }));
+    if (path === '/stats') {
+      if (request.method !== 'GET' || !authorized(request, env.STATS_KEY)) return new Response(null, { status: 404 });
+      return statsObject(env).fetch(new Request('https://stats/stats'));
+    }
     const address = roomAddress(request.url);
     if (!address) return new Response('Invalid room address', { status: 400 });
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
@@ -12,7 +20,8 @@ export default {
 };
 
 export class RelayRoom {
-  constructor(ctx) {
+  constructor(ctx, env) {
+    this.env = env;
     this.ctx = ctx;
     const sockets = ctx.getWebSockets();
     const first = sockets[0]?.deserializeAttachment();
@@ -52,7 +61,14 @@ export class RelayRoom {
   async webSocketMessage(ws, message) {
     const oldWorld = this.room.world;
     const oldClients = [...this.room.clients.keys()];
+    const hadHost = !!this.room.host;
     this.room.receive(ws, message);
+    if (!hadHost && this.room.host && this.env?.STATS) {
+      // Analytics cannot delay or reject room messages; waitUntil survives hibernation.
+      try {
+        this.ctx.waitUntil(statsObject(this.env).fetch(new Request('https://stats/game', { method: 'POST' })).catch(() => {}));
+      } catch { /* Stats unavailable; multiplayer keeps working. */ }
+    }
     this.saveSession(ws);
     for (const peer of oldClients) {
       if (!this.room.clients.has(peer)) this.saveSession(peer);
