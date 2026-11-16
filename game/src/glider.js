@@ -79,7 +79,7 @@ export class Glider {
   }
 
   toggle() {
-    if (this.active) { this.fold('folded'); this.say('Glider folded'); return; }
+    if (this.active) { this.fold('folded'); return; }
     const c = this.car;
     if (!c.grounded && (c.airTime > 0.15 || this.heightAbove() > 1.5)) { this.deploy(); return; }
     if (c.vel.length() * 3.6 >= this.P.minGroundKmh) {
@@ -111,13 +111,11 @@ export class Glider {
   crash(why, spin = 1) {
     const c = this.car, sp = c.vel.length();
     this.fold(why);
-    const msg = why === 'tree' ? 'Crashed into a tree!' : why === 'building' ? 'Crashed into a building!' : 'Crash landing!';
-    if (c.bail) { c.bail(); c.say?.('Bail! ' + msg, 1.8); return; }     // the bike: its own crash (foot down, speed scrubbed)
+    if (c.bail) { c.bail(); return; }     // the bike: its own crash (foot down, speed scrubbed)
     _fw.set(0, 0, 1).applyQuaternion(c.quat); _lt.set(1, 0, 0).applyQuaternion(c.quat);
     c.ang.addScaledVector(_fw, (this.bank >= 0 ? 1 : -1) * Math.min(6, 1.5 + sp * 0.06) * spin)
       .addScaledVector(_lt, -Math.min(3, sp * 0.03) * spin);
     c.hit = Math.max(c.hit, Math.min(40, sp * 0.6));
-    this.say(msg);
   }
 
   step(dt, input) {
@@ -200,7 +198,6 @@ export class Glider {
       const wet = W.waterLevelAt(c.pos.x, c.pos.z) > W.heightAt(c.pos.x, c.pos.z, c.pos.y);
       if (upY > P.landUp && sink < P.landSink && !noseDown) {
         this.fold(wet ? 'water' : 'landed');
-        this.say(wet ? 'Splashdown' : sink < 4 ? 'Smooth landing' : 'Landed', 1.8);
       } else this.crash('crash');
       return;
     }
@@ -260,7 +257,6 @@ export class Glider {
     if (this.active) {
       const vs = this.car.vel.y;
       html = `🪂 ${Math.max(0, Math.round(this.agl))} m up · ${vs >= 0 ? '↑' : '↓'} ${Math.abs(vs).toFixed(1)} m/s`;
-      if (this.stall) html += ' · <span style="color:#ff5a4a">STALL – push W</span>';
     }
     if (this.msgT > 0) html += `${html ? '<br>' : ''}<span style="opacity:.9">${this.msg}</span>`;
     if (html !== hudLast) { hudEl.innerHTML = html; hudLast = html; }

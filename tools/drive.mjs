@@ -320,7 +320,7 @@ if (which === 'all' || which === 'bike') {
     const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
       i.lean = false; if (!c.grounded && t > 0) { i.throttle = i._t ?? 0; i.brake = i._b ?? 0; } ctl(t, i, c); i._t = i.throttle; i._b = i.brake;
       maxKmh = Math.max(maxKmh, c.vel.length() * 3.6);
-      if (c.msgT > 0 && c.msg.startsWith('Bail') && c._lastBail !== c.msgT) { if (!c._bailOn) bails++; c._bailOn = true; } else c._bailOn = false;
+      if (t === 0) { const bail = c.bail.bind(c); c.bail = () => { bails++; bail(); }; }
       if (c.contacts === 2) maxRel = Math.max(maxRel, Math.abs(c.pitch - c.groundPitch));
       if (c.wheelie) wheelieT += DT;
       if (c.stoppie) stoppieT += DT; if (c.washout) washT += DT; if (c.grounded && c.slip > 0.25) slideT += DT;
@@ -392,7 +392,7 @@ if (which === 'all' || which === 'jet') {
     const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
       if (t === 0) { i.jet = { thr: 0, pitch: 0, roll: 0, yaw: 0 }; setup?.(c); }
       i.handbrake = false; ctl(t, i.jet, c, i);
-      if (c.mode !== lastMode) { st.modes += (st.modes ? '→' : '') + c.mode + '@' + t.toFixed(1); if (lastMode === 'ground' && c.mode === 'air' && !st.liftoff) st.liftoff = [t, c.vel.length() * 3.6, Math.hypot(c.pos.x - x, c.pos.z - z)]; if (c.mode === 'crashed') st.crashes.push(c.msg + (process.env.JC ? ` @${c.pos.x.toFixed(0)},${c.pos.z.toFixed(0)} t${t.toFixed(1)} prevAgl ${c._lastAgl?.toFixed(0)}` : ''));
+      if (c.mode !== lastMode) { st.modes += (st.modes ? '→' : '') + c.mode + '@' + t.toFixed(1); if (lastMode === 'ground' && c.mode === 'air' && !st.liftoff) st.liftoff = [t, c.vel.length() * 3.6, Math.hypot(c.pos.x - x, c.pos.z - z)]; if (c.mode === 'crashed') st.crashes.push(c.mode + (process.env.JC ? ` @${c.pos.x.toFixed(0)},${c.pos.z.toFixed(0)} t${t.toFixed(1)} prevAgl ${c._lastAgl?.toFixed(0)}` : ''));
       if (c.mode === 'air') c._lastAgl = c.agl; if (lastMode === 'air' && c.mode === 'ground') st.landed = [t, -c._prevVel.y, c.vel.length() * 3.6, c.pos.clone()]; lastMode = c.mode; }
       st.maxKmh = Math.max(st.maxKmh, c.vel.length() * 3.6);
       if (c.mode === 'air') { st.maxAlt = Math.max(st.maxAlt, c.agl); st.minAgl = Math.min(st.minAgl, c.agl); st.maxG = Math.max(st.maxG, c.gLoad); if (c.stall) st.stallT += DT; }
@@ -517,9 +517,12 @@ if (which === 'all' || which === 'bikeglider') {
   W.setFixedRamps([R0]);
   const fx = Math.sin(R0.yaw), fz = Math.cos(R0.yaw);
   const bglide = (name, x, z, yaw, secs, setup, ctl = () => {}) => {
-    let G, st = { stallT: 0, deployed: null, closed: null, peak: -1e9, nan: false, bails: 0, bailOn: false, after: null };
+    let G, st = { stallT: 0, deployed: null, closed: null, peak: -1e9, nan: false, bails: 0, after: null };
     const { car } = run(name, x, z, yaw, secs, (t, i, c) => {
-      if (t === 0) { G = new Glider(c, BIKE_GLIDER); setup(c, G); }
+      if (t === 0) {
+        const bail = c.bail.bind(c); c.bail = () => { st.bails++; bail(); };
+        G = new Glider(c, BIKE_GLIDER); setup(c, G);
+      }
       i.throttle = 0; i.brake = 0; i.steer = 0; i.lean = false;
       ctl(t, i, c, G);
       if (G.active) {
@@ -527,7 +530,6 @@ if (which === 'all' || which === 'bikeglider') {
         if (G.stall) st.stallT += DT;
         st.peak = Math.max(st.peak, c.pos.y);
       } else if (st.deployed && !st.closed) st.closed = [c.pos.x, c.pos.z, c.pos.y, t, G.result, -c._prevVel.y, c.vel.length() * 3.6];
-      const bailing = c.msgT > 0 && c.msg.startsWith('Bail'); if (bailing && !st.bailOn) st.bails++; st.bailOn = bailing;
       if (![c.pos.x, c.pos.y, c.vel.x, c.quat.w, c.yaw, c.pitch].every(isFinite)) st.nan = true;
     }, 0.5, () => new Bike(W, { ...BIKE }));
     const d = st.deployed, e = st.closed;

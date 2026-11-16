@@ -278,7 +278,6 @@ export class Heli extends Vehicle {
     this.groundPose(this.pos.x, this.pos.z, this.yaw, this.pos.y);
     this.landing = Math.min(1, sink / 7);
     for (const wh of this.wheels) wh.contact = true;
-    if (this.airTime > 1.5) this.say(sink < 2 ? 'Smooth landing' : 'Landed', 2);
   }
 
   // like the jet's wreck: keeps its momentum, tumbles, bounces on the ground
@@ -316,9 +315,6 @@ export class Heli extends Vehicle {
     this.ang.set(1.2, 2.5, 1.6);
     for (const wh of this.wheels) wh.contact = false;
     this.mesh.userData.wreck(true);
-    this.say(why === 'water' ? 'Splash! Crashed into the water' : why === 'tree' ? 'Crashed into the trees!' :
-      why === 'building' ? 'Crashed into a building!' : why === 'hard' ? 'Crashed: came down too hard' :
-      why === 'rotor' ? 'Crashed: the rotor hit the ground' : why === 'tipped' ? 'Crashed: tipped over' : 'Crashed!', 4.5);
   }
 
   // tree crowns (like the jet's): the main rotor reaches 5 m
@@ -335,7 +331,7 @@ export class Heli extends Vehicle {
   }
 
   hudInfo() {
-    if (this.mode === 'crashed') return 'CRASHED · back in a moment (R now)';
+    if (this.mode === 'crashed') return '';
     if (this.mode === 'ground') {
       const hint = this.rotor < 0.9 ? (this.idleT < 4 ? ' · rotor spooling up…' : ' · hold W to lift off') : ' · W to lift off';
       return `ROTOR ${Math.round(this.rotor * 100)}% · on the ground${hint} · `;
@@ -343,7 +339,6 @@ export class Heli extends Vehicle {
     const vs = this.vel.y;
     let h = `ALT ${Math.max(0, Math.round(this.agl))} m · ${vs >= 0 ? '↑' : '↓'}${Math.abs(vs).toFixed(0)} m/s`;
     if (this.steep) h += ' · <span style="color:#ffb02e">too steep to land here</span>';
-    else if (this.agl < 12 && -vs > this.t.landSink * 0.8) h += ' · <span style="color:#ff5a4a">SINKING FAST</span>';
     return h + ' · ';
   }
 
