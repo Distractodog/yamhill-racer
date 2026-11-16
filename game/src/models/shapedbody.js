@@ -71,12 +71,24 @@ export function materials(rim) {
 //  7 (xB, yB) belt  8 (xG, yG) glass top  9 (xR, yR) roof edge  10 (0, yC) roof centre
 // low = the floor, or the wheel-arch circle where it is higher. Ahead of the windscreen / behind the rear glass points
 // 7–10 lie on the bonnet / tailgate top. Bands k (point k → k+1) are coloured by colour(k, zFront, zBack, i, last).
+// blister = { out, reach }: the body side (points 3–6) swells out by `out` over each wheel arch and blends back to the
+// key width over `reach` either side (blistered arches: the wide physics track looks meant, not boxed in). Optional
+// steps = where along the blend extra stations go (0..1; fewer = cheaper, e.g. [1] for a far version).
 const FIELDS = ['floor', 'xWell', 'xSill', 'xMax', 'lip', 'mid', 'sh', 'xB', 'yB', 'xG', 'yG', 'xR', 'yR', 'yC'];
-export function loft(shape, { keys, arches, cuts = [], archSteps = 9, colour, cap = 'body' }) {
+export function loft(shape, { keys, arches, cuts = [], archSteps = 9, colour, cap = 'body', blister = null }) {
+  const swell = z => {
+    let s = 0;
+    for (const a of arches) {
+      const d = Math.abs(z - a.z) - a.r - .02;
+      s = Math.max(s, d <= 0 ? 1 : d >= blister.reach ? 0 : .5 + .5 * Math.cos(Math.PI * d / blister.reach));
+    }
+    return s * blister.out;
+  };
   const at = z => {
     let i = 0; while (i < keys.length - 2 && z < keys[i + 1].z) i++;
     const a = keys[i], b = keys[i + 1], t = THREE.MathUtils.clamp((a.z - z) / (a.z - b.z), 0, 1), f = { z };
     for (const k of FIELDS) f[k] = a[k] + (b[k] - a[k]) * t;
+    if (blister) { const s = swell(z); f.xMax += s; f.xSill += s; }
     return f;
   };
   // arch = { z, y (circle centre), r }: an upper semicircle with straight legs down to the floor at z ± r
@@ -89,7 +101,10 @@ export function loft(shape, { keys, arches, cuts = [], archSteps = 9, colour, ca
   for (const a of arches) {
     zs.push(a.z + a.r + .003, a.z - a.r - .003);
     for (let i = 0; i < archSteps; i++) zs.push(a.z + a.r * Math.cos(Math.PI * i / (archSteps - 1)));
+    if (blister) for (const k of blister.steps || [0, .35, .7, 1]) zs.push(a.z + a.r + .02 + k * blister.reach, a.z - a.r - .02 - k * blister.reach);
   }
+  const zmax = Math.max(...keys.map(k => k.z)), zmin = Math.min(...keys.map(k => k.z));
+  for (let i = zs.length - 1; i >= 0; i--) if (zs[i] > zmax || zs[i] < zmin) zs.splice(i, 1);
   zs.sort((a, b) => b - a);
   const stations = zs.filter((z, i) => i === 0 || zs[i - 1] - z > 1e-3);
   const ring = z => {
@@ -163,6 +178,26 @@ export function sidePanel(shape, body, z0, z1, y0, y1, col, off = .004, sides = 
     shape.quad([xa, y0, za], [xb, y0, zb], [xb, y1, zb], [xa, y1, za], col, [s, 0, 0]);
   }
 }
+// Side skirt along the sill from z0 to z1 (z0 > z1): a straight outer face at half-width xo (never inside the side),
+// bevelled along its top edge, so it runs flush from one arch blister to the other.
+export function sideSkirt(shape, body, z0, z1, y0, y1, xo, col) {
+  const cut = [z0, ...body.stations.filter(z => z < z0 && z > z1), z1], bevel = Math.min(.03, (y1 - y0) / 3);
+  for (const s of [1, -1]) {
+    const sec = z => {
+      const x = body.at(z).xMax, o = Math.max(x + .004, xo);
+      return [[s * (x - .01), y0, z], [s * o, y0, z], [s * o, y1 - bevel, z], [s * (x + (o - x) * .4), y1, z], [s * (x - .01), y1, z]];
+    };
+    for (let i = 0; i < cut.length - 1; i++) {
+      const A = sec(cut[i]), B = sec(cut[i + 1]);
+      shape.quad(A[0], A[1], B[1], B[0], col, [0, -1, 0]);
+      shape.quad(A[1], A[2], B[2], B[1], col, [s, 0, 0]);
+      shape.quad(A[2], A[3], B[3], B[2], col, [s, 1, 0]);
+      shape.quad(A[3], A[4], B[4], B[3], col, [0, 1, 0]);
+    }
+    shape.poly(sec(z0), col, [0, 0, 1]); shape.poly(sec(z1), col, [0, 0, -1]);
+  }
+}
+
 // thin vertical shut line on the side, from just above the sill / arch to just below the belt
 export function doorLine(shape, body, z, col = '#2a1c1c', top = null) {
   const f = body.at(z), y0 = body.low(z) + f.lip + .015, y1 = top ?? f.yB - .02;
