@@ -76,6 +76,9 @@ export class Jet extends Vehicle {
     const W = this.world, A = this.air, s = Math.sin(yaw), c = Math.cos(yaw);
     const pt = ([gx, gz]) => { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; return [px, W.heightAt(px, pz, y), pz]; };
     const N = pt(A.gear[0]), L = pt(A.gear[1]), R = pt(A.gear[2]);
+    // a wheel hanging over a ledge (a roof edge) rests on it, level, while the centre is over the top
+    const top = Math.max(N[1], L[1], R[1]);
+    if (top - Math.min(N[1], L[1], R[1]) > 1.5 && W.heightAt(x, z, y) > top - 1.5) for (const p of [N, L, R]) if (top - p[1] > 1.5) p[1] = top;
     const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2, mz = (L[2] + R[2]) / 2;
     if (A.tail) _fw.set(mx - N[0], my - N[1], mz - N[2]).normalize();      // tail wheel behind: forward is away from it
     else _fw.set(N[0] - mx, N[1] - my, N[2] - mz).normalize();
@@ -186,7 +189,8 @@ export class Jet extends Vehicle {
     const vyNew = (ny - this.pos.y) / dt;
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
     // ground falling away faster than gravity can follow (crest / ramp lip): it's in the air
-    if (ny < this.pos.y - 2 || (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50)) {
+    // (or a ledge: half a metre down in one step, e.g. rolling off a roof's edge, falls instead of snapping down)
+    if (ny < this.pos.y - 0.5 || (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50)) {
       this.toAir(); this.vel.set(Math.sin(this.yaw) * this.v, this.vy, Math.cos(this.yaw) * this.v); return;
     }
     this.vy = vyNew;
@@ -208,6 +212,21 @@ export class Jet extends Vehicle {
     this.mode = 'air'; this.grounded = false; this.contacts = 0; this.airTime = 0; this.stallT = 0;
     this.ang.set(0, 0, 0);
     for (const wh of this.wheels) { wh.contact = false; wh.comp = 0; }
+  }
+
+  // the ground under the centre is far below the lowest wheel's (a wheel on a roof edge, the centre past it): true,
+  // and out = the flat way off the edge (from that wheel toward the centre)
+  ledgeAway(out) {
+    const W = this.world; let low = Infinity, wx = 0, wz = 0, wy = 0;
+    for (const { x, z, h } of this.wheels) {
+      _w.set(x, -h, z).applyQuaternion(this.quat).add(this.pos);
+      const g = W.heightAt(_w.x, _w.z, _w.y), a = _w.y - g;
+      if (a < low) { low = a; wx = _w.x; wz = _w.z; wy = g; }
+    }
+    if (W.heightAt(this.pos.x, this.pos.z, this.pos.y) > wy - 1.5) return false;
+    out.set(this.pos.x - wx, 0, this.pos.z - wz);
+    const L = Math.hypot(out.x, out.z) || 1; out.x /= L; out.z /= L;
+    return true;
   }
 
   // height of the lowest wheel above ground / water
@@ -299,7 +318,10 @@ export class Jet extends Vehicle {
     const low = this.airTime > 0.2 ? this.wheelsAGL() : 1;
     // tail-wheel plane, nose high just off the ground and not sinking: the tail wheel only bumps along
     if (low < 0 && A.tail && this.vel.y > -1 && this.wheelsAGL(1) > 0) { this.pos.y -= low; this.vel.y = Math.max(this.vel.y, 0); }
-    else if (low < 0) {
+    else if (low < 0 && this.ledgeAway(_p)) {
+      // a wheel on a ledge (a roof edge) with the centre past it: it rides the edge and slides off it, no snap down
+      this.pos.y -= low; this.vel.y = Math.max(this.vel.y, 0); this.vel.x += _p.x * 4 * dt; this.vel.z += _p.z * 4 * dt;
+    } else if (low < 0) {
       _up.set(0, 1, 0).applyQuaternion(this.quat); _fw.set(0, 0, 1).applyQuaternion(this.quat);
       const sink = -this.vel.y, kmh = s * 3.6, slide = Math.abs(this.vel.dot(_lt.set(1, 0, 0).applyQuaternion(this.quat)));
       const wet = W.waterLevelAt(this.pos.x, this.pos.z) > W.heightAt(this.pos.x, this.pos.z, this.pos.y);

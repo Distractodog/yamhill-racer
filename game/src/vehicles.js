@@ -62,7 +62,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     if (place) {
       if (kind === 'jet' && air) keepFlying(next, p, cur.vel, yaw);
       else if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
-      else next.reset(p.x, p.z, yaw);
+      else { next.pos.copy(p); next.vel.set(0, 0, 0); next.reset(p.x, p.z, yaw); }   // from this height: on a roof, stays on it
     }
     scene.add(next.mesh);
     cur = next;

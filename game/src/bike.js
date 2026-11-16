@@ -342,7 +342,9 @@ export class Bike extends Vehicle {
     const gC = W.heightAt(this.pos.x, this.pos.z, this.pos.y);
     if (this.pos.y < gC + 0.25) {                                // the body itself hit the ground
       this.pos.y = gC + 0.25; if (this.vel.y < 0) this.vel.y = 0;
-      if (Math.abs(this.pitch - this.groundPitch) > 0.6) this.bail(); else this.pitchRate += (this.groundPitch - this.pitch) * 8 * dt;
+      // on a roof, a "slope" steeper than ~55° is its edge under the wheels: tip over it rather than bail onto it
+      const edge = Math.abs(this.groundPitch) >= 0.95 && W.onRoof?.();
+      if (Math.abs(this.pitch - this.groundPitch) > 0.6 && !edge) this.bail(); else this.pitchRate += (this.groundPitch - this.pitch) * 8 * dt;
     }
 
     // sunk (3 s fully under), or bogged (wheels on the bed, deep in the water, not moving): back to the nearest bank

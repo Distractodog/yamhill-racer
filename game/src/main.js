@@ -267,6 +267,12 @@ function clampChaseCamera(rp, clearance) {
   if (overhead) camPos.y = Math.min(camPos.y, deck - 1.7);
   const gh = ground + (overhead ? 0.6 : clearance);
   if (camPos.y < gh) camPos.y = gh;
+  clampAboveRoof(rp, clearance);
+}
+// a roof the vehicle is on (or above): the camera stays over it, not inside the building (roofs.js)
+function clampAboveRoof(rp, clearance) {
+  const roof = vehicles.current.world?.roofUnder?.(camPos.x, camPos.z, rp.y + 0.5) ?? -Infinity;
+  if (camPos.y < roof + clearance) camPos.y = roof + clearance;
 }
 // jet: chase camera behind the flight path that rolls part way with the wings; cockpit view on C
 function updateJetCamera(dt) {
@@ -294,6 +300,7 @@ function updateJetCamera(dt) {
     else camPos.add(jMove).lerp(target, 1 - Math.exp(-dt * (v.mode === 'air' ? 9 : 14)));
     if (v.mode === 'air') {
       const gh = world.heightAt(camPos.x, camPos.z) + 1.2; if (camPos.y < gh) camPos.y = gh;
+      clampAboveRoof(rp, 1.2);
     } else clampChaseCamera(rp, 1.2);
     camera.position.copy(camPos);
     camera.position.x += Math.sin(shakeT * 1.3) * shake; camera.position.y += Math.sin(shakeT * 1.7 + 1) * shake;
