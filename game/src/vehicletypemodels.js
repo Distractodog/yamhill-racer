@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WHEEL_POS } from './carmodel.js';
+import { buildTruckModel } from './models/truck.js';
+export { buildSportBikeModel } from './models/sportbike.js';
 
 function material(color, role) {
   const m = new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -45,6 +47,7 @@ function wheel(parent, tyre, rim, x,y,z,r,width,front) {
   return {holder,spin,restY:y,r,front};
 }
 export function buildTypeCarModel(type, p, suspension) {
+  if (type === 'truck') return buildTruckModel(p, suspension);
   const root=new THREE.Group();root.name=`car-${type}`;
   const bodyPivot=new THREE.Group();root.add(bodyPivot);
   const paint=material('#e8402f','body'),trim=material('#ffffff','trim'),black=material('#20242a'),glass=material('#263b49'),rim=material('#d9dce2','wheels');
@@ -89,41 +92,5 @@ export function buildTypeCarModel(type, p, suspension) {
   root.userData={bodyPivot,wheels,lightMount:bodyPivot,lights:{head,tail:taillights},blob:[2.4*p.width,4.6*p.length],
     // Decals live on the hood, not inside the enclosed body.
     decalPanels:[[.55,.55,0,type==='sports'?.25:.49,1.28*p.length,-Math.PI/2+(type==='sports'?.23:0)]]};
-  return root;
-}
-export function buildSportBikeModel() {
-  const root=new THREE.Group();root.name='bike-sport';
-  const lean=new THREE.Group();lean.position.y=-.54;root.add(lean);
-  const body=new THREE.Group();body.position.y=.54;lean.add(body);
-  const paint=material('#ff7a1a','body'),trim=material('#f2f2ee','trim'),black=material('#1d1f24'),metal=material('#8a9099','wheels'),glass=material('#263b49');
-  hull(body,paint,[[.95,.19,-.02,.38,.16],[.5,.31,-.27,.50,.25],[-.25,.24,-.28,.28,.20],[-.65,.14,-.12,.22,.12]]);
-  hull(body,paint,[[.4,.22,.25,.45],[-.1,.24,.25,.50],[-.42,.15,.23,.32]]);
-  hull(body,glass,[[.87,.16,.37,.39],[.52,.22,.40,.67,.17],[.35,.21,.40,.62,.17]]);
-  box(body,black,.32,.07,.55,0,.35,-.43);
-  hull(body,paint,[[-.56,.18,.27,.39],[-.97,.09,.36,.45,.06]]);
-  for(const s of [-1,1]){box(body,trim,.025,.18,.48,s*.29,.04,.16);box(body,black,.04,.12,.20,s*.30,.21,.25);}
-  box(body,metal,.10,.10,.55,-.21,-.12,-.55,-.2);
-  const bars=new THREE.Group();bars.position.set(0,.37,.48);body.add(bars);
-  for(const s of [-1,1])box(bars,metal,.05,.63,.05,s*.10,-.28,.06,-.25);
-  box(bars,black,.6,.035,.035,0,.08,0);
-  const wheels=[wheel(body,black,metal,0,-.2,.72,.34,.16,true),wheel(body,black,metal,0,-.2,-.73,.34,.21,false)];
-  const rider=new THREE.Group();rider.position.set(0,.42,-.30);body.add(rider);
-  const jacket=material('#f2f2ee','jacket'),gloves=material('#20242a','gloves'),helmet=material('#ff7a1a','helmet');
-  // Tucked torso is built into the model; the existing rider animation adds only a small nod.
-  box(rider,jacket,.36,.46,.22,0,.25,.19,1.05);
-  for(const s of [-1,1]) {
-    box(rider,jacket,.12,.38,.13,s*.20,-.04,.06,1.05);
-    box(rider,black,.11,.33,.12,s*.22,-.25,.10,-.5);
-    box(rider,jacket,.10,.32,.10,s*.22,.26,.42,-.75);
-    box(rider,gloves,.10,.09,.10,s*.28,.07,.72);
-  }
-  mesh(rider,new THREE.IcosahedronGeometry(.18,1),helmet,0,.42,.48);
-  box(rider,glass,.25,.09,.10,0,.43,.64);
-  const lamp=material('#fff2c9'),tail=material('#b92025');
-  for(const s of [-1,1])box(body,lamp,.13,.08,.04,s*.115,.25,.93);
-  box(body,tail,.15,.06,.035,0,.40,-.97);
-  batch(body);batch(rider);batch(bars);
-  root.userData={lean,bars,wheels,rider,blob:[.9,2.1],lightMount:body,lights:{head:[new THREE.Vector3(0,.25,.97)],tail:[new THREE.Vector3(0,.40,-1)]},
-    decalPanels:[[.3,.2,.312,.04,.16,0,Math.PI/2],[.3,.2,-.312,.04,.16,0,-Math.PI/2]]};
   return root;
 }
