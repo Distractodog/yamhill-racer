@@ -16,6 +16,7 @@ import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 import { buildCarModel, WHEEL_POS } from '../game/src/carmodel.js';
 import { Bike, BIKE, buildBikeModel } from '../game/src/bike.js';
 import { Jet, buildJetModel } from '../game/src/jet.js';
+import { primeWheelArch } from '../game/src/wheeltravel.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg}: ${a} vs ${b} (±${eps})`);
 const V3 = THREE.Vector3;
@@ -95,7 +96,8 @@ mp.emit('roster', { t: 'roster', players: [{ id: 'g', name: 'Gus', skin: { vehic
 const SYNC = { car: Car.prototype.syncMesh, bike: Bike.prototype.syncMesh, jet: Jet.prototype.syncMesh };
 const RAD = { car: 0.38, bike: 0.34, jet: 0.35 };
 function local(kind) {
-  const mesh = kind === 'car' ? buildCarModel() : kind === 'bike' ? buildBikeModel() : buildJetModel();
+  // wheel arches are resolved at build time, as Car / Bike do for their own meshes
+  const mesh = primeWheelArch(kind === 'car' ? buildCarModel() : kind === 'bike' ? buildBikeModel() : buildJetModel());
   const pos = new V3(), quat = new THREE.Quaternion();
   return { kind, mesh, t: kind === 'car' ? TUNING_DEFAULTS : BIKE, pos, quat, renderPos: pos, renderQuat: quat, vel: new V3(),
     wheels: mesh.userData.wheels.map(g => ({ front: g.front, comp: 0, contact: true, surf: 3, contactPoint: new V3(), spin: 0 })),

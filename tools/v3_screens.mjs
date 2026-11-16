@@ -33,8 +33,8 @@ async function chromePath(explicit){
 async function capture(browser,url,phase,id,saved,out){
   const page=await browser.newPage(),errors=[];
   page.on('pageerror',e=>errors.push({type:'pageerror',message:e.message}));
-  page.on('console',m=>{if(m.type()!=='error')return;const location=m.location()?.url||'';let favicon=false;try{favicon=new URL(location).pathname==='/favicon.ico';}catch{}if(favicon&&/Failed to load resource.*404/.test(m.text()))return;errors.push({type:'console',message:m.text(),location});});
-  page.on('requestfailed',r=>errors.push({type:'requestfailed',message:r.url()+': '+r.failure()?.errorText}));
+  page.on('console',m=>{if(m.type()!=='error'||/cloudflareinsights/.test(m.text()+(m.location()?.url||'')))return;const location=m.location()?.url||'';let favicon=false;try{favicon=new URL(location).pathname==='/favicon.ico';}catch{}if(favicon&&/Failed to load resource.*404/.test(m.text()))return;errors.push({type:'console',message:m.text(),location});});
+  page.on('requestfailed',r=>/cloudflareinsights/.test(r.url())||errors.push({type:'requestfailed',message:r.url()+': '+r.failure()?.errorText}));
   try{
     await page.setViewport({width:1280,height:800,deviceScaleFactor:1});
     await page.evaluateOnNewDocument(()=>{try{Object.defineProperty(navigator,'getGamepads',{value:()=>[]});}catch{}});

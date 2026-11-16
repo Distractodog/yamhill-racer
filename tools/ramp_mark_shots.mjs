@@ -127,11 +127,11 @@ try {
     if (only && !only.has(id)) continue;
     const page = await browser.newPage(), errors = [];
     page.on('pageerror', e => { errors.push(e.message); console.error('PAGE ERROR', id, e.message); });
-    page.on('console', msg => { if (msg.type() === 'error') console.error('PAGE CONSOLE', id, msg.text()); });
+    page.on('console', msg => { if (msg.type() === 'error' && !/cloudflareinsights/.test(msg.text() + (msg.location()?.url || ''))) console.error('PAGE CONSOLE', id, msg.text()); });
     page.on('response', r => { if (r.status() >= 400 && /\/assets\/tiles\//.test(r.url())) {
       const message = `tile response ${r.status()} ${r.url()}`; errors.push(message); console.error('PAGE ERROR', id, message);
     } });
-    page.on('requestfailed', r => errors.push('request failed ' + r.url()));
+    page.on('requestfailed', r => { if (!/cloudflareinsights/.test(r.url())) errors.push('request failed ' + r.url()); });
     await page.setViewport({ width: 1280, height: 800 });
     await page.evaluateOnNewDocument(() => { try { Object.defineProperty(navigator, 'getGamepads', { value: () => [] }); } catch {} });
     await page.goto(url, { waitUntil: 'load', timeout: 120000 });

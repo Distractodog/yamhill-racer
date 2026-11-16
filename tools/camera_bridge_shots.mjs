@@ -20,7 +20,7 @@ const errors = [], report = [];
 try {
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 800 });
   watchErrors(page, 'camera bridges', errors);
-  page.on('requestfailed', r => errors.push(`REQUEST FAILED ${r.url()}: ${r.failure()?.errorText}`));
+  page.on('requestfailed', r => { if (!/cloudflareinsights/.test(r.url())) errors.push(`REQUEST FAILED ${r.url()}: ${r.failure()?.errorText}`); });
   page.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) errors.push(`HTTP ${r.status()} ${r.url()}`); });
   await startGame(page);
   await holdCar(page, { x: x - dx * 55, z: z - dz * 55, yaw, kind: 'car' });

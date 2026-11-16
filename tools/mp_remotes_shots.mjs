@@ -43,7 +43,7 @@ async function open(label) {
   const page = await ctx.newPage();
   await page.setViewport({ width: 1280, height: 760 });
   watchErrors(page, label, errors);
-  page.on('console', m => { if (m.type() === 'error' && !/favicon/.test(m.location()?.url || '')) console.log(`console error (${label})`, m.text()); });
+  page.on('console', m => { if (m.type() === 'error' && !/favicon|cloudflareinsights/.test((m.location()?.url || '') + m.text())) console.log(`console error (${label})`, m.text()); });
   await startGame(page, { url: GAME, relay: RELAY });     // spawn map at campus, tiles loaded
   return page;
 }

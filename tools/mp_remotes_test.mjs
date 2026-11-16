@@ -228,8 +228,8 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   const lightsOf = id => by(id).anim.lights, isLight = root => { let n = 0; root.traverse(o => { if (o.isLight) n++; }); return n; };
   assert.deepEqual(people.map(([id]) => lightsOf(id).length), [0, 0, 0, 0, 0], 'day: no lenses lit');
   dark = 1; go(8, { t: { a: { br: 1, w: [9, 9, 9, 9] } }, x: { a: { w: [9, 9, 9, 9] } } });
-  assert.deepEqual(lightsOf('t').sort(), ['head', 'head', 'tail', 'tail'], 'truck: two head + two tail');
-  assert.deepEqual(lightsOf('s').sort(), ['head', 'tail'], 'sport bike: one each');
+  assert.deepEqual(lightsOf('t').sort(), ['head', 'head', 'head', 'head', 'head', 'tail', 'tail'], 'truck: two head + three roof lamps, two tail');
+  assert.deepEqual(lightsOf('s').sort(), ['head', 'head', 'tail'], 'sport bike: twin head, one tail');
   for (const id of ['j', 'o']) assert.ok(['head', 'tail'].every(k => lightsOf(id).includes(k)), `${id}: car head and tail lights`);
   const tailI = id => { let v = 0; R3.model(id).traverse(o => { if (o.name === 'vehicle-light-tail') v = Math.max(v, o.material.emissiveIntensity); }); return v; };
   assert.ok(tailI('t') > tailI('x'), 'braking truck: brighter tail lights');

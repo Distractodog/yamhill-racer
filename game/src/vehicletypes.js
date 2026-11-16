@@ -5,6 +5,9 @@ import { TUNING_DEFAULTS } from './car.js';
 import { BIKE, buildBikeModel } from './bike.js';
 import { buildCarModel } from './carmodel.js';
 import { buildTypeCarModel, buildSportBikeModel } from './vehicletypemodels.js';
+import { primeWheelArch } from './wheeltravel.js';
+import { buildHatchModel } from './models/hatch.js';
+import { buildSuvModel } from './models/suv.js';
 
 export const VEHICLE_TYPE_KEY = 'yr-vtype-1';
 export const VEHICLE_TYPES = {
@@ -12,7 +15,8 @@ export const VEHICLE_TYPES = {
     { id: 'race', name: 'Race car', description: 'Original open-wheel racer.', tuning: {} },
     { id: 'sports', name: 'Sports car', description: 'Low, wide and fast. Asphalt grip; limited off-road traction.',
       tuning: { accel: 40, topSpeed: 1100, cornerGrip: 36, gripAlign: 19, restLength: .30, springK: 68000, damping: 5900 },
-      physics: { mass: 1000, width: 1.1, length: 1, radius: .38, lean: .65, grip: [.52,.45,.60,1.12,.58,.9,1.1,1], drive: [.65,.55,.70,1,.68,1,1,1] } },
+      physics: { mass: 1000, width: 1.1, length: 1, radius: .38, lean: .65, grip: [.52,.45,.60,1.12,.58,.9,1.1,1], drive: [.65,.55,.70,1,.68,1,1,1] },
+      colors: { trim: '#17181b' } },   // factory paint for this type (cosmetics.js); colours the player picked still win
     { id: 'hatch', name: 'Hatchback', description: 'Light and nimble, with a modest top speed.',
       tuning: { accel: 25, topSpeed: 480, steerRate: 9, turnResponse: 22, restLength: .40, springK: 50000, damping: 4900 },
       physics: { mass: 720, width: .88, length: .84, radius: .34, lean: 1.15 } },
@@ -40,6 +44,8 @@ export function loadVehicleTypes(storage) {
 }
 export function buildVehicleTypeModel(kind, id) {
   const type = typeInfo(kind, id)?.id;
+  if (kind === 'car' && type === 'hatch') return buildHatchModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
+  if (kind === 'car' && type === 'suv') return buildSuvModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car') return type === 'race' ? buildCarModel() : buildTypeCarModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'bike') return type === 'dirt' ? buildBikeModel() : buildSportBikeModel();
   throw new Error(`No vehicle types for ${kind}`);
@@ -70,7 +76,7 @@ export function applyVehicleType(vehicle, id) {
     });
   }
   // Keep the vehicle instance (challenges/camera/glider refer to it), replacing only its owned model.
-  const old = vehicle.mesh, model = buildVehicleTypeModel(vehicle.kind, spec.id);
+  const old = vehicle.mesh, model = primeWheelArch(buildVehicleTypeModel(vehicle.kind, spec.id));
   vehicle.glide?.cancel();
   if (vehicle.glide?.mesh) model.add(vehicle.glide.mesh);
   model.position.copy(old.position); model.quaternion.copy(old.quaternion);

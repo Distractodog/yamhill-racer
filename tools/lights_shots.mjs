@@ -16,7 +16,7 @@ try {
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760 });
   page.setDefaultTimeout(120000);
   page.on('pageerror', e => { report.pageErrors.push(e.message); console.error('PAGE ERROR', e.message); });
-  page.on('console', m => { if (m.type() === 'error' && !m.location().url?.endsWith('/favicon.ico')) report.consoleErrors.push(m.text()); });
+  page.on('console', m => { if (m.type() === 'error' && !m.location().url?.endsWith('/favicon.ico') && !/cloudflareinsights/.test(m.text() + m.location().url)) report.consoleErrors.push(m.text()); });
   await startGame(page, { url: process.env.GAME_URL || GAME_URL, hold: { x: 19451, z: -11032, yaw: -1.573, kind: 'car' } });
   await page.evaluate(() => {
     const g = game; g.atmosphere.setPreset('night', false); g.setCam(0);

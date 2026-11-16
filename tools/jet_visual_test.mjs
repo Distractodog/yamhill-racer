@@ -22,6 +22,7 @@ try {
   page.on('console', message => {
     if (message.type() !== 'error') return;
     const text = message.text(), location = message.location();
+    if (/cloudflareinsights/.test(text + (location.url || ''))) return; // analytics beacon blocked by CORS on localhost
     // Ignore only the browser's missing favicon request, never a shader/application error.
     let favicon404 = false;
     try { favicon404 = new URL(location.url).pathname === '/favicon.ico' && /^Failed to load resource:.*404/.test(text); } catch {}

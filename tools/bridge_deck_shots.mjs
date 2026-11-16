@@ -67,7 +67,7 @@ try {
     if (only && !only.has(id)) continue;
     const page = await browser.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    page.on('requestfailed', r => errors.push('request failed ' + r.url()));
+    page.on('requestfailed', r => { if (!/cloudflareinsights/.test(r.url())) errors.push('request failed ' + r.url()); });
     await page.setViewport({ width: 1280, height: 800 });
     await page.evaluateOnNewDocument(() => { try { Object.defineProperty(navigator, 'getGamepads', { value: () => [] }); } catch {} });
     await page.goto(url, { waitUntil: 'load', timeout: 120000 });
