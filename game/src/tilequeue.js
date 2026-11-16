@@ -27,9 +27,7 @@ export function createTileQueue({ fetch, build, finish, free = () => {}, now = (
   warn = (...a) => console.warn(...a) }) {
   const loading = new Set(), failedAt = new Map(), jobs = [];
   const stepCost = new Map();               // step kind (what the generator yielded before it) -> recent cost, ms
-  // this frame's slowest build step (tools/lib/hitchprobe.mjs reads it), all steps' time and count; with trace set to an
-  // array, every step pushes its label and ms there (tools/fly_lag_sim.mjs, tools/fly_lag_test.mjs)
-  const slowStep = { label: '', ms: 0, total: 0, n: 0, trace: null };
+  const slowStep = { label: '', ms: 0 };    // this frame's slowest build step (tools/lib/hitchprobe.mjs reads it)
   const drop = job => { const i = jobs.indexOf(job); if (i >= 0) jobs.splice(i, 1); };
   function fail(job, e) {
     warn(`tile ${job.k}:`, e);
@@ -68,7 +66,7 @@ export function createTileQueue({ fetch, build, finish, free = () => {}, now = (
     // of a frame always runs, so the queue never stalls. order(job): nearest first.
     update(budget, order = null) {
       if (order && jobs.length > 1) jobs.sort((p, q) => order(p) - order(q));
-      slowStep.ms = 0; slowStep.total = 0; slowStep.n = 0;
+      slowStep.ms = 0;
       const t0 = now();
       for (let first = true; jobs.length; first = false) {
         const t = now(), j = jobs[0], label = j.next;
@@ -77,7 +75,6 @@ export function createTileQueue({ fetch, build, finish, free = () => {}, now = (
         const d = now() - t, c = stepCost.get(label);
         stepCost.set(label, c === undefined ? d : Math.max(d, c * 0.9 + d * 0.1));   // falls slowly, jumps up at once
         if (d > slowStep.ms) { slowStep.ms = d; slowStep.label = label || 'decode-height'; }
-        slowStep.total += d; slowStep.n++; slowStep.trace?.push(label || 'decode-height', d);
       }
     },
   };

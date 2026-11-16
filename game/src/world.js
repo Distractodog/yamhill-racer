@@ -9,7 +9,6 @@ import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
 import { installPerf } from './perf.js';
-import * as STREAM from './streamplan.js';
 import { createTileScenery } from './scenery.js';
 import { buildCampusGateGeometry } from './campusgate.js';
 import { placeCampus } from './campusmodel.js';
@@ -22,9 +21,9 @@ import { addCampusItems, campusItemGeometries, showCampusItems } from './campusi
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
-// Tiles within LOAD_R of the camera are loaded (in the background, a few ms per frame); beyond DROP_R they're hidden
-// and kept for a while, then dropped. Look-ahead, keeping and the per-frame build budget: streamplan.js.
-const { LOAD_R } = STREAM;
+// Tiles within LOAD_R of the camera are loaded (in the background, a few ms per frame); beyond DROP_R they're dropped.
+const LOAD_R = 1300, DROP_R = 2600, FRAME_BUDGET_MS = 5;
+const AHEAD_S = 5, AHEAD_MAX = 1200;     // look-ahead loading at speed (AHEAD_MAX + LOAD_R stays inside DROP_R)
 
 export async function loadWorld(renderer, onProgress = () => {}) {
   const notePerf = installPerf(renderer);
@@ -167,10 +166,11 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     for (let i0 = 0; i0 < HN - 1; i0 += CHUNK) for (let j0 = 0; j0 < HN - 1; j0 += CHUNK) {
       const i1 = Math.min(i0 + CHUNK, HN - 1), j1 = Math.min(j0 + CHUNK, HN - 1);
       const levels = [], qi0 = i0 >= QN ? QN : 0, qj0 = j0 >= QN ? QN : 0, mat = quarterMats[(qi0 ? 2 : 0) + (qj0 ? 1 : 0)];
-      const level = st => { const m = new THREE.Mesh(chunkGeometry(i0, j0, i1, j1, st, qi0, qj0), mat); m.receiveShadow = true; m.visible = false; g.add(m); return m; };
-      // full detail (st 1, ~15% of a tile's build) only when the camera comes near: updateLOD → buildDetail
-      for (const st of STEPS) { if (st === 1) { levels.push(null); continue; } levels.push(level(st)); yield 'terrain' + st; }
-      out.chunks.push({ levels, cx: td.x0 + (j0 + j1) / 2 * HS, cz: td.z0 + (i0 + i1) / 2 * HS, lv: -1, full: () => level(1) });
+      for (const st of STEPS) {
+        const m = new THREE.Mesh(chunkGeometry(i0, j0, i1, j1, st, qi0, qj0), mat); m.receiveShadow = true; m.visible = false;
+        g.add(m); levels.push(m); yield 'terrain' + st;
+      }
+      out.chunks.push({ levels, cx: td.x0 + (j0 + j1) / 2 * HS, cz: td.z0 + (i0 + i1) / 2 * HS, lv: -1 });
     }
     // Copy bridge metadata onto rendering strips before drawing the shallow road skirts.
     out.bridges = yield* buildBridgeSteps(td, campusMat);
@@ -295,7 +295,6 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const keepers = new Set();
   const lastUser = m => { const ps = renderer.properties?.get(m)?.programs; return !!ps && [...ps.values()].some(p => p.usedTimes === 1); };
   function dispose(v) {
-    v.dead = true;
     v.group.traverse(o => { if (o.isInstancedMesh) o.dispose(); if (o.geometry && !SHARED.has(o.geometry)) o.geometry.dispose(); });
     v.textures.forEach(t => t.dispose()); v.materials.forEach(m => { if (lastUser(m)) keepers.add(m); else m.dispose(); });
     group.remove(v.group);
@@ -336,67 +335,27 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   let done = 0;
   await Promise.all(first.map(([tx, tz]) => (startLoad(tx, tz, true) || Promise.resolve()).then(() => onProgress(++done, first.length))));
 
-  // vel (m/s, optional): at speed, also load around points up to AHEAD_S seconds ahead along the turn being flown
-  // (streamplan.js lookAhead), nearest the camera first (needDist), so the map keeps up even at 1000 km/h
+  // vel (m/s, optional): at speed, also load around a point up to AHEAD_S seconds ahead, nearest-to-that-point
+  // first, and allow more build time per frame, so the map keeps up even at 1000 km/h
   // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
-  const turn = STREAM.createTurnTracker();
-  let lastNow = 0, frameMs = 16.7;
-  const stream = { urgent: false, budget: 0, hidden: 0, up: 0, detailMs: 0 };   // this frame's choices (tools/fly_lag_*.mjs read them)
   function update(cam, vel, extraMs = 0) {
-    const now = performance.now(), dt = lastNow ? now - lastNow : 16.7; lastNow = now;
-    if (dt < 250) frameMs += (dt - frameMs) * 0.1;
-    const sp = vel ? Math.hypot(vel.x, vel.z) : 0, w = vel ? turn.update(vel.x, vel.z, now) : 0;
-    const ahead = vel ? STREAM.lookAhead(cam.x, cam.z, vel.x, vel.z, w) : [];
+    const sp = vel ? Math.hypot(vel.x, vel.z) : 0, la = Math.min(AHEAD_MAX, sp * AHEAD_S) / (sp || 1);
+    const ax = cam.x + (vel ? vel.x * la : 0), az = cam.z + (vel ? vel.z * la : 0);
     const want = new Map();
-    for (const p of [cam, ...ahead]) for (const [tx, tz] of wanted(p.x, p.z, LOAD_R)) want.set(world.key(tx, tz), [tx, tz]);
-    const need = ([tx, tz]) => STREAM.needDist(tx * T - T / 2, tz * T - T / 2, T, cam);
-    // at most 3 tiles in flight, but a tile near the camera (the one under it, or one it is about to reach) never waits
-    // behind look-ahead tiles, or tiles from before a respawn / teleport
-    let urgent = false;
-    const urgentR = STREAM.urgentDist(sp);
-    for (const [tx, tz] of [...want.values()].sort((p, q) => need(p) - need(q))) {
-      const close = STREAM.rectDist(cam.x, cam.z, tx * T - T / 2, tz * T - T / 2, T) < urgentR;
-      if (close && !vis.has(world.key(tx, tz))) urgent = true;
-      if (queue.loading.size < 3 || close) startLoad(tx, tz);
-    }
-    // beyond DROP_R: hidden and kept (turning back doesn't build them again) until too far or too many
-    const built = [];
-    for (const [k, v] of vis) { const t = world.tiles.get(k); if (t) built.push({ k, d: STREAM.rectDist(cam.x, cam.z, t.x0, t.z0, T) }); }
-    const plan = STREAM.planKeep(built);
-    for (const k of plan.drop) { const v = vis.get(k), t = world.tiles.get(k); dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
-    stream.hidden = 0;
+    for (const [tx, tz] of [...wanted(cam.x, cam.z, LOAD_R), ...(la ? wanted(ax, az, LOAD_R) : [])]) want.set(world.key(tx, tz), [tx, tz]);
+    const nx = (cam.x + ax) / 2, nz = (cam.z + az) / 2, d2 = ([tx, tz]) => (tx * T - nx) ** 2 + (tz * T - nz) ** 2;
+    // at most 3 tiles in flight, but the tile under the camera never waits behind look-ahead tiles from before a
+    // respawn / teleport
+    const [cx, cz] = world.tileIndex(cam.x, cam.z);
+    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (queue.loading.size < 3 || (tx === cx && tz === cz)) startLoad(tx, tz);
     for (const [k, v] of vis) {
-      const show = plan.show.has(k) || !world.tiles.has(k);
-      if (v.group.visible !== show) { v.group.visible = show; lastShadowAt = null; }
-      if (!show) stream.hidden++;
+      const t = world.tiles.get(k); if (!t) continue;
+      const dx = Math.max(t.x0 - cam.x, 0, cam.x - (t.x0 + T)), dz = Math.max(t.z0 - cam.z, 0, cam.z - (t.z0 + T));
+      if (Math.hypot(dx, dz) > DROP_R) { dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
     }
-    // build steps within this frame's budget: full-detail terrain near the camera first (needed within ~1 s), then
-    // tiles, nearest first, by the same measure the loads are ordered by (after a respawn / teleport the queue
-    // can still hold tiles from where the vehicle was)
-    stream.urgent = urgent; stream.budget = STREAM.buildBudget(sp, { urgent, frameMs, extraMs });
-    stream.detailMs = buildDetail(stream.budget);
-    queue.update(Math.max(0.1, stream.budget - stream.detailMs), j => need([j.tx, j.tz]));
-  }
-
-  // full-detail terrain chunks (buildTile leaves them out) once the camera is within DETAIL_R, nearest first, from the
-  // chunks the last updateLOD listed; one a frame at least while one is already in view range (< 420 m: until then the
-  // next level down is shown). From high up (true distance) they are never built. Returns the ms spent.
-  const DETAIL_R = 700, detail = [];
-  let detailCost = 3;
-  function buildDetail(budget) {
-    if (!detail.length) return 0;
-    detail.sort((a, b) => a.d - b.d);
-    const t0 = performance.now();
-    let first = true;
-    for (const { c, d, v } of detail) {
-      if (v.dead || c.levels[0]) continue;
-      const t = performance.now();
-      if (!(first && d < 420) && t - t0 + detailCost > budget) break;
-      first = false; c.levels[0] = c.full(); c.lv = -1;
-      const ms = performance.now() - t; detailCost = Math.max(ms, detailCost * 0.9 + ms * 0.1);
-    }
-    detail.length = 0;
-    return performance.now() - t0;
+    // build steps within this frame's budget, nearest tile first, by the same point the loads are ordered by (after a
+    // respawn / teleport the queue can still hold tiles from where the vehicle was)
+    queue.update(FRAME_BUDGET_MS + Math.min(4, sp / 60) + extraMs, j => d2([j.tx, j.tz]));
   }
 
   // shadow casters: only trees near the car (that's all the shadow area covers); invisible in the normal view
@@ -405,17 +364,12 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const casters = [conifer, broadleaf].map(geo => {
     const m = new THREE.InstancedMesh(geo, ghost, 4000); m.count = 0; m.castShadow = true; m.frustumCulled = false; group.add(m); return m;
   });
-  // p: the vehicle. Above SHADOW_UP m the shadow camera (60–260 m from the sun, centred on the vehicle) can't reach the
-  // ground: no tree casters, instead of up to 8000 drawn into the shadow map every frame for nothing
-  const SHADOW_UP = 200;
   function updateShadows(p) {
-    const high = Number.isFinite(p.y) && world.loadedAt(p.x, p.z) && p.y - world.terrainAt(p.x, p.z) > SHADOW_UP;
-    if (high) { casters.forEach(m => { m.count = 0; }); lastShadowAt = null; return; }
     if (lastShadowAt && Math.hypot(p.x - lastShadowAt.x, p.z - lastShadowAt.z) < 10) return;
     lastShadowAt = { x: p.x, z: p.z };
     const n = [0, 0];
     for (const [k, v] of vis) {
-      const t = world.tiles.get(k); if (!t || !v.treeMats || !v.group.visible) continue;
+      const t = world.tiles.get(k); if (!t || !v.treeMats) continue;
       const dx = Math.max(t.x0 - p.x, 0, p.x - (t.x0 + T)), dz = Math.max(t.z0 - p.z, 0, p.z - (t.z0 + T));
       if (Math.hypot(dx, dz) > SHADOW_R) continue;
       const tr = t.trees;
@@ -429,41 +383,30 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     casters.forEach((m, i) => { m.count = n[i]; m.instanceMatrix.needsUpdate = true; });
   }
 
-  // Detail levels go by the camera's true distance, its height above the ground included: from high up everything
-  // below is drawn at far detail, and above HIGH m the props, campus items and roadside scenery (all within 650 m, a
-  // few pixels from there) are not drawn. Driving, the camera is a few metres up: the same levels as before.
-  // The town's far cut-off stays a flat distance (towns must not vanish under a high jet).
-  const HIGH = 300, NOWHERE = { x: 1e9, y: 0, z: 1e9 };
   function updateLOD(cam, vel, extraMs = 0) {
     update(cam, vel, extraMs);
-    const up = Number.isFinite(cam.y) && world.loadedAt(cam.x, cam.z) ? Math.max(0, cam.y - world.terrainAt(cam.x, cam.z)) : 0, up2 = up * up;
-    const small = up > HIGH ? NOWHERE : cam;
-    stream.up = up;
-    detail.length = 0;
     for (const v of vis.values()) {
-      if (!v.group.visible) continue;                 // kept beyond DROP_R (streamplan.js planKeep)
-      v.scenery?.update(small, sceneryTime, nightAmount);
+      v.scenery?.update(cam, sceneryTime, nightAmount);
       for (const c of v.chunks) {
-        const d = Math.sqrt((c.cx - cam.x) ** 2 + (c.cz - cam.z) ** 2 + up2);
-        let lv = d < 420 ? 0 : d < 850 ? 1 : d < 1500 ? 2 : 3;
-        if (!c.levels[0] && d < DETAIL_R) { detail.push({ c, d, v }); if (!lv) lv = 1; }
-        if (lv !== c.lv) { c.levels.forEach((m, i) => { if (m) m.visible = i === lv; }); c.lv = lv; }
+        const d = Math.hypot(c.cx - cam.x, c.cz - cam.z);
+        const lv = d < 420 ? 0 : d < 850 ? 1 : d < 1500 ? 2 : 3;
+        if (lv !== c.lv) { c.levels.forEach((m, i) => m.visible = i === lv); c.lv = lv; }
       }
       for (const l of v.treeLods) {
-        const near = (l.cx - cam.x) ** 2 + (l.cz - cam.z) ** 2 + up2 < 420 * 420;
+        const near = Math.hypot(l.cx - cam.x, l.cz - cam.z) < 420;
         l.near.visible = near; l.far.visible = !near;
       }
       for (const b of v.buildingLods) {
-        const flat = Math.hypot(b.cx - cam.x, b.cz - cam.z), d = Math.sqrt(flat * flat + up2);
+        const d = Math.hypot(b.cx - cam.x, b.cz - cam.z);
         b.near.visible = d < townRange.near;
-        b.far.visible = d >= townRange.near && flat < townRange.far;
+        b.far.visible = d >= townRange.near && d < townRange.far;
         b.near.castShadow = d < townRange.shadow;
       }
       showBridges(v.bridges, cam);
-      showProps(v.propLods, small);
-      showCampusItems(v.campusItemLods, small);
+      showProps(v.propLods, cam);
+      showCampusItems(v.campusItemLods, cam);
       for (const c of v.campusLods) {
-        const near = (c.cx - cam.x) ** 2 + (c.cz - cam.z) ** 2 + up2 < 250 * 250;
+        const near = Math.hypot(c.cx - cam.x, c.cz - cam.z) < 250;
         c.near.visible = near; c.far.visible = !near;
       }
     }
@@ -471,7 +414,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   }
   return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
-    loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep, stream });
+    loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep });
 }
 
 
