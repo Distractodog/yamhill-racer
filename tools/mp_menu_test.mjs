@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import puppeteer from 'puppeteer-core';
-import { RELAY_URL, startGame, watchErrors } from './lib/startgame.mjs';
+import { RELAY_URL, startGame, watchErrors, openMenu } from './lib/startgame.mjs';
 const out = process.argv[2];
 if (out) await mkdir(out, { recursive: true });
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
@@ -24,10 +24,11 @@ try {
   await host.evaluate(() => { game.tuning.accel = 51; game.multiplayer.tuning.bike.accel = 33; game.multiplayer.tuning.jet.thrust = 30; game.atmosphere.setPreset('night', false); });
   await guest.evaluate(() => { game.tuning.accel = 21; game.atmosphere.setPreset('golden', false); });
   const own = await current(guest), guestSaved = await saved(guest);
-  await host.click('#mp-button'); await host.click('#mp-host');
+  await openMenu(host); await host.click('#mp-button'); await host.click('#mp-host');
   await host.waitForFunction(() => game.multiplayer.mp.inGame);
+  assert.equal(await host.$eval('#menu-button', el => el.textContent), '☰ Menu · MP');
   const code = await host.evaluate(() => game.multiplayer.mp.me.code);
-  await guest.click('#mp-button'); await guest.type('#mp-join-code', code);
+  await openMenu(guest); await guest.click('#mp-button'); await guest.type('#mp-join-code', code);
   // Typing letter keys in a dialog must never reach the game input set.
   assert.equal(await guest.evaluate(() => game.keys.size), 0);
   await guest.click('#mp-join');

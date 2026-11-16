@@ -11,7 +11,7 @@ const RIDERS = ['bike'], NO_WHEELS = ['jet'];   // which kinds show rider / whee
 export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen = () => {}, onClose = () => {}, canOpen = () => true, rewards = null }) {
   const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./garage.css', import.meta.url).href; document.head.append(link);
   let button = document.getElementById('garage-button');
-  if (!button) { button = document.createElement('button'); button.id = 'garage-button'; button.className = 'menu-button'; button.textContent = 'Garage'; (document.getElementById('menu-bar') || document.body).append(button); }
+  if (!button) { button = document.createElement('button'); button.id = 'garage-button'; button.className = 'menu-button'; button.textContent = 'Garage'; (document.getElementById('menu-panel') || document.getElementById('menu-bar') || document.body).append(button); }
   button.disabled = false;
   const dialog = document.createElement('section'); dialog.id = 'cosmetic-garage'; dialog.hidden = true; dialog.setAttribute('role','dialog'); dialog.setAttribute('aria-modal','true'); dialog.setAttribute('aria-labelledby','garage-title');
   dialog.innerHTML = `<div class="garage-shell"><header><div><h2 id="garage-title">Garage</h2></div><button type="button" class="garage-close" aria-label="Close garage">✕</button></header>

@@ -80,6 +80,8 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
   let names = new Map(mp.players);
   function render() {
     button.textContent = mp.inGame ? 'Multiplayer' : 'Play multiplayer';
+    const menuButton = document.getElementById('menu-button');
+    if (menuButton) menuButton.textContent = mp.inGame ? '☰ Menu · MP' : '☰ Menu';
     $('title').textContent = button.textContent; $('connect').hidden = mp.inGame; $('game').hidden = !mp.inGame;
     $('code').textContent = mp.me.code; $('room').textContent = mp.roomCode || '';
     // guests see the host's choice checked but can't change it (inert, not disabled: a disabled radio's dot is near invisible)
@@ -95,7 +97,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
     }
     names = new Map([...names, ...mp.players]);
   }
-  function close() { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); button.focus({ preventScroll: true }); }
+  function close() { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); (document.getElementById('menu-button') || button).focus({ preventScroll: true }); }
   button.disabled = false;
   button.addEventListener('click', () => {
     if (!panel.hidden) { settings.close(); return; }

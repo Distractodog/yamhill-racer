@@ -61,3 +61,10 @@ export function holdCar(page, { x, z, yaw = 0, kind = null }, timeout = 120000) 
     car.reset(x, z, yaw); car.vel.set(0, 0, 0); car.safe = []; car._lastLoaded = null;
   }, x, z, yaw, kind, timeout);
 }
+
+// Open the options disclosure before clicking one of its existing item buttons.
+export async function openMenu(page) {
+  await page.waitForSelector('#menu-button:not(:disabled)', { visible: true });
+  if (await page.$eval('#menu-panel', panel => panel.hidden)) await page.click('#menu-button');
+  await page.waitForSelector('#menu-panel', { visible: true });
+}

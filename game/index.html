@@ -81,6 +81,8 @@
 <div id="loading">Loading map…</div>
 <div id="hud"><div id="speed"><span id="speed-num">0</span><button id="speed-unit" type="button" tabindex="-1" title="Switch km/h / mph (U)">km/h</button></div><div id="info"></div></div>
 <nav id="menu-bar" aria-label="Game options">
+  <button id="menu-button" class="menu-button" type="button" aria-controls="menu-panel" aria-expanded="false" disabled>☰ Menu</button>
+  <div id="menu-panel" aria-label="Game options" hidden>
   <button id="mp-button" class="menu-button" aria-controls="mp-panel" aria-expanded="false" disabled>Play multiplayer</button>
   <button id="garage-button" class="menu-button" disabled>Garage</button>
   <button id="atmosphere-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Atmosphere</button>
@@ -88,6 +90,7 @@
   <button id="help-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>How to play?</button>
   <a id="suggest-button" class="menu-button" href="https://docs.google.com/forms/d/e/1FAIpQLSdNfUHyjovfvr1_L-qWph_n1hvebvup8OjT9eWLDVinekBuJw/viewform"
     target="_blank" rel="noopener" title="Opens a short form in a new tab">Want something added?</a>
+  </div>
 </nav>
 <section id="welcome" role="dialog" aria-labelledby="welcome-title" hidden>
   <div class="card">
