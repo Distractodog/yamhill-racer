@@ -17,6 +17,7 @@
 //     air (scrub); hands off it slowly lines up with its flight path. Landing far off line is a bail.
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { drawnWheelY } from './wheeltravel.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const BIKE = {
@@ -394,7 +395,7 @@ export class Bike extends Vehicle {
     ud.bars.rotation.y = -this.steer * 0.45;
     this.wheels.forEach((wh, i) => {
       const w = ud.wheels[i];
-      w.holder.position.y = -(this.t.travel - (wh.contact ? wh.comp : 0));
+      w.holder.position.y = drawnWheelY(m, i, -(this.t.travel - (wh.contact ? wh.comp : 0)));
       w.spin.rotation.x = wh.spin;
     });
     ud.rider.rotation.x = this.sunk ? -0.35 : clamp(-this.pitchRate * 0.05 + (this.wheelie ? -0.15 : 0.12), -0.35, 0.35);

@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
+import { drawnWheelY } from './wheeltravel.js';
 import { buildingRoofAt, buildingRoofFloor } from './roofs.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
@@ -463,7 +464,7 @@ export class Car extends Vehicle {
     this.wheels.forEach((wh, i) => {
       const g = ud.wheels[i];
       const drop = wh.contact ? (this.t.restLength - wh.comp) : this.t.restLength;
-      g.holder.position.y = g.restY + 0.3 - drop - (RADIUS - g.r);
+      g.holder.position.y = drawnWheelY(m, i, g.restY + 0.3 - drop - (RADIUS - g.r));
       g.holder.rotation.y = wh.front ? -this.steer * this.t.steerLock * 0.9 : 0;
       g.spin.rotation.x = wh.spin;
     });

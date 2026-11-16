@@ -28,6 +28,7 @@ import { createVehicleLightLenses } from '../lights.js';
 import { Effects } from '../effects.js';
 import { DrivingFX } from '../drivingfx.js';
 import { CarAudio } from '../audio.js';
+import { wheelArch } from '../wheeltravel.js';
 
 export const DELAY = 120;            // ms behind the newest states we draw
 export const MAX_EXTRAP = 300;       // ms we carry on past the newest state
@@ -333,6 +334,9 @@ function makePuppet(kind, model, tune) {
 // its lights as glowing lenses (lights.js; no light sources); the glider comes later if needed
 function buildBody(kind, colors, tune, type = null) {
   const model = paintedModel(kind, colors, type), ud = model.userData;
+  // Resolve fallback arches before batching replaces the source geometry. SYNC applies the same
+  // visual soft stop as the local vehicle, including older clients' standing-spring fallback.
+  if (kind === 'car' || kind === 'bike') ud.wheels.forEach((_, i) => wheelArch(model, i));
   bakeParts(model, BODY_MAT, kind === 'jet' ? { keep: new Set([ud.canopy]), recolor: { mats: new Set(ud.wreckMats), color: new THREE.Color(ud.wreckColor) } } : {});
   model.visible = false;
   if (kind === 'jet') ud.setGear(1);
