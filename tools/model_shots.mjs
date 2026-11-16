@@ -4,8 +4,11 @@
 // For each car type (race, sports, hatch, suv, truck) and bike type (dirt, sport) it writes, as <type>-<shot>.png:
 //   garage (the Garage preview, as opened), front34, rear34, side, top (parked at midday), drive150 (chase camera at
 //   ~150 km/h), night-front34 / night-rear34 (lights on); and per CAR type wheelclip-side / wheelclip-front34, the car
-//   held at 1000 km/h on the spot (the wheel-clip check: no tyre through the body). Plus report.json (model name,
-//   speeds, lights state, triangles, draw calls, finite checks). Needs a human look at the PNGs; fails on page errors.
+//   held at 1000 km/h on the spot (the wheel-clip check: no tyre through the body), and low600-side / low1000-side: a
+//   camera 12 cm above the road beside the car held at 600 / 1000 km/h (the floor-clip check: a gap under the body all
+//   along, no bodywork under the road; report.json gives the measured lowest body point over the road, bodyClear, m).
+//   Plus report.json (model name, speeds, lights state, triangles, draw calls, finite checks). Needs a human look at
+//   the PNGs; fails on page errors.
 import puppeteer from 'puppeteer-core';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -43,7 +46,13 @@ try {
     const original = game.renderer.render.bind(game.renderer);
     game.renderer.render = (scene, camera) => {
       const s = window.shots, m = game.vehicles.current.mesh;
-      if (s.view && VIEWS[s.view] && scene === game.scene) {
+      if (s.view === 'lowside' && scene === game.scene) {
+        // 8 m to the car's left, the eye 12 cm above the road there, looking level at the road under the car
+        const P = m.position.constructor, eye = m.localToWorld(new P(8, 0, 0)), at = m.position.clone();
+        eye.y = game.world.heightAt(eye.x, eye.z, eye.y + 2) + 0.12;
+        at.y = game.world.heightAt(at.x, at.z, at.y + 1) + 0.15;
+        camera.position.copy(eye); camera.lookAt(at); camera.updateMatrixWorld();
+      } else if (s.view && VIEWS[s.view] && scene === game.scene) {
         const [eye, at] = VIEWS[s.view], P = m.position.constructor;
         camera.position.copy(m.localToWorld(new P(...eye.map(v => v * s.k))));
         camera.lookAt(m.localToWorld(new P(...at.map(v => v * s.k)))); camera.updateMatrixWorld();
@@ -52,9 +61,23 @@ try {
     };
   });
   const state = () => page.evaluate(() => {
-    const g = game, v = g.vehicles.current, info = g.renderer.info.render;
+    const g = game, v = g.vehicles.current, info = g.renderer.info.render, m = v.mesh;
+    // lowest drawn body vertex (visible meshes, tyres and glider excluded) over the road under it, m
+    const skip = new Set((m.userData.wheels || []).map(w => w.holder)), p = m.position.clone();
+    let bodyClear = Infinity;
+    m.updateMatrixWorld(true);
+    m.traverseVisible(o => {
+      if (!o.isMesh) return;
+      for (let q = o; q && q !== m; q = q.parent) if (skip.has(q) || q.name === 'glider') return;
+      const pos = o.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        p.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+        bodyClear = Math.min(bodyClear, p.y - g.world.heightAt(p.x, p.z, m.position.y + 1));
+      }
+    });
     return { kind: v.kind, type: v.type, model: v.mesh.name, kmh: Math.round(v.vel.length() * 3.6), night: g.atmosphere?.night, lightsOn: g.vehicleLights?.on,
-      triangles: info.triangles, calls: info.calls, finite: [...v.pos, ...v.vel, ...v.quat].every(Number.isFinite) };
+      triangles: info.triangles, calls: info.calls, finite: [...v.pos, ...v.vel, ...v.quat].every(Number.isFinite),
+      bodyClear: +bodyClear.toFixed(3) };
   });
   async function shot(type, name, view, settle = 600) {
     await page.evaluate(view => { window.shots.view = view; }, view);
@@ -119,6 +142,22 @@ try {
       await shot(type, 'wheelclip-side', 'side', 200);
       await shot(type, 'wheelclip-front34', 'wheelfront', 200);
       await page.evaluate(() => { clearInterval(window.shots.fast); game.keys.clear(); });
+
+      // floor clip: a low camera beside the car held at 600, then 1000 km/h (downforce past the springs' full travel)
+      for (const kmh of [600, 1000]) {
+        await holdCar(page, { ...SPOT, kind }); await freeze(false);
+        await page.evaluate(({ x, z }, kmh) => {
+          const v = game.vehicles.current; game.keys.add('KeyW');
+          window.shots.fast = setInterval(() => {
+            v.pos.set(x, v.pos.y, z); v.vel.set(0, v.vel.y, kmh / 3.6).applyQuaternion(v.quat);
+          }, 16);
+        }, SPOT, kmh);
+        await wait(1500);
+        await shot(type, `low${kmh}-side`, 'lowside', 200);
+        const s = report.shots.at(-1);
+        if (!(s.bodyClear >= 0)) console.log(`  ${type} at ${kmh} km/h: body ${(s.bodyClear * 100).toFixed(1)} cm UNDER the road`);
+        await page.evaluate(() => { clearInterval(window.shots.fast); game.keys.clear(); });
+      }
     }
   }
   if (report.pageErrors.length) throw new Error(`${report.pageErrors.length} page errors`);
