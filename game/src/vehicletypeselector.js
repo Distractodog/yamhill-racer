@@ -2,7 +2,7 @@ import { VEHICLE_TYPE_KEY, VEHICLE_TYPES, loadVehicleTypes, typeInfo, applyVehic
 
 function browserStorage() { try { return globalThis.localStorage; } catch { return null; } }
 // vehicleFor(kind, id): the vehicle a type drives (default all[kind]; a type with its own flight model has its own vehicle)
-export function createVehicleTypeSelector(all, { storage = browserStorage(), canSwitch = () => true, vehicleFor = kind => all[kind] } = {}) {
+export function createVehicleTypeSelector(all, { storage = browserStorage(), canSwitch = () => true, vehicleFor = kind => all[kind], onSelect = () => {} } = {}) {
   const selected = loadVehicleTypes(storage), listeners = new Set();
   for (const kind of Object.keys(VEHICLE_TYPES)) {
     const vehicle = vehicleFor(kind, selected[kind]);
@@ -12,7 +12,7 @@ export function createVehicleTypeSelector(all, { storage = browserStorage(), can
   }
   return {
     getType: kind => selected[kind],
-    setType(kind, id) {
+    setType(kind, id, { activate = false } = {}) {
       if (!VEHICLE_TYPES[kind]?.some(t => t.id === id) || !canSwitch(kind)) return false;
       if (id !== selected[kind]) {
         const vehicle = vehicleFor(kind, id);
@@ -22,6 +22,7 @@ export function createVehicleTypeSelector(all, { storage = browserStorage(), can
         vehicle.reset(vehicle.pos.x, vehicle.pos.z, vehicle.heading());
         listeners.forEach(fn => fn(kind));
       }
+      if (activate) onSelect(kind);
       try { if (!storage) return false; storage.setItem(VEHICLE_TYPE_KEY, JSON.stringify(selected)); return true; }
       catch { return false; }
     },

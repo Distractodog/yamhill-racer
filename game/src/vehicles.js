@@ -41,7 +41,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   // a jet type with its own flight model (vehicletypes.js physics.flight) flies its own vehicle in the jet's slot
   const heli = new Heli(world), flights = { heli };
   const jetFor = id => flights[typeInfo('jet', id)?.physics?.flight] || jet;
-  const types = createVehicleTypeSelector(all, { canSwitch, vehicleFor: (kind, id) => kind === 'jet' ? jetFor(id) : all[kind] });
+  const types = createVehicleTypeSelector(all, { canSwitch, vehicleFor: (kind, id) => kind === 'jet' ? jetFor(id) : all[kind], onSelect: kind => switchTo(kind) });
   all.jet = jetFor(types.getType('jet'));
   let cur = car, sel = 0, open = false;
   scene.add(car.mesh);
@@ -83,10 +83,10 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   // back in the air where it was.
   let flight = null;
   const setType = types.setType;
-  types.setType = (kind, id) => {
+  types.setType = (kind, id, options) => {
     const v = all.jet;
     flight = kind === 'jet' && cur === v && v.mode === 'air' ? { p: v.pos.clone(), vel: v.vel.clone(), yaw: v.heading() } : null;
-    try { return setType(kind, id); } finally { flight = null; }
+    try { return setType(kind, id, options); } finally { flight = null; }
   };
   types.onTypeChange(kind => {
     if (kind !== 'jet') return;
@@ -108,7 +108,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
       `<button class="veh-item${i === sel ? ' sel' : ''}${v.kind === cur.kind ? ' cur' : ''}" data-k="${v.kind}">
         <span class="veh-icon">${v.icon}</span><span><div class="veh-name">${all[v.kind]?.name || v.name}</div><div class="veh-help">${all[v.kind]?.help || (all[v.kind]?.typePhysics?.noWheelie ? v.help.replace('Shift wheelie · ', '') : v.help)}</div></span>
         <span class="veh-key">${i + 1}</span></button>`).join('') +
-      `<div class="veh-hint">1–${VEHICLES.length}, ↑/↓ + Enter or click · V or Esc to close${canSwitch() ? '' : ' · switching ends the race you\'re in'}</div>`;
+      `<div class="veh-hint">1–${VEHICLES.length}, ↑/↓ + Enter or click · V or Esc to close</div>`;
     menu.querySelectorAll('.veh-item').forEach(b => b.addEventListener('click', () => pick(b.dataset.k)));
   }
   function pick(kind) { close(); if (kind !== cur.kind) { if (!canSwitch(kind)) return; switchTo(kind); } }
