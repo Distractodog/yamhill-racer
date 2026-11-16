@@ -6,6 +6,23 @@
 // "loading" for good: it never came, and it held one of the three streaming slots.
 //   const q = createTileQueue({ fetch: job => data, build: (job, data) => generator, finish: (job, value) => {}, free: job => {} });
 //   q.start(key, { tx, tz }, sync?)  ·  q.update(budgetMs, job => distance)  ·  q.pending()  ·  q.loading  ·  q.slowStep
+// A tile's download: its data and its ground bitmaps (loadBitmaps() → a list of promises, one per bitmap) in parallel.
+// If any part fails, every bitmap made is closed: those already there, and those that arrive after the failure
+// (otherwise each failed tile left up to four 1024² bitmaps behind).
+export async function fetchTileParts(loadData, loadBitmaps) {
+  let failed = false;
+  const made = [];
+  const keep = b => { if (failed) b?.close?.(); else made.push(b); return b; };
+  const bitmaps = Promise.resolve().then(loadBitmaps).then(list => Promise.all(list.map(p => Promise.resolve(p).then(keep))));
+  try {
+    const [data, img] = await Promise.all([Promise.resolve().then(loadData), bitmaps]);
+    return { data, img };
+  } catch (e) {
+    failed = true; made.splice(0).forEach(b => b?.close?.());
+    throw e;
+  }
+}
+
 export function createTileQueue({ fetch, build, finish, free = () => {}, now = () => performance.now(), retryMs = 3000,
   warn = (...a) => console.warn(...a) }) {
   const loading = new Set(), failedAt = new Map(), jobs = [];

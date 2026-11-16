@@ -50,6 +50,7 @@ function makeWorld({ delayFrames = 90, slow = {}, broken = new Set() } = {}) {
       }
     },
     loadAround(x, z) { for (let i = 0; i <= delayFrames + 1; i++) this.stream(x, z); },
+    pendingTiles: () => [...wantedAt.keys()].filter(k => !loaded.has(k)).length,
   };
   return world;
 }
@@ -221,6 +222,43 @@ for (const [Ctor, name, tuning] of [[Car, 'car', { ...TUNING_DEFAULTS }], [Bike,
   run('Garage jet → helicopter in a race air respawn', { kind: 'jet', air: true, switchAt: 300, doSwitch: vs => vs.setType('jet', 'heli'), expectKind: 'heli', expectAir: true });
 }
 console.table(rows);
+
+// 11) a race start supersedes a waiting respawn hold (challenges.js placeCar → onPlace → hold.cancel, as main.js wires
+//     it): (a) a far R hold is waiting when the race starts; (b) the race start is still loading and a respawn hold
+//     begins while the race waits for it. Either way the car ends at the race start, the hold is gone, and it stays put.
+{
+  const THREE_ = THREE, el = () => ({ style: {}, append() {}, querySelectorAll: () => [], getContext: () => ({ fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, fill() {} }) });
+  globalThis.document = { createElement: el, head: el(), body: el() };
+  globalThis.localStorage = { getItem: () => null, setItem() {} };
+  globalThis.addEventListener = () => {};
+  const { createChallenges } = await import('../game/src/challenges.js');
+  for (const [label, startAt, holdDuring] of [['race start while a far R hold waits', [600, 300], false], ['respawn hold begins while the race start loads', [-4200, -1800], true]]) {
+    const world = makeWorld(), v = new Car(world, { ...TUNING_DEFAULTS });
+    let hold = null;
+    const race = { id: 'r', name: 'R', start: { x: startAt[0], z: startAt[1], yaw: 0 }, gates: [0, 100, 200].map(z => ({ x: startAt[0], z: startAt[1] + z, yaw: 0, w: 16 })) };
+    globalThis.fetch = async url => ({ ok: true, json: async () => url.endsWith('challenges.json') ? [race] : [] });
+    const ch = await createChallenges({ scene: new THREE_.Scene(), world, car: v, minimap: { open: false }, onPlace: () => hold.cancel() });
+    hold = createRespawnHold({ world, vehicles: [v] });
+    world.loadAround(0, 0); v.reset(0, 0, 0); for (let i = 0; i < 10; i++) frame(v, world, hold);
+    const far = [4800, 1500];
+    if (!holdDuring) { v.safe = [[...far, 0]]; v.resetToSafe(); assert(hold.blocked, `${label}: the R hold is waiting`); }
+    let placed = false, triggered = false;
+    ch.start(0).then(() => { placed = true; });
+    for (let t = 0; !placed && t < 200; t++) {           // ~9 frames per placeCar wait (150 ms)
+      for (let i = 0; i < 9; i++) frame(v, world, hold);
+      if (holdDuring && !triggered && t === 2) { v.safe = [[...far, 0]]; v.resetToSafe(); triggered = true; assert(hold.blocked, `${label}: a hold began during the race's wait`); }
+      await new Promise(r => setTimeout(r, 150));
+    }
+    assert(placed, `${label}: the race placed the car`);
+    assert(!hold.blocked, `${label}: the hold was dropped`);
+    for (let i = 0; i < 180; i++) frame(v, world, hold);
+    const off = Math.hypot(v.pos.x - startAt[0], v.pos.z - startAt[1]);
+    assert(off < 5, `${label}: still at the race start 3 s later (${off.toFixed(0)} m off)`);
+    assert(world.loadedAt(v.pos.x, v.pos.z) && !hold.blocked, `${label}: on loaded ground, no hold`);
+    rows.push({ label, held: '-', placed: 'race start', worstJump: '-', lowest: '-' });
+  }
+}
+console.table(rows.slice(-2));
 
 // the browser part: the real game, real streaming (needs the dev server)
 if (process.argv.includes('--browser')) {

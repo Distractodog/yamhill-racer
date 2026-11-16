@@ -6,11 +6,13 @@
 // queue, whatever it built is freed (its ground bitmaps closed), it no longer counts as loading (no stuck slot), finish
 // never gets undefined, and it can be tried again after 3 s (and then loads). A sync (start-up) build of a corrupt
 // tile doesn't throw either. The good tile loads in the same frames.
+// The download (world.js fetchTile → fetchTileParts): when the data download fails while the ground bitmaps succeed —
+// some before the failure, some after it — or one bitmap fails, every bitmap made is closed; nothing leaks.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeTileDataSteps } from '../game/src/data.js';
 import { readTileRaw, decodeTileSteps } from '../game/src/tilepack.js';
-import { createTileQueue } from '../game/src/tilequeue.js';
+import { createTileQueue, fetchTileParts } from '../game/src/tilequeue.js';
 
 const A = 'game/assets/', WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
 const ab = f => { const b = fs.readFileSync(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
@@ -68,5 +70,32 @@ assert(finished.includes('json') && !q.failedAt.has('json') && q.loading.size ==
 TILES.sync = { raw: { ...raw, json: raw.json.slice(0, 100) } };
 await q.start('sync', { tx: 0, tz: 0 }, true);
 assert(!q.loading.has('sync') && q.failedAt.has('sync') && !finished.includes('sync'), 'a corrupt start-up tile fails cleanly');
+// ---- fetchTileParts
+const later = ms => new Promise(r => setTimeout(r, ms));
+const bmps = [];
+const mk = (ms, ok = true) => later(ms).then(() => { if (!ok) throw new Error('bad bitmap'); const b = { open: true, close() { this.open = false; } }; bmps.push(b); return b; });
+const open = () => bmps.filter(b => b.open).length;
+// data fails at 20 ms; bitmaps arrive at 5, 10 (before) and 40, 60 ms (after the failure)
+await assert.rejects(fetchTileParts(() => later(20).then(() => { throw new Error('data 404'); }), () => [mk(5), mk(10), mk(40), mk(60)]), /data 404/);
+await later(100);
+assert.equal(bmps.length, 4, 'all four bitmaps were made'); assert.equal(open(), 0, 'data failed: every bitmap closed, also the two that arrived after');
+// one bitmap fails, the data and the other bitmaps succeed
+bmps.length = 0;
+await assert.rejects(fetchTileParts(() => later(5).then(() => ({ ok: 1 })), () => [mk(5), mk(15, false), mk(30), mk(50)]), /bad bitmap/);
+await later(80);
+assert.equal(bmps.length, 3); assert.equal(open(), 0, 'a bitmap failed: the others are closed');
+// the ground file itself fails (no bitmaps at all) / everything fine
+await assert.rejects(fetchTileParts(() => ({ ok: 1 }), () => Promise.reject(new Error('ground 404'))), /ground 404/);
+bmps.length = 0;
+const okParts = await fetchTileParts(() => later(5).then(() => 'data'), () => [mk(1), mk(2), mk(3), mk(4)]);
+assert.equal(okParts.data, 'data'); assert.equal(okParts.img.length, 4); assert.equal(open(), 4, 'success: bitmaps kept for the textures');
+// through the queue: a tile whose data download fails leaves no open bitmap and isn't stuck
+bmps.length = 0;
+const q2 = createTileQueue({ now: () => clock, warn: () => {}, fetch: () => fetchTileParts(() => later(10).then(() => { throw new Error('404'); }), () => [mk(2), mk(30)]),
+  build: () => { throw new Error('never built'); }, finish: () => {} });
+await q2.start('x', { tx: 0, tz: 0 }); await later(60);
+assert.equal(open(), 0, 'queue: no open bitmap'); assert(!q2.loading.has('x') && q2.failedAt.has('x'), 'queue: failed download not stuck');
+
 console.log(`PASS tile queue: ${bad.length} failing tiles (corrupt tile.json, corrupt heights, download, late step, empty build, finish) ` +
-  'dropped from the queue and freed, none stuck loading, retried after 3 s and loaded once repaired; the good tile loaded alongside; sync start-up build safe');
+  'dropped from the queue and freed, none stuck loading, retried after 3 s and loaded once repaired; the good tile loaded alongside; sync start-up build safe; ' +
+  'fetchTileParts closes every bitmap when the data, the ground file or one bitmap fails, including bitmaps that arrive after the failure');

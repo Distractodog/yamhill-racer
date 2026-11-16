@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
-import { createTileQueue } from './tilequeue.js';
+import { createTileQueue, fetchTileParts } from './tilequeue.js';
 import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
@@ -71,15 +71,14 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
 
-  async function fetchTile(tx, tz) {
+  // data and ground bitmaps together; if either fails, the bitmaps made are closed (tilequeue.js fetchTileParts)
+  function fetchTile(tx, tz) {
     const dir = `${base}tiles/${tx}_${tz}/`;
-    const [data, img] = await Promise.all([
-      readTileRaw(fetchReader(dir), W.packed),          // unzipped here, decoded in buildTile's steps: tilepack.js
+    return fetchTileParts(
+      () => readTileRaw(fetchReader(dir), W.packed),          // unzipped here, decoded in buildTile's steps: tilepack.js
       // ground colours as four 1024^2 quarters (cropped off the main thread), so each uploads in its own slice
-      fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => Promise.all([0, 1, 2, 3].map(q =>
-        createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' })))),
-    ]);
-    return { data, img };
+      () => fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => [0, 1, 2, 3].map(q =>
+        createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' }))));
   }
 
   // builds one tile's data and meshes, yielding between pieces so the frame budget can pause it. job.partial holds what
