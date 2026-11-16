@@ -27,7 +27,8 @@ export function createMapDetail(meta, base, loadImage = async url => {
     prune();
   }
   // ox/oy are the overview image origin, s is canvas pixels per overview pixel.
-  function draw(ctx, ox, oy, s) {
+  // load = false (the full map while it moves): draw only images already shown, request nothing, keep the wanted set.
+  function draw(ctx, ox, oy, s, { load = true } = {}) {
     const scale=s/meta.mpp, w=ctx.canvas.width, h=ctx.canvas.height;
     const x0=meta.extent[0]-ox/scale, z0=meta.extent[1]-oy/scale;
     const x1=x0+w/scale, z1=z0+h/scale;
@@ -39,18 +40,17 @@ export function createMapDetail(meta, base, loadImage = async url => {
       if((maxX-minX+1)*(maxZ-minZ+1)<=LIMIT)
         for(let z=minZ;z<=maxZ;z++) for(let x=minX;x<=maxX;x++) if(available.has(`${x}_${z}`)) coords.push([x,z]);
     }
-    visible = new Set(coords.map(([x,z])=>`${x}_${z}`));
-    queue=[];
+    if(load) { visible = new Set(coords.map(([x,z])=>`${x}_${z}`)); queue=[]; }
     // The first draw of a newly loaded 2000px image is the costly one (scaled-down copies get built): at most one new
     // image per frame, so after a reset / respawn / H several don't land in the same frame. A skipped one shows on the
     // next frame (revision changes so a cached full map is redrawn too).
-    let fresh=0;
+    let fresh=load?0:1;
     for(const [x,z] of coords) {
       const key=`${x}_${z}`,entry=cache.get(key);
-      if(!entry) {queue.push(key);continue;}
-      entry.used=++stamp;
+      if(!entry) {if(load)queue.push(key);continue;}
+      if(load) entry.used=++stamp;
       if(entry.image) {
-        if(!entry.shown && fresh++) {revision++;continue;}
+        if(!entry.shown && fresh++) {if(load)revision++;continue;}
         entry.shown=true;
         const dx=ox+(x*T-T/2-meta.extent[0])*scale,dy=oy+(z*T-T/2-meta.extent[1])*scale;
         // Rounded adjoining boundaries prevent hairline seams between tile images.
@@ -58,7 +58,7 @@ export function createMapDetail(meta, base, loadImage = async url => {
         ctx.drawImage(entry.image,left,top,Math.round(dx+T*scale)-left,Math.round(dy+T*scale)-top);
       }
     }
-    pump();
+    if(load) pump();
   }
   return { draw, get revision() { return revision; } };
 }
