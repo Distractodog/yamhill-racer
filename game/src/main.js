@@ -47,6 +47,7 @@ const SKY = new THREE.Color(0xa9cbe3);
 scene.background = SKY;
 scene.fog = new THREE.Fog(0xb4cfe0, 250, 1500);
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.3, 2200);
+const lodView = { camera, fog: scene.fog };       // world.updateLOD: far trees the fog hides are not drawn (fogcull.js)
 
 scene.add(new THREE.HemisphereLight(0xdfefff, 0x4a5a3a, 1.4));
 const sun = new THREE.DirectionalLight(0xfff1d6, 2.4);
@@ -464,7 +465,7 @@ function frame(now) {
   audio.update(car, input, dt);
   updateCamera(dt);
   world.tick?.(now / 1000);
-  world.updateLOD(camera.position, car.vel, respawnHold.blocked || sessionSpawn.blocked ? 8 : 0);   // paused: build faster
+  world.updateLOD(camera.position, car.vel, respawnHold.blocked || sessionSpawn.blocked ? 8 : 0, lodView);   // paused: build faster
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);

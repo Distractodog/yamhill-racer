@@ -44,11 +44,12 @@ export function makePath({ place, path, kmh, seconds = null }, places = PLACES, 
   };
 }
 
-// the scenario list: name → { place, path, kmh, type }
-export function scenarios({ places = Object.keys(PLACES), paths = ['straight', 'circle', 'sturn'], speeds = [600, 1000, 'max'], types = ['fighter', 'stealth'] } = {}) {
+// the scenario list: name → { place, path, kmh, type }. allStealth: the stealth at every speed too (by default it only
+// adds its higher top speed)
+export function scenarios({ places = Object.keys(PLACES), paths = ['straight', 'circle', 'sturn'], speeds = [600, 1000, 'max'], types = ['fighter', 'stealth'], allStealth = false } = {}) {
   const out = [];
   for (const place of places) for (const path of paths) for (const sp of speeds) for (const type of types) {
-    if (type === 'stealth' && sp !== 'max') continue;          // the stealth only adds its higher top speed
+    if (type === 'stealth' && sp !== 'max' && !allStealth) continue;
     const kmh = sp === 'max' ? MAX_KMH[type] : sp;
     out.push({ name: `${place} ${path} ${type} ${kmh}`, place, path, kmh, type });
   }

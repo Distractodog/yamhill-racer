@@ -5,11 +5,13 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
 import { createTileQueue, fetchTileParts } from './tilequeue.js';
-import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
+import { roadLODSteps, roadBatches, buildJunctions, addNearLevelSteps } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import * as STREAM from './streamplan.js';
+import { fogHidden } from './fogcull.js';
+import { createRoadNear, nearNow as roadNearNow, dueSlack } from './roadnear.js';
 import { createTileScenery } from './scenery.js';
 import { buildCampusGateGeometry } from './campusgate.js';
 import { placeCampus } from './campusmodel.js';
@@ -68,9 +70,15 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const campusItemGeos = campusItemGeometries();
   const propMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const SHARED = new Set([conifer, broadleaf, coniferFar, broadFar, ...Object.values(propGeos), ...Object.values(campusItemGeos)]);
+  const farExtent = [extentOf(coniferFar), extentOf(broadFar)];      // far trees' bounding boxes (fogcull.js)
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
+  // road blocks' near levels, built as the camera comes near (roadnear.js). Before the first frame (the start-up
+  // tiles) lastCam is null: everything is built, as before
+  const roadNear = createRoadNear();
+  let lastCam = null, lastVel = null;
+  const roadSteps = (D, mat, batch) => roadLODSteps(D, mat, batch, (x, z, show) => roadNearNow(lastCam, lastVel, x, z, show));
 
   // data and ground bitmaps together; if either fails, the bitmaps made are closed (tilequeue.js fetchTileParts)
   function fetchTile(tx, tz) {
@@ -97,6 +105,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       yield 'texture';
     }
     const { H, NN } = td, HM = W.hm, HN = W.hn;
+    out.gmin = groundMins(H, NN, HM, HS);       // lowest ground per 250 m: far trees the fog hides (fogcull.js)
     // near roads, the coarser terrain levels take the lowest height around each vertex, so a big coarse triangle can
     // never bulge up through a road the fine terrain was carved under
     const near = new Uint8Array(NN * NN);
@@ -174,8 +183,14 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     // Copy bridge metadata onto rendering strips before drawing the shallow road skirts.
     out.bridges = yield* buildBridgeSteps(td, campusMat);
-    // road / trail strips
-    for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) g.add(yield* placeRoadBlockSteps(td, stripMat, batch, roadLODSteps));   // one near + far pair per block
+    // road / trail strips: one near + far pair per block; a block's near level only once the camera is coming near
+    // (roadnear.js: a far block gets it later, before it would be drawn)
+    out.roadNear = [];
+    for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) {
+      const lod = yield* placeRoadBlockSteps(td, stripMat, batch, roadSteps); g.add(lod);
+      const n = lod.userData.near;
+      if (n) out.roadNear.push({ lod, x: n.x, z: n.z, show: n.show, steps: () => addNearLevelSteps(lod), gen: null, done: false });
+    }
     if (out.bridges) g.add(out.bridges.near, out.bridges.far);
     for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
     // ponds + river pools: a quad per height cell touching one. Each corner sits at its own pool's level (a corner
@@ -215,11 +230,18 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       const broad = k % 2 === 1, cell = (k / 2) | 0;
       const near = new THREE.InstancedMesh(broad ? broadleaf : conifer, treeMat, list.length);
       const far = new THREE.InstancedMesh(broad ? broadFar : coniferFar, treeMat, list.length);
+      // the far mesh's bounding box, as each tree is placed (rotated about y: its footprint radius × width; the wind
+      // sways the canopy ≤ 0.012 × width, 0.02 kept)
+      const fx = farExtent[broad ? 1 : 0], box = { min: { x: Infinity, y: Infinity, z: Infinity }, max: { x: -Infinity, y: -Infinity, z: -Infinity } };
       list.forEach((t, n) => {
         const x = trees[t * 4], z = trees[t * 4 + 1], h = trees[t * 4 + 2];
         const w = broad ? h * (0.55 + rnd() * 0.2) : h * (0.24 + rnd() * 0.08);
         q.setFromAxisAngle(up, rnd() * Math.PI * 2);
-        m4.compose(tp.set(x, td.terrainAt(x, z) - 0.3, z), q, sc.set(w, h, w));
+        const base = td.terrainAt(x, z) - 0.3, r = (fx.r + 0.02) * w;
+        m4.compose(tp.set(x, base, z), q, sc.set(w, h, w));
+        box.min.x = Math.min(box.min.x, x - r); box.max.x = Math.max(box.max.x, x + r);
+        box.min.z = Math.min(box.min.z, z - r); box.max.z = Math.max(box.max.z, z + r);
+        box.min.y = Math.min(box.min.y, base + fx.y0 * h); box.max.y = Math.max(box.max.y, base + fx.y1 * h);
         near.setMatrixAt(n, m4); m4.toArray(treeMats, t * 16);
         if (broad) col.setHSL(0.24 + rnd() * 0.06, 0.45, 0.85 + rnd() * 0.3); else col.setHSL(0.30 + rnd() * 0.05, 0.25, 0.75 + rnd() * 0.35);
         near.setColorAt(n, col);
@@ -228,7 +250,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       near.computeBoundingSphere(); far.computeBoundingSphere();
       near.receiveShadow = true; near.visible = false; far.visible = false;
       g.add(near, far);
-      out.treeLods.push({ near, far, cx: td.x0 + (cell % NC + 0.5) * CH, cz: td.z0 + (((cell / NC) | 0) + 0.5) * CH });
+      far.userData.box = box;                    // (tools/fog_cull_test.mjs compares it with three.js's own)
+      out.treeLods.push({ near, far, box, cx: td.x0 + (cell % NC + 0.5) * CH, cz: td.z0 + (((cell / NC) | 0) + 0.5) * CH });
       yield 'trees';
     }
     out.treeMats = treeMats;
@@ -341,9 +364,12 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
   const turn = STREAM.createTurnTracker();
   let lastNow = 0, frameMs = 16.7;
-  const stream = { urgent: false, budget: 0, hidden: 0, up: 0, detailMs: 0 };   // this frame's choices (tools/fly_lag_*.mjs read them)
+  // this frame's choices (tools/fly_lag_*.mjs read them); roadNear: forced / built road near levels (roadnear.js),
+  // fogHidden: far tree chunks left out as the fog hides them (fogcull.js; with fogTrace set to an array, their boxes)
+  const stream = { urgent: false, budget: 0, hidden: 0, up: 0, detailMs: 0, roadMs: 0, roadNear: roadNear.stats, fogHidden: 0 };
   function update(cam, vel, extraMs = 0) {
     const now = performance.now(), dt = lastNow ? now - lastNow : 16.7; lastNow = now;
+    lastCam = cam; lastVel = vel;
     if (dt < 250) frameMs += (dt - frameMs) * 0.1;
     const sp = vel ? Math.hypot(vel.x, vel.z) : 0, w = vel ? turn.update(vel.x, vel.z, now) : 0;
     const ahead = vel ? STREAM.lookAhead(cam.x, cam.z, vel.x, vel.z, w) : [];
@@ -375,7 +401,14 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     // can still hold tiles from where the vehicle was)
     stream.urgent = urgent; stream.budget = STREAM.buildBudget(sp, { urgent, frameMs, extraMs });
     stream.detailMs = buildDetail(stream.budget);
-    queue.update(Math.max(0.1, stream.budget - stream.detailMs), j => need([j.tx, j.tz]));
+    // road near levels (roadnear.js): those due to show soon get up to half of what is left before the tiles, the
+    // rest only what the tiles leave
+    const v3 = vel ? Math.hypot(vel.x, vel.y || 0, vel.z) : 0;
+    let roadMs = roadNear.build((stream.budget - stream.detailMs) / 2, { due: dueSlack(v3), keep: true });
+    const tq = performance.now();
+    queue.update(Math.max(0.1, stream.budget - stream.detailMs - roadMs), j => need([j.tx, j.tz]));
+    roadMs += roadNear.build(stream.budget - stream.detailMs - roadMs - (performance.now() - tq));
+    stream.roadMs = roadNear.stats.ms = roadMs;
   }
 
   // full-detail terrain chunks (buildTile leaves them out) once the camera is within DETAIL_R, nearest first, from the
@@ -434,8 +467,12 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   // few pixels from there) are not drawn. Driving, the camera is a few metres up: the same levels as before.
   // The town's far cut-off stays a flat distance (towns must not vanish under a high jet).
   const HIGH = 300, NOWHERE = { x: 1e9, y: 0, z: 1e9 };
-  function updateLOD(cam, vel, extraMs = 0) {
+  // view (optional): { camera, fog } (main.js: the drawing camera and scene.fog). With it, far tree chunks the fog
+  // fully hides are not drawn (fogcull.js); without it (the Node tools) every far chunk is, as before.
+  function updateLOD(cam, vel, extraMs = 0, view = null) {
     update(cam, vel, extraMs);
+    const fv = fogView(view);
+    stream.fogHidden = 0; if (stream.fogTrace) stream.fogTrace.length = 0;
     const up = Number.isFinite(cam.y) && world.loadedAt(cam.x, cam.z) ? Math.max(0, cam.y - world.terrainAt(cam.x, cam.z)) : 0, up2 = up * up;
     const small = up > HIGH ? NOWHERE : cam;
     stream.up = up;
@@ -451,8 +488,11 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       }
       for (const l of v.treeLods) {
         const near = (l.cx - cam.x) ** 2 + (l.cz - cam.z) ** 2 + up2 < 420 * 420;
-        l.near.visible = near; l.far.visible = !near;
+        const fogged = !near && fv !== null && fogHidden(l.box, fv, groundUnder);
+        l.near.visible = near; l.far.visible = !near && !fogged;
+        if (fogged) { stream.fogHidden++; stream.fogTrace?.push(l.box); }
       }
+      if (v.roadNear.length) roadNear.check(v.roadNear, cam, vel, v);
       for (const b of v.buildingLods) {
         const flat = Math.hypot(b.cx - cam.x, b.cz - cam.z), d = Math.sqrt(flat * flat + up2);
         b.near.visible = d < townRange.near;
@@ -469,12 +509,57 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     notePerf();
   }
+  const fwd = new THREE.Vector3(), fogV = { cam: null, fwd, fogFar: 0, clip: 0 };
+  function fogView(view) {
+    const c = view?.camera, f = view?.fog;
+    if (!c || !f || f.isFogExp2 || !(f.far > 0)) return null;
+    fwd.set(0, 0, -1).applyQuaternion(c.quaternion);      // the camera has no parent (main.js)
+    fogV.cam = c.position; fogV.fogFar = f.far; fogV.clip = c.far;
+    return fogV;
+  }
+  // lowest ground height drawn over a rectangle, or null if part of it has no shown, built tile (fogcull.js)
+  function groundUnder(x0, z0, x1, z1) {
+    const [a0, b0] = world.tileIndex(x0, z0), [a1, b1] = world.tileIndex(x1, z1);
+    let g = Infinity;
+    for (let tz = b0; tz <= b1; tz++) for (let tx = a0; tx <= a1; tx++) {
+      const k = world.key(tx, tz), v = vis.get(k);
+      if (!v || !v.group.visible || !world.tiles.has(k)) return null;
+      const ox = tx * T - T / 2, oz = tz * T - T / 2, c = GCELL;
+      const i0 = Math.max(0, Math.floor((z0 - oz) / c)), i1 = Math.min(GN - 1, Math.floor((z1 - oz) / c));
+      const j0 = Math.max(0, Math.floor((x0 - ox) / c)), j1 = Math.min(GN - 1, Math.floor((x1 - ox) / c));
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) g = Math.min(g, v.gmin[i * GN + j]);
+    }
+    return g;
+  }
 
   return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { stripMat.color.setScalar(1 - Math.max(0, Math.min(1, Number(value) || 0)) * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
     loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep, stream });
 }
 
+
+// the lowest height-grid vertex in and around each GCELL m square of a tile (GN × GN, row = z): every terrain level
+// drawn over the square is no lower. A coarse level's triangles reach up to 8 cells (32 m) past the square and take the
+// lowest height up to 8 cells around a vertex near roads (buildTile heightFor): GPAD = 16 cells (64 m) covers both.
+const GCELL = 250, GN = 8, GPAD = 16;
+function groundMins(H, NN, HM, HS) {
+  const out = new Float32Array(GN * GN), n = GCELL / HS;
+  for (let ci = 0; ci < GN; ci++) for (let cj = 0; cj < GN; cj++) {
+    const i0 = Math.max(0, Math.floor(ci * n) + HM - GPAD), i1 = Math.min(NN - 1, Math.ceil((ci + 1) * n) + HM + GPAD);
+    const j0 = Math.max(0, Math.floor(cj * n) + HM - GPAD), j1 = Math.min(NN - 1, Math.ceil((cj + 1) * n) + HM + GPAD);
+    let m = Infinity;
+    for (let i = i0; i <= i1; i++) for (let j = j0, r = i * NN; j <= j1; j++) if (H[r + j] < m) m = H[r + j];
+    out[ci * GN + cj] = m;
+  }
+  return out;
+}
+
+// a geometry's reach from its y axis in x/z, and its lowest / highest y
+function extentOf(g) {
+  const p = g.attributes.position; let r = 0, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < p.count; i++) { r = Math.max(r, Math.hypot(p.getX(i), p.getZ(i))); y0 = Math.min(y0, p.getY(i)); y1 = Math.max(y1, p.getY(i)); }
+  return { r, y0, y1 };
+}
 
 // unit-height low-poly conifer: trunk + three stacked cones, vertex coloured
 function coniferGeometry() {
