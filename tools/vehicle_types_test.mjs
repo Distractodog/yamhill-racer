@@ -69,7 +69,8 @@ function routeDrive(v,route) {
   return {...result,coverage:Math.round(onSurface/samples*100),travelled:Math.round(travelled)};
 }
 const table=[];
-for(const [kind,types] of Object.entries(VEHICLE_TYPES)) for(const type of types) {
+// Aircraft types (jet) fly; their own flight tests cover them (prop_flight_test, air_stealth_test, heli_test, drive.mjs jet).
+for(const [kind,types] of Object.entries(VEHICLE_TYPES).filter(([kind])=>kind!=='jet')) for(const type of types) {
   const v=make(kind,type.id);v.reset(-4900,0,Math.PI/2);
   const straight=simulate(v,180,(t,i)=>{i.throttle=1;});
   assert(straight.t100!==null,`${type.id} never reached 100`);
@@ -89,11 +90,11 @@ for(const [kind,types] of Object.entries(VEHICLE_TYPES)) for(const type of types
 console.table(table);
 // Settings stay live on top; changing a type never overwrites the shared sliders.
 const settings={...TUNING_DEFAULTS},car=new Car(flat(),settings),bike=new Bike(flat(),{...BIKE});
-const all={car,bike},scene=new THREE.Scene();scene.add(car.mesh);
+const { Jet, JET }=await import('../game/src/jet.js');
+const all={car,bike,jet:new Jet(flat(),{...JET})},scene=new THREE.Scene();scene.add(car.mesh);
 const store=new Map(),storage={getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)};
 const types=createVehicleTypeSelector(all,{storage});
 // Cosmetics also needs the existing jet model, but no jet simulation here.
-const { buildJetModel }=await import('../game/src/jet.js');all.jet={mesh:buildJetModel()};
 const vehicles={all,current:car,...types},cosmetics=createCosmetics(vehicles,{storage});
 cosmetics.set('car',{body:'#123456'});
 const glider=new THREE.Group();car.mesh.add(glider);car.glide={mesh:glider,cancel(){}};
@@ -124,12 +125,23 @@ const preview=cosmetics.createPreview('car');assert.equal(preview.name,'car-truc
   assert.equal(lights.spot.parent,scene);assert(lights.lenses.anchors===car.mesh.userData.lights);
   lights.dispose();assert(types.setType('car','truck'));
 }
-assert(types.setType('bike','sport'));assert.deepEqual(loadVehicleTypes(storage),{car:'truck',bike:'sport'});
-const reloaded={car:new Car(flat(),{...TUNING_DEFAULTS}),bike:new Bike(flat(),{...BIKE})};
+assert(types.setType('bike','sport'));assert.deepEqual(loadVehicleTypes(storage),{car:'truck',bike:'sport',jet:'fighter'});
+// aircraft types: the prop plane's model, numbers over the jet sliders, Garage preview; back to the original jet
+assert(types.setType('jet','prop'));assert.equal(all.jet.mesh.name,'jet-prop');assert.equal(all.jet.t.rotateKmh,60);assert.equal(all.jet.t.thrust,4.6);
+{const p=cosmetics.createPreview('jet');assert.equal(p.name,'jet-prop');disposeCosmeticPreview(p);}
+assert.deepEqual(loadVehicleTypes(storage),{car:'truck',bike:'sport',jet:'prop'});
+// every type the jet itself flies (the helicopter has its own vehicle: tools/heli_test.mjs)
+for(const {id,physics} of VEHICLE_TYPES.jet.filter(t=>!t.physics?.flight&&t.id!=='fighter')){
+  assert(types.setType('jet',id));assert.equal(all.jet.mesh.name,`jet-${id}`);assert.equal(all.jet.type,id);
+  assert.deepEqual(all.jet.air.gear,(physics?.gear)||all.jet.air.gear);
+  const p=cosmetics.createPreview('jet');assert.equal(p.name,`jet-${id}`);disposeCosmeticPreview(p);
+}
+assert(types.setType('jet','fighter'));assert.equal(all.jet.mesh.name,'jet');assert.equal(all.jet.t.thrust,JET.thrust);
+const reloaded={car:new Car(flat(),{...TUNING_DEFAULTS}),bike:new Bike(flat(),{...BIKE}),jet:new Jet(flat(),{...JET})};
 createVehicleTypeSelector(reloaded,{storage});assert.equal(reloaded.car.type,'truck');assert.equal(reloaded.bike.mesh.name,'bike-sport');
 assert.equal(types.setType('car','invalid'),false);
-store.set(VEHICLE_TYPE_KEY,'{"car":"invalid","bike":null}');assert.deepEqual(loadVehicleTypes(storage),{car:'race',bike:'dirt'});
-store.set(VEHICLE_TYPE_KEY,'{broken');assert.deepEqual(loadVehicleTypes(storage),{car:'race',bike:'dirt'});
+store.set(VEHICLE_TYPE_KEY,'{"car":"invalid","bike":null}');assert.deepEqual(loadVehicleTypes(storage),{car:'race',bike:'dirt',jet:'fighter'});
+store.set(VEHICLE_TYPE_KEY,'{broken');assert.deepEqual(loadVehicleTypes(storage),{car:'race',bike:'dirt',jet:'fighter'});
 assert(types.setType('car','race'));assert.equal(car.t,settings);assert.equal(car.typePhysics,null);
 const sport=make('bike','sport');sport.reset(0,0,0);let wheelies=0;
 simulate(sport,8,(t,i)=>{i.throttle=1;i.lean=true;if(sport.wheelie)wheelies++;});assert.equal(wheelies,0);

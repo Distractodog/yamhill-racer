@@ -80,10 +80,19 @@ const navTail = nav.group.getObjectByName('vehicle-light-nav-tail');
 const steady = navTail.material.emissiveIntensity;
 nav.update({ on: true, brake: 1 }); assert.equal(navTail.material.emissiveIntensity, steady);
 nav.update({ on: false, brake: 1 }); assert(!navTail.visible, 'jet throttle/pitch input cannot light its nav tail');
-// Every car / bike type carries its own anchors.
+// Every car / bike / aircraft type carries its own anchors.
 const models = Object.entries(VEHICLE_TYPES).flatMap(([kind, list]) => list.map(t => [kind, buildVehicleTypeModel(kind, t.id)]));
 for (const [kind, mesh] of models) {
   const a = mesh.userData.lights; assert(a, `${kind} ${mesh.name}: own light anchors`);
+  if (kind === 'jet') {           // aircraft types: nav { left (port, +x, red), right, tail }; landing lights forward; a beam only from a landing light
+    assert(['left', 'right', 'tail'].every(k => a.nav?.[k]?.isVector3) && a.nav.left.x > 0 && a.nav.right.x < 0 && a.nav.tail.z < 0, `${mesh.name}: nav lights`);
+    assert(a.head.every(p => p.isVector3 && p.z > 0), `${mesh.name}: landing light forward`);
+    const l = createVehicleLightLenses(mesh, kind); l.update({ on: true });
+    assert.equal(l.group.getObjectByName('vehicle-light-left').material.emissive.getHexString(), 'ff1828', `${mesh.name}: port light is red`);
+    l.dispose();
+    local.update(.01, { mesh, kind }, 1); assert.equal(local.beam, !!mesh.userData.landingLight, `${mesh.name}: landing light beam`);
+    assert.equal(lightCount(), 1); continue;
+  }
   assert(a.head.length >= 1 && a.tail.length >= 1, `${kind} ${mesh.name}: head + tail`);
   for (const p of [...a.head, ...a.tail]) assert(p.isVector3 && p.toArray().every(Number.isFinite));
   assert(a.head.every(p => p.z > 0) && a.tail.every(p => p.z < 0), `${kind} ${mesh.name}: head forward, tail back`);

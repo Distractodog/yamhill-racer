@@ -5,6 +5,11 @@ import { TUNING_DEFAULTS } from './car.js';
 import { BIKE, buildBikeModel } from './bike.js';
 import { buildCarModel } from './carmodel.js';
 import { buildTypeCarModel, buildSportBikeModel } from './vehicletypemodels.js';
+import { JET, buildJetModel } from './jet.js';
+import { buildStealthModel } from './models/stealth.js';
+import { PROP_AIRFRAME, buildPropPlaneModel } from './models/propplane.js';
+import { STUNT_AIRFRAME, buildStuntPlaneModel } from './models/stuntplane.js';
+import { buildHeliModel } from './models/heli.js';
 import { primeWheelArch } from './wheeltravel.js';
 import { buildHatchModel } from './models/hatch.js';
 import { buildSuvModel } from './models/suv.js';
@@ -33,7 +38,27 @@ export const VEHICLE_TYPES = {
       tuning: { accel: 36, topSpeed: 520, cornerGrip: 31, gripAlign: 16, powerSlide: .6, travel: .24, springK: 18500, damping: 1550 },
       physics: { noWheelie: true, grip: [.38,.30,.45,1.16,.42,1,1.1,1], drive: [.45,.35,.55,1,.5,1,1,1] } },
   ],
+  // aircraft: the jet's flight model (jet.js) with each type's numbers; physics = its airframe (jet.js FIGHTER_AIRFRAME keys).
+  // physics.flight names a flight model other than the jet's (vehicles.js swaps the jet slot to it).
+  jet: [
+    { id: 'fighter', name: 'Fighter jet', description: 'Original swept-wing jet. Fast, retracting gear, needs a long run.', tuning: {} },
+    { id: 'stealth', name: 'Stealth fighter', description: 'Faceted twin-engine fighter. Faster, sharper turns and a slightly higher stall speed.',
+      // Terminal speed scales with sqrt(thrust / (liftK * cd0)); ~25% above the fighter.
+      tuning: { thrust: 22.5, liftK: .00205, maxG: 10, minG: -3, rollRate: 3.4, yawRate: .65, rotateKmh: 250 },
+      colors: { body: '#424a53', trim: '#727b83' } },
+    { id: 'prop', name: 'Prop plane', description: 'High-wing trainer, about 250 km/h. Slow stall, short take-off and landing: easy on roads and fields.',
+      tuning: { gravity: 11, thrust: 4.6, throttleRate: .8, liftK: .01763, cl0: .3, clA: 4.5, stallA: .28, cd0: .04, cdK: .08,
+        maxG: 4.5, minG: -2, rollRate: 1.4, yawRate: .5, rotateKmh: 60, brakes: 6, landSink: 9, landKmh: 230, landUp: .85 },
+      physics: PROP_AIRFRAME },
+    { id: 'stunt', name: 'Stunt plane', description: 'Light aerobatic plane, about 400 km/h. Very fast roll, tight loops, tail wheel.',
+      tuning: { gravity: 12, thrust: 8, throttleRate: 1.2, liftK: .01027, cl0: .05, clA: 4.8, stallA: .3, cd0: .05, cdK: .06,
+        maxG: 9, minG: -6, rollRate: 4.5, yawRate: 1.2, rotateKmh: 90, brakes: 7, landSink: 7, landKmh: 260, landUp: .88 },
+      physics: STUNT_AIRFRAME },
+    { id: 'heli', name: 'Helicopter', description: 'Hovers, lands on any flat spot. W/S up and down, A/D turn, arrows tilt to fly that way; let go to hover.',
+      tuning: {}, physics: { flight: 'heli' } },
+  ],
 };
+const AIRCRAFT_MODELS = { stealth: buildStealthModel, prop: buildPropPlaneModel, stunt: buildStuntPlaneModel, heli: buildHeliModel };
 export const typeInfo = (kind, id) => VEHICLE_TYPES[kind]?.find(t => t.id === id) || VEHICLE_TYPES[kind]?.[0];
 export function sanitizeVehicleTypes(value) {
   return Object.fromEntries(Object.keys(VEHICLE_TYPES).map(kind => [kind, typeInfo(kind, value?.[kind]).id]));
@@ -48,6 +73,7 @@ export function buildVehicleTypeModel(kind, id) {
   if (kind === 'car' && type === 'suv') return buildSuvModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car') return type === 'race' ? buildCarModel() : buildTypeCarModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'bike') return type === 'dirt' ? buildBikeModel() : buildSportBikeModel();
+  if (kind === 'jet') return AIRCRAFT_MODELS[type]?.() || buildJetModel();
   throw new Error(`No vehicle types for ${kind}`);
 }
 export function applyVehicleType(vehicle, id) {
@@ -57,7 +83,7 @@ export function applyVehicleType(vehicle, id) {
     vehicle._typeBaseTuning = vehicle.t;
     vehicle._typeMounts = vehicle.wheels.map(w => w.mount?.clone());
   }
-  const defaults = vehicle.kind === 'car' ? TUNING_DEFAULTS : BIKE;
+  const defaults = vehicle.kind === 'car' ? TUNING_DEFAULTS : vehicle.kind === 'jet' ? JET : BIKE;
   const base = vehicle._typeBaseTuning;
   vehicle.type = spec.id;
   vehicle.name = spec.name;
@@ -75,8 +101,10 @@ export function applyVehicleType(vehicle, id) {
       if (p) { w.mount.x *= p.width; w.mount.z *= p.length; }
     });
   }
+  if (vehicle.kind === 'jet') vehicle.setAirframe?.(spec.physics);
   // Keep the vehicle instance (challenges/camera/glider refer to it), replacing only its owned model.
-  const old = vehicle.mesh, model = primeWheelArch(buildVehicleTypeModel(vehicle.kind, spec.id));
+  const old = vehicle.mesh, model = buildVehicleTypeModel(vehicle.kind, spec.id);
+  if (vehicle.kind !== 'jet') primeWheelArch(model);
   vehicle.glide?.cancel();
   if (vehicle.glide?.mesh) model.add(vehicle.glide.mesh);
   model.position.copy(old.position); model.quaternion.copy(old.quaternion);

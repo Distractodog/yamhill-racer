@@ -276,4 +276,28 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   assert.ok(calls16 <= 16 * 8 + 4, `draw calls stay small (${calls16})`);
   R2.dispose();
 }
+// ---------------------------------------------------------------- every aircraft type: its own model, animated
+{
+  const { VEHICLE_TYPES, buildVehicleTypeModel } = await import('../game/src/vehicletypes.js');
+  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(); camera.position.set(0, 4, -30);
+  let now = 1000;
+  const R = makeRemotes({ scene, camera, fx: false, night: () => 1, mp: { now: () => now } });
+  for (const { id } of VEHICLE_TYPES.jet) {
+    const from = 'air-' + id, want = buildVehicleTypeModel('jet', id).name;
+    R.receive({ t: 'skin', from, skin: { vehicle: 'jet', type: id, colors: {} } });
+    const frames = (n, z0) => { for (let i = 0; i < n; i++) { now += 1000 / 60; R.receive({ t: 'state', from, srvT: now, v: 'jet', p: [0, 10, z0 + i], q: [0, 0, 0, 1], vel: [0, 0, 60], w: [-1, -1, -1], ws: [3, 3, 3], th: 1, gr: 0, md: 'a', jc: [.5, .7, .6] }); R.update(1 / 60); } };
+    frames(30, 0);
+    const m = R.model(from), ud = m.userData, r = R.list().find(x => x.id === from);
+    assert.equal(r.type, id, `${id}: remote type`); assert.equal(m.name, want, `${id}: remote model ${m.name}`);
+    assert(m.position.toArray().every(Number.isFinite) && m.visible, `${id}: drawn`);
+    // rotors / propellers turn; jets show the stick on their control surfaces and light the afterburner
+    const spin = () => ud.mainRotor?.rotation.y ?? ud.propeller?.hub.rotation.z;
+    const a = spin(); frames(10, 30);
+    if (a !== undefined) assert.notEqual(spin(), a, `${id}: rotor / propeller turns`);
+    else assert(ud.aileronL.rotation.x > 0 && R.list().find(x => x.id === from).anim.flame > 1, `${id}: control surfaces + flame`);
+    assert(r.anim.lights.includes('left'), `${id}: nav lights at night`);
+  }
+  R.dispose();
+  console.log(`PASS remote aircraft: ${VEHICLE_TYPES.jet.map(t => t.id).join(', ')} drawn as their own models with moving parts and lights`);
+}
 console.log('PASS mp remotes: parse/buffer, interpolate/extrapolate/hold/teleport, late-state blend + snap, stale, bake, roster/state/skin/vehicle/glider lifecycle, far stand-in, tags, map dots, cleanup, 16-remote cost');

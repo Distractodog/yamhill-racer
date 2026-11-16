@@ -33,6 +33,16 @@ const ROLL = [1.6, 3.5, 1.2, 0.25, 0.8, 0, 0.3, 0.6];      // rolling drag per s
 const GEAR_H = 1.6;                                         // centre of mass above the ground on the wheels
 const GEAR = [[0, 3.6], [1.4, -0.8], [-1.4, -0.8]];         // nose, left main, right main (x, z)
 const BODY = [[0, 0, 6.6], [0, 0.2, -6.2], [4.9, 0.05, -1.6], [-4.9, 0.05, -1.6], [0, 2.6, -5.6]];  // nose, tail, tips, fin
+// Airframe geometry. Other aircraft types (vehicletypes.js physics) bring their own; missing keys are the jet's.
+// gear: [x, z, drop] steering wheel first (a tail wheel when z < 0), then left / right main; drop = centre above the
+// wheel's ground (default gearH). tail: sitting angle of a tail-wheel plane at rest (the tail rises with speed).
+// fixedGear: never retracts. airKmh: cap for air starts (placeInAir). wing: tree reach of the wings (m).
+// authV: airspeed (m/s) for full control authority. coord: the nose follows a turning flight path (slow planes).
+export const FIGHTER_AIRFRAME = {
+  gear: GEAR, gearH: GEAR_H, body: BODY, half: { x: 4.9, front: 6.6, back: -6.2 }, wb: 4.4, poseK: 0.8 / 4.4,
+  rotMax: 0.22, scrapeZ: -5, treeR: 1.3, treeZ: [-4, 0, 4], wing: 4, authV: 70, tail: 0, fixedGear: false, airKmh: Infinity,
+  coord: false,
+};
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 const _up = new THREE.Vector3(), _fw = new THREE.Vector3(), _lt = new THREE.Vector3(), _v = new THREE.Vector3(),
@@ -47,29 +57,45 @@ export class Jet extends Vehicle {
     this.alpha = 0; this.bank = 0; this.gLoad = 1; this.stall = false; this.stallT = 0; this.agl = 0;
     this.pullUp = false; this.crashT = 0; this.gear = 1; this.respawn = null;
     this._acc = new THREE.Vector3();
-    this.wheels = GEAR.map(([x, z], i) => ({ x, z, front: i === 0, contact: false, surf: 0, comp: 0, contactPoint: new THREE.Vector3(), spin: 0 }));
     this.mesh = buildJetModel();
     this.cam = { jet: true };
-    this.half = { x: 4.9, front: 6.6, back: -6.2 };
+    this.setAirframe(null);
+  }
+
+  // the airframe of the current type (vehicletypes.js); null = the jet's own
+  setAirframe(physics) {
+    const A = this.air = { ...FIGHTER_AIRFRAME, ...(physics || {}) };
+    this.wheels = A.gear.map(([x, z, h = A.gearH], i) => ({ x, z, h, front: i === 0, contact: false, surf: 0, comp: 0, contactPoint: new THREE.Vector3(), spin: 0 }));
+    this.half = { ...A.half };
+    this.sit = A.tail;
+    this.cam.eye = A.eye;            // cockpit view (main.js): [up, forward] of the pilot's eye; none = the jet's
   }
 
   // ---------------------------------------------------------------- ground pose from the three wheels
   groundPose(x, z, yaw, rot, y) {
-    const W = this.world, s = Math.sin(yaw), c = Math.cos(yaw);
+    const W = this.world, A = this.air, s = Math.sin(yaw), c = Math.cos(yaw);
     const pt = ([gx, gz]) => { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; return [px, W.heightAt(px, pz, y), pz]; };
-    const N = pt(GEAR[0]), L = pt(GEAR[1]), R = pt(GEAR[2]);
+    const N = pt(A.gear[0]), L = pt(A.gear[1]), R = pt(A.gear[2]);
     const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2, mz = (L[2] + R[2]) / 2;
-    _fw.set(N[0] - mx, N[1] - my, N[2] - mz).normalize();
+    if (A.tail) _fw.set(mx - N[0], my - N[1], mz - N[2]).normalize();      // tail wheel behind: forward is away from it
+    else _fw.set(N[0] - mx, N[1] - my, N[2] - mz).normalize();
     _lt.set(L[0] - R[0], L[1] - R[1], L[2] - R[2]).normalize();
     _up.crossVectors(_fw, _lt).normalize(); _lt.crossVectors(_up, _fw).normalize();
     _m.makeBasis(_lt, _up, _fw); this.quat.setFromRotationMatrix(_m);
+    if (A.tail) {
+      // tail-wheel plane: nose up by the sitting angle (or the rotation), pivoting on the main wheels
+      const r = Math.max(rot, this.sit), gz = A.gear[1][1];
+      _q.setFromAxisAngle(_X, -r); this.quat.multiply(_q);
+      return my + (A.gearH * Math.cos(r) - gz * Math.sin(r)) * _up.y;
+    }
     if (rot) { _q.setFromAxisAngle(_X, -rot); this.quat.multiply(_q); }
     // centre: above the point between the mains and the nose wheel
-    const gy = my + (N[1] - my) * (0.8 / 4.4);
-    return gy + GEAR_H * _up.y;
+    const gy = my + (N[1] - my) * A.poseK;
+    return gy + A.gearH * _up.y;
   }
 
   reset(x, z, yaw) {
+    this.sit = this.air.tail;
     this.mode = 'ground'; this.yaw = yaw; this.v = 0; this.rot = 0; this.vy = 0; this.throttle = 0;
     this.crashT = 0; this.stall = false; this.gear = 1; this.mesh.userData.wreck(false);
     this.pos.set(x, this.groundPose(x, z, yaw, 0), z);
@@ -84,6 +110,7 @@ export class Jet extends Vehicle {
     if (this.mode === 'crashed') { const [sx, sz] = this.world.spawn; this.reset(sx, sz, 0); }
   }
   placeInAir(x, y, z, yaw, kmh = 450) {
+    kmh = Math.min(kmh, this.air.airKmh);
     this.reset(x, z, yaw);
     this.mode = 'air'; this.gear = 0; this.throttle = 0.7;
     this.pos.y = Math.max(y, this.world.heightAt(x, z) + 40);
@@ -110,18 +137,19 @@ export class Jet extends Vehicle {
     }
     if (this.mode === 'ground') this.stepGround(dt, J, input); else this.stepAir(dt, J, input);
     this.trackAccel(dt);
-    this.gear += ((this.mode === 'ground' || this.agl < 60 ? 1 : 0) - this.gear) * Math.min(1, dt * 1.2);
+    if (this.air.fixedGear) this.gear = 1;
+    else this.gear += ((this.mode === 'ground' || this.agl < 60 ? 1 : 0) - this.gear) * Math.min(1, dt * 1.2);
   }
 
   stepGround(dt, J, input) {
-    const t = this.t, W = this.world, g = t.gravity;
+    const t = this.t, W = this.world, g = t.gravity, A = this.air;
     this.grounded = true; this.airTime = 0; this.contacts = 3; this.agl = 0;
     // surface + water under the wheels
     const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
     let worstRoll = 0, wet = false;
     for (const wh of this.wheels) {
       const px = this.pos.x + c * wh.x + s * wh.z, pz = this.pos.z - s * wh.x + c * wh.z;
-      const py = _w.set(wh.x, -GEAR_H, wh.z).applyQuaternion(this.quat).y + this.pos.y;
+      const py = _w.set(wh.x, -wh.h, wh.z).applyQuaternion(this.quat).y + this.pos.y;
       const sc = W.surfaceAt(px, pz, py); wh.surf = sc; wh.contact = true; wh.comp = 0.2;
       if (W.waterLevelAt(px, pz) > W.heightAt(px, pz, py)) wet = true;
       worstRoll = Math.max(worstRoll, ROLL[sc] ?? 1);
@@ -144,12 +172,14 @@ export class Jet extends Vehicle {
     // nose-wheel steering (A/D) + rudder at speed
     this.steer += (J.yaw - this.steer) * Math.min(1, 6 * dt);
     const lock = 0.6 / (1 + Math.abs(this.v) / 12);
-    const yawRate = -(this.v * Math.tan(this.steer * lock) / 4.4) * load - this.steer * 0.12 * Math.min(1, Math.abs(this.v) / 60);
+    const yawRate = -(this.v * Math.tan(this.steer * lock) / A.wb) * load - this.steer * 0.12 * Math.min(1, Math.abs(this.v) / 60);
     this.yaw += yawRate * dt;
     // rotation: ↓ lifts the nose once fast enough (max ~13°, tail strike)
     const rotKmh = this.v * 3.6;
-    if (J.pitch > 0 && rotKmh > t.rotateKmh) this.rot = Math.min(0.22, this.rot + 0.3 * J.pitch * dt);
+    if (J.pitch > 0 && rotKmh > t.rotateKmh) this.rot = Math.min(A.rotMax, this.rot + 0.3 * J.pitch * dt);
     else this.rot = Math.max(0, this.rot - 0.25 * dt);
+    // tail-wheel plane: the tail comes up between ~30% and ~90% of the rotation speed
+    if (A.tail) this.sit = A.tail * clamp(1.5 - Math.abs(rotKmh) / (0.6 * t.rotateKmh), 0, 1);
     // follow the ground
     const nx = this.pos.x + Math.sin(this.yaw) * this.v * dt, nz = this.pos.z + Math.cos(this.yaw) * this.v * dt;
     const ny = this.groundPose(nx, nz, this.yaw, this.rot, this.pos.y);
@@ -166,7 +196,7 @@ export class Jet extends Vehicle {
     for (const wh of this.wheels) wh.spin += this.v * dt / 0.35;
     if (L > g * 1.02 && this.v > 0) { this.toAir(); this.vel.y = Math.max(this.vy, 1); return; }
     // obstacles: trunks along the fuselage, buildings
-    const hit = Math.max(this.collideTrees(1.3, [-4, 0, 4], 0.2, 0.3), this.collideBuildings(2.6));
+    const hit = Math.max(this.collideTrees(A.treeR, A.treeZ, 0.2, 0.3), this.collideBuildings(2.6));
     if (hit > 9) { this.crash('impact'); return; }
     if (hit > 0) { this.v = Math.min(this.v, 2); }
     this.keepInBounds();
@@ -181,17 +211,18 @@ export class Jet extends Vehicle {
   }
 
   // height of the lowest wheel above ground / water
-  wheelsAGL() {
+  wheelsAGL(from = 0) {
     const W = this.world; let low = Infinity;
-    for (const [x, z] of GEAR) {
-      _w.set(x, -GEAR_H, z).applyQuaternion(this.quat).add(this.pos);
+    for (let i = from; i < this.wheels.length; i++) {
+      const { x, z, h } = this.wheels[i];
+      _w.set(x, -h, z).applyQuaternion(this.quat).add(this.pos);
       low = Math.min(low, _w.y - Math.max(W.heightAt(_w.x, _w.z, _w.y), W.waterLevelAt(_w.x, _w.z)));
     }
     return low;
   }
 
   stepAir(dt, J, input) {
-    const t = this.t, W = this.world, g = t.gravity;
+    const t = this.t, W = this.world, g = t.gravity, A = this.air;
     this.grounded = false; this.contacts = 0; this.airTime += dt;
     _up.set(0, 1, 0).applyQuaternion(this.quat);
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
@@ -202,7 +233,7 @@ export class Jet extends Vehicle {
     const beta = Math.atan2(vL, Math.max(Math.abs(vF), 1));
     const bank = Math.atan2(_lt.y, _up.y);
     this.alpha = alpha; this.bank = bank;
-    const auth = clamp(s / 70, 0.15, 1);
+    const auth = clamp(s / A.authV, 0.15, 1);
 
     // ------------------------------------------------ fly-by-wire: stick → g's → wanted angle of attack
     const path = Math.atan2(this.vel.y, Math.hypot(this.vel.x, this.vel.z));
@@ -227,7 +258,10 @@ export class Jet extends Vehicle {
     let rr = J.roll * t.rollRate * auth;
     if (!J.roll && Math.abs(bank) < 1.2) rr = clamp(-bank * 0.8, -0.6, 0.6);  // gentle wings-level when you let go
     if (this.stall && this.stallT > 0.4) rr += Math.sin(this.airTime * 7) * 0.4; // wing rock
-    const yr = -J.yaw * t.yawRate * auth + 3 * beta * Math.min(1, s / 40);
+    let yr = -J.yaw * t.yawRate * auth + 3 * beta * Math.min(1, s / 40);
+    // slow airframes (coord): the nose also follows the turning flight path itself, so a banked turn doesn't slip
+    // (at their turn rates the slip's side force would lift them into a climb)
+    if (A.coord && s > 5) yr += _a.crossVectors(_v, this._acc).dot(_up) / s;
     _t.set(0, 0, 0).addScaledVector(_lt, -pr).addScaledVector(_fw, rr).addScaledVector(_up, yr);
     this.ang.lerp(_t, Math.min(1, 10 * dt));
 
@@ -259,10 +293,13 @@ export class Jet extends Vehicle {
 
     // ------------------------------------------------ ground, trees, buildings
     const gh = W.heightAt(this.pos.x, this.pos.z, this.pos.y);
-    this.agl = this.pos.y - GEAR_H - Math.max(gh, W.waterLevelAt(this.pos.x, this.pos.z));
+    this.agl = this.pos.y - A.gearH - Math.max(gh, W.waterLevelAt(this.pos.x, this.pos.z));
     const descent = -this.vel.y;
     this.pullUp = this.agl < 200 && descent > 3 && this.agl / descent < 5;
-    if (this.airTime > 0.2 && this.wheelsAGL() < 0) {
+    const low = this.airTime > 0.2 ? this.wheelsAGL() : 1;
+    // tail-wheel plane, nose high just off the ground and not sinking: the tail wheel only bumps along
+    if (low < 0 && A.tail && this.vel.y > -1 && this.wheelsAGL(1) > 0) { this.pos.y -= low; this.vel.y = Math.max(this.vel.y, 0); }
+    else if (low < 0) {
       _up.set(0, 1, 0).applyQuaternion(this.quat); _fw.set(0, 0, 1).applyQuaternion(this.quat);
       const sink = -this.vel.y, kmh = s * 3.6, slide = Math.abs(this.vel.dot(_lt.set(1, 0, 0).applyQuaternion(this.quat)));
       const wet = W.waterLevelAt(this.pos.x, this.pos.z) > W.heightAt(this.pos.x, this.pos.z, this.pos.y);
@@ -271,13 +308,13 @@ export class Jet extends Vehicle {
       return;
     }
     let scrape = 0;
-    for (const [x, y, z] of BODY) {
+    for (const [x, y, z] of A.body) {
       _w.set(x, y, z).applyQuaternion(this.quat).add(this.pos);
       const pen = W.heightAt(_w.x, _w.z, _w.y) - 0.1 - _w.y;
       if (pen > 0) {
         // a tail scrape (nose high on take-off / landing, barely sinking) just bumps; anything else is a crash
         _up.set(0, 1, 0).applyQuaternion(this.quat);
-        if (-this.vel.y < 4 && _up.y > 0.8 && z < -5) scrape = Math.max(scrape, pen);
+        if (-this.vel.y < 4 && _up.y > 0.8 && z < A.scrapeZ) scrape = Math.max(scrape, pen);
         else { this.crash('impact'); return; }
       }
     }
@@ -322,7 +359,7 @@ export class Jet extends Vehicle {
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
     this.yaw = Math.atan2(_fw.x, _fw.z);
     this.v = Math.max(0, this.vel.x * Math.sin(this.yaw) + this.vel.z * Math.cos(this.yaw));
-    this.mode = 'ground'; this.rot = clamp(Math.asin(clamp(_fw.y, -1, 1)), 0, 0.22); this.vy = 0;
+    this.mode = 'ground'; this.rot = clamp(Math.asin(clamp(_fw.y, -1, 1)), 0, this.air.rotMax); this.vy = 0;
     this.pos.y = this.groundPose(this.pos.x, this.pos.z, this.yaw, this.rot, this.pos.y);
     this.landing = Math.min(1, sink / 9); this.stall = false; this.pullUp = false;
     if (this.airTime > 1.5) this.say(sink < 2.5 ? 'Smooth landing' : 'Landed', 2);   // not for every hop off a bump
@@ -340,7 +377,7 @@ export class Jet extends Vehicle {
       this.quat.premultiply(_q).normalize();
     }
     let penetration = -Infinity;
-    for (const [x, y, z] of [[0, -0.7, 0], ...BODY]) {
+    for (const [x, y, z] of [[0, -0.7, 0], ...this.air.body]) {
       _w.set(x, y, z).applyQuaternion(this.quat).add(this.pos);
       penetration = Math.max(penetration, Math.max(this.world.heightAt(_w.x, _w.z, _w.y), this.world.waterLevelAt(_w.x, _w.z)) - _w.y);
     }
@@ -380,7 +417,7 @@ export class Jet extends Vehicle {
       const y = this.pos.y - W.terrainAt(tx, tz);
       if (y > h + 1 || y < 0) return;
       const crown = broad ? (y > h * 0.3 ? h * 0.3 : tr) : h * 0.15 * (1 - y / h) + tr;
-      if (Math.hypot(this.pos.x - tx, this.pos.z - tz) < crown + 4) hit = true;
+      if (Math.hypot(this.pos.x - tx, this.pos.z - tz) < crown + this.air.wing) hit = true;
     });
     return hit;
   }
@@ -403,14 +440,17 @@ export class Jet extends Vehicle {
     const m = this.mesh, ud = m.userData;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
     ud.setGear(this.gear);
-    ud.flame.scale.set(1, 1, 0.3 + this.throttle * 1.4);
-    ud.flame.material.opacity = 0.25 + this.throttle * 0.6;
-    ud.flame.visible = this.mode !== 'crashed' && this.throttle > 0.02;
+    if (ud.flame) {
+      ud.flame.scale.set(1, 1, 0.3 + this.throttle * 1.4);
+      ud.flame.material.opacity = 0.25 + this.throttle * 0.6;
+      ud.flame.visible = this.mode !== 'crashed' && this.throttle > 0.02;
+    }
     ud.noseWheel.rotation.y = -this.steer * 0.5;
     // control surfaces for show
     const J = this.input?.jet || { pitch: 0, roll: 0, yaw: 0 };
     ud.elevator.rotation.x = -J.pitch * 0.35; ud.rudder.rotation.y = -J.yaw * 0.4;
     ud.aileronL.rotation.x = J.roll * 0.35; ud.aileronR.rotation.x = -J.roll * 0.35;
+    ud.animate?.(this, dt);           // propeller types (models/*.js): propeller spin from the throttle, rolling wheels
   }
 }
 
@@ -473,9 +513,11 @@ export function buildJetModel() {
   };
   // wreck look: blackened and the flame out
   const mats = [white, orange], WRECK = 0x3a3a3a;
-  const base = mats.map(m => m.color.getHex());
+  let wrecked = false, base = [];          // paint is snapshotted on entering the wreck (Garage colours), restored on leaving
   const wreck = on => {
-    mats.forEach((m, i) => m.color.setHex(on ? WRECK : base[i]));
+    if (on && !wrecked) base = mats.map(m => m.color.getHex());
+    if (on || wrecked) mats.forEach((m, i) => m.color.setHex(on ? WRECK : base[i]));
+    wrecked = on;
     // Crumpled airframe, bent controls and shattered canopy remain attached while tumbling.
     root.scale.set(on ? 1.15 : 1, on ? 0.65 : 1, on ? 0.78 : 1);
     canopy.visible = !on;
