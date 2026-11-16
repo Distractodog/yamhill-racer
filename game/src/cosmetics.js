@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { buildCarModel } from './carmodel.js';
 import { buildBikeModel } from './bike.js';
 import { buildJetModel } from './jet.js';
-import { buildJetSkiModel, buildSpeedboatModel } from './boat.js';
 import { buildVehicleTypeModel, VEHICLE_TYPES } from './vehicletypes.js';
 
 export const COSMETIC_KEY = 'yr-cosmetics-1';
@@ -18,12 +17,10 @@ export const DEFAULT_COSMETICS = {
   car: { body: '#e8402f', trim: '#ffffff', wheels: '#d9dce2', helmet: '#ffd23a', jacket: '#ffffff', gloves: '#20242a', livery: 'classic', number: '07', wheelStyle: 'factory' },
   bike: { body: '#ff7a1a', trim: '#f2f2ee', wheels: '#8a9099', helmet: '#ff7a1a', jacket: '#f2f2ee', gloves: '#1d1f24', livery: 'classic', number: '07', wheelStyle: 'factory' },
   jet: { body: '#eef0f2', trim: '#ff6a1a', wheels: '#8a9099', helmet: '#ffd23a', jacket: '#ffffff', gloves: '#20242a', livery: 'classic', number: '07', wheelStyle: 'factory' },
-  jetski: { body: '#13a3c9', trim: '#ffd23a', wheels: '#8a9099', helmet: '#ffffff', jacket: '#1d1f24', gloves: '#ff7a1a', livery: 'classic', number: '07', wheelStyle: 'factory' },
-  boat: { body: '#f4f4ef', trim: '#c8202e', wheels: '#8a9099', helmet: '#20242a', jacket: '#2f6db5', gloves: '#20242a', livery: 'classic', number: '07', wheelStyle: 'factory' },
 };
 const COLOR_FIELDS = ['body', 'trim', 'wheels', 'helmet', 'jacket', 'gloves'];
 export function sanitizeCosmetics(value, kind = 'car', isUnlocked = () => false) {
-  const base = { ...DEFAULT_COSMETICS[kind] };
+  const base = { ...(Object.hasOwn(DEFAULT_COSMETICS, kind) ? DEFAULT_COSMETICS[kind] : DEFAULT_COSMETICS.car) };
   if (!value || typeof value !== 'object') return base;
   for (const key of COLOR_FIELDS) if (typeof value[key] === 'string' && /^#[0-9a-f]{6}$/i.test(value[key])) base[key] = value[key];
   const livery = LIVERIES.find(l => l.id === value.livery);
@@ -32,7 +29,7 @@ export function sanitizeCosmetics(value, kind = 'car', isUnlocked = () => false)
   if (['factory', 'sport', 'rally'].includes(value.wheelStyle)) base.wheelStyle = value.wheelStyle;
   return base;
 }
-const BUILDERS = { car: buildCarModel, bike: buildBikeModel, jet: buildJetModel, jetski: buildJetSkiModel, boat: buildSpeedboatModel };
+const BUILDERS = { car: buildCarModel, bike: buildBikeModel, jet: buildJetModel };
 const mudColor = new THREE.Color('#66523b'), scratchColor = new THREE.Color('#aeb2b3');
 function disposeTree(group) {
   const materials = new Set(), geometries = new Set(), textures = new Set();
@@ -83,7 +80,7 @@ function makeScratches(kind, spots = []) {
   if(kind==='car')for(const side of [-1,1])add(.42,.65,side*.58,.278,-.22,-Math.PI/2);
   if(kind==='bike')for(const side of [-1,1])add(.3,.16,side*.177,.22,-.45,0,side*Math.PI/2);
   if(kind==='jet')for(const side of [-1,1])add(1.1,.65,side*2.5,.09,-1.2,-Math.PI/2);
-  for(const spot of spots)add(...spot);      // models that list their own decal spots (boat.js)
+  for(const spot of spots)add(...spot);
   return group;
 }
 function decalTexture(config) {
@@ -132,6 +129,7 @@ function applyBinding(binding, config, wear) {
 // Another player's vehicle (mp/remotes.js): the same model (of their type, vehicletypes.js) and paint rules, in their
 // colours (no wear, no unlock check).
 export function paintedModel(kind, colors, type = null) {
+  kind = Object.hasOwn(BUILDERS, kind) ? kind : 'car';
   const model = type && VEHICLE_TYPES[kind] ? buildVehicleTypeModel(kind, type) : BUILDERS[kind](); applyBinding(bindModel(model, kind), sanitizeCosmetics(colors, kind, () => true), { dirt: 0, scuff: 0, wet: 0 }); return model;
 }
 
@@ -141,6 +139,7 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
   const configs = {}, bindings = {}, wear = {}, listeners = new Set(); let accumulator = 0, forcedWet = 0;
   for (const kind of Object.keys(BUILDERS).filter(k => vehicles.all[k])) { configs[kind] = sanitizeCosmetics(saved?.[kind], kind, isUnlocked); bindings[kind] = bindModel(vehicles.all[kind].mesh, kind); wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], configs[kind], wear[kind]); }
   const persist = () => { try { if (!storage) return false; storage.setItem(COSMETIC_KEY, JSON.stringify(configs)); return true; } catch { return false; } };
+  persist(); // Rewrite only supported vehicle colours, discarding obsolete entries.
   const notify = kind => listeners.forEach(fn => fn(kind));
   const api = {
     get: kind => ({ ...configs[kind] }),

@@ -5,8 +5,6 @@ export const SHAPES = {
   car: { w: 2, l: 4.6, h: 1.4, mass: 900 },
   bike: { w: 0.8, l: 2.2, h: 1.8, mass: 220 },
   jet: { w: 2, l: 14, h: 3, mass: 4500 },
-  jetski: { w: 1.15, l: 3.2, h: 1.6, mass: 400 },
-  boat: { w: 2.3, l: 6.4, h: 2, mass: 1400 },
 };
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = a => Array.isArray(a) && a.every(Number.isFinite);
@@ -71,7 +69,7 @@ export function resolveCollision(vehicle, remote, dt = 1 / 120, atMs = 0, tie = 
   const armX = clamp((b.x - a.x) / 2, -a.l / 2, a.l / 2), armZ = clamp((b.z - a.z) / 2, -a.l / 2, a.l / 2);
   const kick = closing > 2 ? clamp((armZ * nx - armX * nz) * dv * 0.025, -0.65, 0.65) : 0;
   vehicle.ang.y = clamp(vehicle.ang.y + kick, -1.2, 1.2);
-  if (vehicle.kind === 'bike' || vehicle.kind === 'jetski' || vehicle.kind === 'boat') vehicle.yawRate = clamp(vehicle.yawRate + kick, -1.2, 1.2);
+  if (vehicle.kind === 'bike') vehicle.yawRate = clamp(vehicle.yawRate + kick, -1.2, 1.2);
   if (vehicle.kind === 'jet') {
     // Taxi physics stores signed forward speed separately from vel; don't let old speed reappear next step.
     vehicle.v = v.x * Math.sin(vehicle.yaw) + v.z * Math.cos(vehicle.yaw);

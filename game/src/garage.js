@@ -6,8 +6,8 @@ let activeKeyboard = null;
 // Registered during module evaluation, before settings/vehicle/race capture handlers.
 if (typeof addEventListener === 'function') addEventListener('keydown', e => activeKeyboard?.(e), true);
 const PRESET_KEY = 'yr-garage-presets-1';
-const NAMES = { car: 'Car', bike: 'Bike', jet: 'Jet', jetski: 'Jet ski', boat: 'Speedboat' };
-const RIDERS = ['bike', 'jetski', 'boat'], NO_WHEELS = ['jet', 'jetski', 'boat'];   // which kinds show rider / wheel colours
+const NAMES = { car: 'Car', bike: 'Bike', jet: 'Jet' };
+const RIDERS = ['bike'], NO_WHEELS = ['jet'];   // which kinds show rider / wheel colours
 export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen = () => {}, onClose = () => {}, canOpen = () => true, rewards = null }) {
   const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./garage.css', import.meta.url).href; document.head.append(link);
   let button = document.getElementById('garage-button');
@@ -27,7 +27,7 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
   const canvasHost = dialog.querySelector('.garage-canvas'), status = dialog.querySelector('.garage-status');
   let open = false, kind = vehicles.current.kind, renderer = null, scene = null, camera = null, model = null, platform = null;
   let rotation = .65, zoom = 1, pitch = .27, drag = null, previousFocus = null, presets = {}, modelRadius = 1, modelHeight = 1;
-  try { const saved = JSON.parse(localStorage.getItem(PRESET_KEY) || '{}'); if (saved && typeof saved === 'object' && !Array.isArray(saved)) presets = saved; } catch {}
+  try { const saved = JSON.parse(localStorage.getItem(PRESET_KEY) || '{}'); if (saved && typeof saved === 'object' && !Array.isArray(saved)) presets = Object.fromEntries(Object.keys(NAMES).filter(k => Array.isArray(saved[k])).map(k => [k, saved[k]])); } catch {}
   const message = text => { status.textContent = text; };
   function preview() {
     if (!renderer) return;
