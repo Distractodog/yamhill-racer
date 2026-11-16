@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- Model sheet for one car type, no game / network needed (three.js from node_modules):
+     tools/hatchsuv_preview.html?type=hatch (or suv, sports, truck, race) [&body=%23123456&trim=...&wheels=...]
+     Views: front 3/4, rear 3/4, side, top, front, rear, wheel close-up, far LOD, night, low front. -->
+<html><head><meta charset="utf-8"><title>model sheet</title>
+<style>html,body{margin:0;background:#222;color:#ddd;font:12px system-ui}canvas{display:block}#l{position:absolute;inset:0;pointer-events:none}
+#l div{position:absolute;padding:2px 5px;background:#0008}</style>
+<script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head><body><div id="l"></div>
+<script type="module">
+import * as THREE from 'three';
+import { paintedModel } from '../game/src/cosmetics.js';
+import { createVehicleLightLenses } from '../game/src/lights.js';
+const q = new URLSearchParams(location.search), type = q.get('type') || 'hatch';
+const colors = Object.fromEntries(['body', 'trim', 'wheels'].filter(k => q.get(k)).map(k => [k, q.get(k)]));
+const W = innerWidth, H = innerHeight, renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(W, H); renderer.setScissorTest(true); renderer.shadowMap.enabled = true; document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const hemi = new THREE.HemisphereLight('#cfe3ff', '#5b5545', 1.4), sun = new THREE.DirectionalLight('#fff3e0', 2.6);
+sun.position.set(6, 10, 7); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6 });
+scene.add(hemi, sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: '#6d7a5c' }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const road = new THREE.Mesh(new THREE.PlaneGeometry(9, 400), new THREE.MeshLambertMaterial({ color: '#4a4c50' }));
+road.rotation.x = -Math.PI / 2; road.position.y = .005; road.receiveShadow = true; scene.add(road);
+const model = paintedModel('car', colors, type);
+// stand it on the ground: lowest tyre point at y = 0
+model.updateMatrixWorld(true);
+const ud = model.userData, lowest = Math.min(...ud.wheels.map(w => w.holder.position.y - w.r));
+model.position.y = -lowest; scene.add(model);
+model.traverse(o => { if (o.isMesh) o.castShadow = true; });
+const lenses = createVehicleLightLenses(model, 'car');
+const box = new THREE.Box3().setFromObject(model), c = box.getCenter(new THREE.Vector3()), L = box.getSize(new THREE.Vector3()).length();
+const views = [
+  ['front 3/4', [1.1, .45, 1.2]], ['rear 3/4', [-1.1, .5, -1.25]], ['side (left)', [1.9, .12, 0]], ['top', [0.001, 2.2, 0]],
+  ['front', [0, .18, 2]], ['rear', [0, .2, -2]], ['wheel', [1.25, .05, .65], .45, ud.wheels[0].holder], ['far (LOD) 110 m', [40, 18, 100], .06],
+  ['night', [1.0, .4, 1.35], 1, null, true], ['low front', [.9, .02, 1.5]], ['rear night', [-.9, .35, -1.4], 1, null, true], ['under-side', [1.4, -.25, .2]],
+];
+const cols = 4, rows = Math.ceil(views.length / cols), vw = Math.floor(W / cols), vh = Math.floor(H / rows);
+const cam = new THREE.PerspectiveCamera(32, vw / vh, .05, 1000), labels = document.getElementById('l');
+views.forEach(([name, dir, zoom = 1, target = null, night = false], i) => {
+  const x = (i % cols) * vw, y = H - (Math.floor(i / cols) + 1) * vh;
+  const t = target ? target.getWorldPosition(new THREE.Vector3()) : c;
+  const d = new THREE.Vector3(...dir).normalize().multiplyScalar(L * 1.25 / zoom * (dir[0] === 40 ? 0 : 1));
+  if (dir[0] === 40) d.set(...dir);
+  cam.position.copy(t).add(d); cam.lookAt(t); cam.updateMatrixWorld();
+  hemi.intensity = night ? .08 : 1.4; sun.intensity = night ? .05 : 2.6; scene.background = new THREE.Color(night ? '#0b1020' : '#9cc3e6');
+  lenses.update({ night: night ? 1 : 0, on: night, brake: night ? 1 : 0 });
+  renderer.setViewport(x, y, vw, vh); renderer.setScissor(x, y, vw, vh); renderer.render(scene, cam);
+  const lbl = document.createElement('div'); lbl.textContent = name; lbl.style.left = x + 'px'; lbl.style.top = (H - y - vh) + 'px'; labels.append(lbl);
+});
+const info = renderer.info.render;
+const t = document.createElement('div'); t.style.right = '0'; t.style.bottom = '0';
+t.textContent = `${type}: ${JSON.stringify(ud.triangles || {})} arch ${ud.wheelArch}`; labels.append(t);
+document.title = `model sheet ${type} ok`;
+</script></body></html>

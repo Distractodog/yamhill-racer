@@ -72,8 +72,6 @@ export function buildTypeCarModel(type, p, suspension) {
       box(bodyPivot,paint,w*2,.42,.16,0,.60,tail+.05);
       box(bodyPivot,trim,w*2.05,.16,.20,0,-.08,nose+.05);
     }
-    if(type==='suv')for(const s of [-1,1])box(bodyPivot,black,.08,.10,1.9,s*w*.64,tall+.13,-.6);
-    if(type==='hatch')box(bodyPivot,trim,w*1.8,.06,.23,0,tall+.08,tail+.27);
     box(bodyPivot,black,w*1.05,.23,.025,0,.21,nose+.015);lampY=.29;
   }
   const head=[],taillights=[],headMaterial=material('#fff2c9'),tailMaterial=material('#b92025');
