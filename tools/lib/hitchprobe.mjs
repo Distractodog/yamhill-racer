@@ -2,26 +2,50 @@
 // game page. hitchSuite is self-contained (no imports, no outside variables) so a puppeteer script can run its source
 // with page.evaluate (tools/hitch_test.mjs); it also works on an iframe's window.
 //   const report = await hitchSuite(window, { types, only: ['switch', 'garage'], repeat: 3 });
-// For each action it records every frame for `settle` ms after it: the game's own frame callback time (main-thread
-// ms, split into renderer.render / world.updateLOD / the biggest other systems and 2D-canvas call), the rAF interval,
+// An independent rAF sampler starts before each action and records performance.now() deltas through the action
+// and `settle` ms afterwards. worst/median/over50 describe these intervals; callbackWorst and render/lod/top
+// describe the game's own callback execution (renderer.render / world.updateLOD / other systems / 2D canvas),
 // shader programs compiled, geometries / textures first uploaded while drawing, and the slowest tile-build step.
-// Rows: { label, action (the label without the repeat number), round, worst, render, lod, top, programs, uploads,
+// Rows: { label, action (the label without the repeat number), round, worst, median, callbackWorst, render, lod, top, programs, uploads,
 // step, worstRaf, frames, over50, note }. The checks it can do on the spot (paint shown at once, respawns placed on
 // loaded ground at the chosen spot) go into report.fails.
 // types: { car: [ids…], bike: [...], jet: [...] } (vehicletypes.js VEHICLE_TYPES ids, the default first).
 // Parts: switch (V, twice round), types (vehicles.setType), garage (the Garage's Type menu, all three tabs), reset
 // (R near, R far there and back), crash (jet crash respawns near, and far there and back), home (H after a far R).
-// settleWait: how long (ms) to wait for streaming to go quiet before measuring (start, and before each H)
-export async function hitchSuite(win, { types = {}, only = null, repeat = 3, paint = '#000000', settle = 1200, settleWait = 30000, log = () => {} } = {}) {
+// settleWait: streaming quiet deadline; actionTimeout: action deadline; frameTimeout: deadline for each frame wait.
+// __hitchProgress / __hitchPartial expose the active wait and completed results for a polling host.
+export async function hitchSuite(win, { types = {}, only = null, repeat = 3, paint = '#000000', settle = 1200, settleWait = 30000, actionTimeout = 65000, frameTimeout = 5000, log = () => {} } = {}) {
   const g = win.game, doc = win.document, raf = win.requestAnimationFrame.bind(win);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const frames = n => new Promise(r => { let k = 0; const f = () => (++k >= n ? r() : raf(f)); raf(f); });
-  const until = async (ok, ms, what) => { const end = performance.now() + ms; while (!ok()) { if (performance.now() > end) throw Error(`timed out: ${what}`); await sleep(50); } };
+  let phase = 'initializing', deadline = Infinity;
+  const progress = what => {
+    phase = what;
+    win.__hitchProgress = { phase, at: Date.now() };
+  };
+  const bounded = (work, ms, what) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error(`timed out: ${what} (${ms} ms; phase: ${phase})`)), ms);
+    Promise.resolve().then(work).then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+  const frames = n => new Promise((resolve, reject) => {
+    let k = 0, id;
+    const timer = setTimeout(() => { win.cancelAnimationFrame(id); reject(Error(`timed out: ${n} animation frames; phase: ${phase}`)); }, frameTimeout);
+    const f = () => { if (++k >= n) { clearTimeout(timer); resolve(); } else id = raf(f); };
+    id = raf(f);
+  });
+  const until = async (ok, ms, what) => {
+    progress(what);
+    const end = Math.min(performance.now() + ms, deadline);
+    while (!ok()) {
+      if (performance.now() >= end) throw Error(`timed out: ${what}`);
+      await sleep(50);
+    }
+  };
   const want = name => !only || only.includes(name);
   const rows = [], fails = [], notes = [];
+  win.__hitchPartial = { rows, fails, notes };
+  progress('instrumentation');
   // ---- instrumentation
-  let last = 0;
-  const frameStats = () => ({ cb: 0, render: 0, lod: 0, raf: 0, geo: 0, tex: 0, step: '', parts: {} });
+  const frameStats = () => ({ cb: 0, render: 0, lod: 0, geo: 0, tex: 0, step: '', parts: {} });
   if (!win.__hitchWrapped) {
     win.__hitchWrapped = true;
     const r = g.renderer, render = r.render.bind(r), lod = g.world.updateLOD, mem = r.info.memory;
@@ -60,28 +84,61 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
     win.requestAnimationFrame = cb => raf(t => {
       win.__hitchFrame = frameStats();
       const s = performance.now(); cb(t); win.__hitchFrame.cb = performance.now() - s;
-      win.__hitchFrame.raf = last ? t - last : 0; last = t;
       win.__hitchLog?.push(win.__hitchFrame); win.__hitchFrame = null;
     });
   }
   const programs = () => g.renderer.info.programs?.length ?? 0;
   async function measure(label, action, { ms = settle, note = '' } = {}) {
-    await frames(3);
-    const list = win.__hitchLog = [], p0 = programs();
-    // the action's synchronous part blocks the page like a frame does; an async action's waiting doesn't
-    const t0 = performance.now();
-    let result, actionMs = 0;
-    try { const pending = action(); actionMs = performance.now() - t0; result = await pending; } catch (e) { fails.push(`${label}: ${e.message}`); }
-    await sleep(ms); await frames(2);
-    win.__hitchLog = null;
+    progress(`${label}: prime sampler`);
+    const list = win.__hitchLog = [], intervals = [], p0 = programs();
+    // Use the native rAF, independently of the game's callback wrapper. Start before the
+    // action so synchronous handlers and the first affected frame are included in the gap.
+    let last = null, sampleId, sampling = true;
+    const sample = () => {
+      if (!sampling) return;
+      const now = performance.now();
+      if (last !== null) intervals.push(now - last);
+      last = now;
+      sampleId = raf(sample);
+    };
+    sampleId = raf(sample);
+    let result, actionMs = 0, error = null;
+    try {
+      await frames(3);
+      intervals.length = 0; list.length = 0;
+      progress(`${label}: action`);
+      deadline = performance.now() + actionTimeout;
+      await bounded(async () => {
+        const t0 = performance.now();
+        const pending = action();
+        actionMs = performance.now() - t0;
+        result = await pending;
+      }, actionTimeout, label);
+      progress(`${label}: sampling`);
+      await sleep(ms); await frames(2);
+    } catch (e) {
+      error = e;
+      fails.push(`${label}: ${e.message}`);
+    } finally {
+      deadline = Infinity;
+      sampling = false; win.cancelAnimationFrame(sampleId);
+      win.__hitchLog = null;
+    }
+    if (!intervals.length) fails.push(`${label}: no frame intervals sampled`);
+    const sorted = [...intervals].sort((a, b) => a - b);
+    const median = sorted.length ? (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2 : null;
     const worst = list.reduce((a, f) => f.cb > a.cb ? f : a, frameStats());
     const round = +(label.match(/#(\d+)/)?.[1] || 1);
-    const row = { label, action: label.replace(/ #\d+/, ''), round, worst: +Math.max(worst.cb, actionMs).toFixed(1), render: +worst.render.toFixed(1), lod: +worst.lod.toFixed(1),
+    const row = { label, action: label.replace(/ #\d+/, ''), round,
+      worst: intervals.length ? +Math.max(...intervals).toFixed(1) : null, median: median === null ? null : +median.toFixed(1),
+      callbackWorst: +Math.max(worst.cb, actionMs).toFixed(1), render: +worst.render.toFixed(1), lod: +worst.lod.toFixed(1),
       top: Object.entries(worst.parts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, v]) => `${k === '__draw' ? `2d ${worst.drawWhat}` : k} ${v.toFixed(1)}`).join(', '),
-      programs: programs() - p0, uploads: `${list.reduce((n, f) => n + f.geo, 0)} geo / ${list.reduce((n, f) => n + f.tex, 0)} tex (worst frame ${worst.geo}/${worst.tex})`,
-      step: worst.step, action_ms: +actionMs.toFixed(1), worstRaf: +Math.max(0, ...list.slice(1).map(f => f.raf)).toFixed(1), frames: list.length,
-      over50: list.filter(f => f.cb > 50).length, note: (typeof result === 'string' ? result : '') || note };
+      programs: programs() - p0, uploads: `${list.reduce((n, f) => n + f.geo, 0)} geo / ${list.reduce((n, f) => n + f.tex, 0)} tex (worst callback ${worst.geo}/${worst.tex})`,
+      step: worst.step, action_ms: +actionMs.toFixed(1), worstRaf: intervals.length ? +Math.max(...intervals).toFixed(1) : null, frames: intervals.length,
+      over50: intervals.filter(ms => ms > 50).length, note: error ? error.message : (typeof result === 'string' ? result : '') || note };
     rows.push(row); log(row);
+    // Stop after a failed action: an unresolved action must not overlap the next sample.
+    if (error) throw error;
     return row;
   }
   // ---- paint: the colours of the materials the Garage paints (body role) on the current vehicle, right now
@@ -94,11 +151,10 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
   const place = async (x, z, yaw = 0, all = true) => {
     const hold = () => { const c = v(); c.pos.set(x, c.pos.y, z); c.vel.set(0, 0, 0); c._lastLoaded = null; c.savePrev(); c.interpolate(0); };
     hold();
-    const end = performance.now() + 60000;
-    while (!loaded(x, z) || (all && g.world.pendingTiles() > 0)) { if (performance.now() > end) throw Error(`no ground at ${x},${z}`); await sleep(100); hold(); }
+    await until(() => { hold(); return loaded(x, z) && (!all || g.world.pendingTiles() === 0); }, 60000, `place at ${x},${z}`);
     v().reset(x, z, yaw); v().safe = []; v()._lastLoaded = null;
   };
-  const waitHold = async () => { const t = performance.now(); while (g.respawnHold?.blocked && performance.now() - t < 60000) await sleep(50); return (performance.now() - t) / 1000; };
+  const waitHold = async () => { const t = performance.now(); await until(() => !g.respawnHold?.blocked, 60000, 'respawn hold'); return (performance.now() - t) / 1000; };
   // where a respawn ended vs where it was sent
   const landed = (what, spot, { mode = null, clear = [-0.5, 3] } = {}) => {
     const p = v().pos, ground = g.world.heightAt(p.x, p.z), off = Math.hypot(p.x - spot[0], p.z - spot[1]), up = p.y - ground;
@@ -123,12 +179,16 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
   if (want('types')) for (let i = 1; i <= Math.min(repeat, 2); i++) for (const kind of ['car', 'bike', 'jet']) {
     g.vehicles.switchTo(kind);
     const list = types[kind] || [];
+    if (!list.length) continue;
     for (const id of [...list.slice(1), list[0]]) await measure(`type ${kind}: ${id} #${i}`, () => { g.vehicles.setType(kind, id); checkPaint(`type ${kind} ${id}`); });
   }
   if (want('garage')) for (const kind of ['car', 'bike', 'jet']) {
+    progress(`Garage ${kind}: open`);
     g.vehicles.switchTo(kind); g.garage.show(); await frames(5);
     doc.querySelector(`#cosmetic-garage [data-kind="${kind}"]`)?.click(); await frames(3);
-    const select = doc.querySelector('#cosmetic-garage [name="vehicleType"]'), ids = [...select.options].map(o => o.value);
+    const select = doc.querySelector('#cosmetic-garage [name="vehicleType"]');
+    if (!select) throw Error(`Garage ${kind}: Type menu missing`);
+    const ids = [...select.options].map(o => o.value);
     for (let i = 1; i <= Math.min(repeat, 2); i++) for (const id of [...ids.slice(1), ids[0]]) {
       await measure(`Garage ${kind}: ${id} #${i}`, () => { select.value = id; select.dispatchEvent(new win.Event('input', { bubbles: true })); }, { ms: Math.min(settle, 700) });
     }
@@ -154,13 +214,14 @@ export async function hitchSuite(win, { types = {}, only = null, repeat = 3, pai
   }
   // 'crash' = near + far; 'crashnear' / 'crashfar' = one of them
   const crash = async (label, spot) => {
+    progress(`${label}: prepare crash`);
     const j = v(); j.safe = [[...spot, 0]];
     j.placeInAir(j.pos.x, g.world.heightAt(j.pos.x, j.pos.z) + 200, j.pos.z, Math.PI / 2, 900);
     await frames(10); j.grace = 0; j.crash('impact');          // (a crash within 3 s of the last respawn would only reset it)
     await sleep(300);
     const r = await measure(label, async () => {
       const t = performance.now();
-      while ((j.mode === 'crashed' || g.respawnHold?.blocked) && performance.now() - t < 60000) await sleep(16);
+      await until(() => j.mode !== 'crashed' && !g.respawnHold?.blocked, 60000, `${label}: respawn`);
       await frames(1); checkPaint(`${label} first frame`);
       return `back after ${((performance.now() - t) / 1000).toFixed(1)} s`;
     }, { ms: 2000 });
