@@ -63,7 +63,7 @@ function bindModel(model, kind) {
   const trim = new THREE.MeshLambertMaterial({ color: '#ffffff', flatShading: true });
   const hubs = [];
   for (const w of wheels) {
-    const g = new THREE.CylinderGeometry(w.r * .72, w.r * .72, kind === 'car' ? .48 : .17, 12).rotateZ(Math.PI / 2);
+    const g = new THREE.CylinderGeometry(w.r * .72, w.r * .72, w.hubWidth ?? (kind === 'car' ? .48 : .17), 12).rotateZ(Math.PI / 2);
     const hub = new THREE.Mesh(g, trim); hub.visible = false; w.spin.add(hub); hubs.push(hub);
   }
   return { model, kind, materials, vertex, tyres: [...new Set(tyres)], decals, scratches, hubs, trim, signature: '', wearSignature: '' };

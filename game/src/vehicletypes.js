@@ -5,6 +5,8 @@ import { TUNING_DEFAULTS } from './car.js';
 import { BIKE, buildBikeModel } from './bike.js';
 import { buildCarModel } from './carmodel.js';
 import { buildTypeCarModel, buildSportBikeModel } from './vehicletypemodels.js';
+import { buildHatchModel } from './models/hatch.js';
+import { buildSuvModel } from './models/suv.js';
 
 export const VEHICLE_TYPE_KEY = 'yr-vtype-1';
 export const VEHICLE_TYPES = {
@@ -40,6 +42,8 @@ export function loadVehicleTypes(storage) {
 }
 export function buildVehicleTypeModel(kind, id) {
   const type = typeInfo(kind, id)?.id;
+  if (kind === 'car' && type === 'hatch') return buildHatchModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
+  if (kind === 'car' && type === 'suv') return buildSuvModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car') return type === 'race' ? buildCarModel() : buildTypeCarModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'bike') return type === 'dirt' ? buildBikeModel() : buildSportBikeModel();
   throw new Error(`No vehicle types for ${kind}`);
