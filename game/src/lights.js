@@ -119,7 +119,10 @@ export function createVehicleLights(scene = null) {
       mount.updateWorldMatrix(true, false);
       spot.position.copy(from).applyMatrix4(mount.matrixWorld);
       target.position.copy(to).applyMatrix4(mount.matrixWorld);
-      lenses.update({ on, brake: Math.max(input.brake || 0, input.handbrake ? 1 : 0), time: elapsed });
+      const grounded = vehicle.grounded === true || vehicle.wheels?.some(w => w.contact) === true;
+      const braking = vehicle.kind !== 'jet' && grounded && !vehicle.glide?.active
+        ? Math.max(input.brake || 0, input.handbrake ? 1 : 0) : 0;
+      lenses.update({ on, brake: braking, time: elapsed });
     },
     dispose() { spot.removeFromParent(); target.removeFromParent(); spot.dispose(); rigs.forEach(r => r.dispose()); rigs.clear(); lenses = null; currentMesh = null; },
   };

@@ -559,7 +559,9 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     }
     // lights: on when it's dark here; brake lights from their brake / handbrake; the jet's strobe on the shared clock
     const dark = night() || 0;
-    b.lenses.update({ night: dark, on: dark > 0, brake: Math.max(pz.input.brake || 0, pz.input.handbrake ? 1 : 0), time: clock, distance: r.dist });
+    const braking = kind !== 'jet' && s.grounded && !s.glide
+      ? Math.max(pz.input.brake || 0, pz.input.handbrake ? 1 : 0) : 0;
+    b.lenses.update({ night: dark, on: dark > 0, brake: braking, time: clock, distance: r.dist });
     if (r.dist > FX_RANGE || !fxReady()) return false;
     // where the tyres touch: under each wheel holder along the body's up (the ground, if we have it)
     U.set(0, 1, 0).applyQuaternion(Q);
