@@ -227,12 +227,14 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   // lights: off by day, lenses at night (no light sources), brake lights with the brake, the type's own anchors
   const lightsOf = id => by(id).anim.lights, isLight = root => { let n = 0; root.traverse(o => { if (o.isLight) n++; }); return n; };
   assert.deepEqual(people.map(([id]) => lightsOf(id).length), [0, 0, 0, 0, 0], 'day: no lenses lit');
-  dark = 1; go(8, { t: { a: { br: 1, w: [9, 9, 9, 9] } }, x: { a: { w: [9, 9, 9, 9] } } });
-  assert.deepEqual(lightsOf('t').sort(), ['head', 'head', 'head', 'head', 'head', 'tail', 'tail'], 'truck: two head + three roof lamps, two tail');
+  dark = 1; go(8, { t: { a: { grounded: true, br: 1, w: [9, 9, 9, 9] } }, x: { a: { grounded: true, w: [9, 9, 9, 9] } } });
+  assert.deepEqual(lightsOf('t').sort(), [...Array(8).fill('head'), 'tail', 'tail'], 'truck: 2 × 3 headlight bars, bumper and roof bars, two tail');
   assert.deepEqual(lightsOf('s').sort(), ['head', 'head', 'tail'], 'sport bike: twin head, one tail');
   for (const id of ['j', 'o']) assert.ok(['head', 'tail'].every(k => lightsOf(id).includes(k)), `${id}: car head and tail lights`);
   const tailI = id => { let v = 0; R3.model(id).traverse(o => { if (o.name === 'vehicle-light-tail') v = Math.max(v, o.material.emissiveIntensity); }); return v; };
   assert.ok(tailI('t') > tailI('x'), 'braking truck: brighter tail lights');
+  go(16, { t: { a: { grounded: false, br: 1, w: [-1, -1, -1, -1] } } });
+  assert.equal(tailI('t'), tailI('x'), 'airborne truck: brake input leaves tail lights at running brightness');
   assert.equal(isLight(scene3), 0, 'remotes add no light sources');
   const truckHead = R3.model('t').getObjectByName('vehicle-light-head');
   assert.ok(truckHead.parent.parent === R3.model('t').userData.lightMount, 'lenses ride on the type model\'s body');

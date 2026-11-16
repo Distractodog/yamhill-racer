@@ -468,12 +468,16 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
       pos.clearUpdateRanges(); pos.addUpdateRange(armStart * 3, (armEnd - armStart) * 3); pos.needsUpdate = true;
     },
   };
-  const tailZ = -2.274 + .025;
+  // lenses (lights.js) on the drawn lamps: the endplate lamps, the rain light, the endplate LED strips
+  const rect = (x0, x1, y0, y1, z0, z1 = z0) => [[x0, y0, z0], [x1, y0, z0], [x1, y1, z1], [x0, y1, z1]];
   root.userData = { bodyPivot, wheels, lightMount: bodyPivot, linkage, lod, blob: [2.3, 4.9],
     lights: {
-      head: [1, -1].map(x => new THREE.Vector3(x * .965, -.305, 2.604 - .025)),
-      // rain light on the crash structure, LED strips on the rear-wing endplates
-      tail: [new THREE.Vector3(0, -.12, tailZ), ...[1, -1].map(x => new THREE.Vector3(x * .63, .275, -2.35 + .025))],
+      head: [1, -1].map(x => new THREE.Vector3(x * .965, -.305, 2.604)),
+      tail: [new THREE.Vector3(0, -.12, -2.274), ...[1, -1].map(x => new THREE.Vector3(x * .63, .275, -2.3565))],
+      lens: {
+        head: [1, -1].map(x => rect(x * .952, x * .978, -.33, -.28, 2.604)),
+        tail: [rect(-.045, .045, -.145, -.095, -2.274), ...[1, -1].map(x => rect(x * .62, x * .64, .20, .35, -2.351, -2.362))],
+      },
     },
     triangles: { near: near.triangles(), far: far.triangles() },
     // livery panels: nose top and both sidepod tops (flat facets: lifted 6 mm), scuffs on the sidepods

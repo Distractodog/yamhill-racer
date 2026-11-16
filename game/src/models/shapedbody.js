@@ -169,6 +169,14 @@ export function endPanels(shape, body) {
   };
   return { front: face(body.nose, 1), rear: face(body.tail, -1) };
 }
+// userData.lights for lamps drawn with endPanels: head / tail = { at: [x, y], pts: [[x, y], …] } for the +x lamp, its
+// lit lens (lights.js) on layer `layers[0]` / `[1]` (just above the lamp's own detail panels); both sides
+export function panelLights(body, head, tail, layers) {
+  const lamps = (z, { at, pts }) => [1, -1].map(s => ({
+    at: new THREE.Vector3(s * at[0], at[1], z), outline: pts.map(([x, y]) => [s * x, y, z]) }));
+  const h = lamps(body.nose + .004 * layers[0], head), t = lamps(body.tail - .004 * layers[1], tail);
+  return { head: h.map(l => l.at), tail: t.map(l => l.at), lens: { head: h.map(l => l.outline), tail: t.map(l => l.outline) } };
+}
 
 // Panels lying on the flat body side (x = xMax(z)), split at the stations so they follow the side's facets.
 export function sidePanel(shape, body, z0, z1, y0, y1, col, off = .004, sides = [1, -1]) {

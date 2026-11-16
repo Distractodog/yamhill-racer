@@ -70,7 +70,9 @@ export function buildPropPlaneModel() {
   }
   // lights: landing light in the left wing's leading edge, nav lights on the tips, white tail light, strobe on the fin
   put(root, new THREE.BoxGeometry(0.34, 0.08, 0.04), lamp, 2.2, 1.06 + 2.2 * 0.025, 1.43);
-  const lights = { head: [new THREE.Vector3(2.2, 1.06 + 2.2 * 0.025, 1.47)], tail: [], nav: {
+  const ly = 1.06 + 2.2 * 0.025;          // the lit lens (lights.js) on the lamp box's front face
+  const lights = { head: [new THREE.Vector3(2.2, ly, 1.45)], tail: [],
+    lens: { head: [[[2.03, ly - .04, 1.45], [2.37, ly - .04, 1.45], [2.37, ly + .04, 1.45], [2.03, ly + .04, 1.45]]] }, nav: {
     left: new THREE.Vector3(5.7, 1.2, 0.8), right: new THREE.Vector3(-5.7, 1.2, 0.8),
     tail: new THREE.Vector3(0, 0.62, -5.12), strobe: new THREE.Vector3(0, 1.88, -4.6),
   } };

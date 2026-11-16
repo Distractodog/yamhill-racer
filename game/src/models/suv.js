@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { measureWheelArch } from '../wheeltravel.js';
 import { WHEEL_POS } from '../carmodel.js';
-import { Shape, materials, loft, archFlares, sidePanel, sideSkirt, doorLine, endPanels, rect, oct, wheelGeometry, buildWheels, lodBody } from './shapedbody.js';
+import { Shape, materials, loft, archFlares, sidePanel, sideSkirt, doorLine, endPanels, panelLights, rect, oct, wheelGeometry, buildWheels, lodBody } from './shapedbody.js';
 
 const UNDER = '#1a1c20', CLAD = '#2b2e33', BLACK = '#15171a', GLASS = '#24394a', SCREEN = '#2b4456', TYRE = '#1d1e22';
 const LENS = '#d6dde3', HEAD_IN = '#3b4149', BULB = '#f3f5f7', TAIL = '#a5121c', TAIL_IN = '#5e0a10', PLATE = '#eeede4';
@@ -107,9 +107,10 @@ export function buildSuvModel(type, p, suspension) {
   const arches = [wheels[0], wheels[2]].map(w => ({ z: w.holder.position.z, y: w.holder.position.y + .03, r: p.radius + .07 }));
   const near = body(false, arches), far = body(true, arches);
   lodBody(bodyPivot, near.shape.meshes(mats), far.shape.meshes(mats));
-  const zN = near.car.nose, zT = near.car.tail;
   root.userData = { bodyPivot, wheels, lightMount: bodyPivot, blob: [2.4 * p.width, 4.6 * p.length],
-    lights: { head: [1, -1].map(s => new THREE.Vector3(s * .91, .29, zN + .03)), tail: [1, -1].map(s => new THREE.Vector3(s * 1.0, .30, zT - .03)) },
+    // lit lenses over the headlight, and the tail lamp above its reversing light
+    lights: panelLights(near.car, { at: [.90, .295], pts: [[.66, .205], [1.14, .205], [1.14, .345], [1.08, .385], [.70, .385]] },
+      { at: [1.0, .34], pts: [[.854, .22], [1.135, .22], [1.135, .46], [.90, .46]] }, [4, 3]),
     triangles: { near: near.shape.triangles(), far: far.shape.triangles() },
     // livery decals on the bonnet and roof (between the rails)
     decalPanels: [[.6, .6, 0, .515, 1.55, -Math.PI / 2 + .047], [.6, .6, 0, 1.064, -.7, -Math.PI / 2]] };

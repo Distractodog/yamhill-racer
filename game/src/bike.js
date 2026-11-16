@@ -488,6 +488,9 @@ export function buildBikeModel() {
   box(0.05, 0.75, 0.05, grey, 0.09, -0.32, 0, 0, bars); box(0.05, 0.75, 0.05, grey, -0.09, -0.32, 0, 0, bars);
   box(0.72, 0.04, 0.04, black, 0, 0.08, 0, 0, bars);
   box(0.22, 0.16, 0.04, white, 0, -0.02, 0.06, 0, bars);        // number board
+  const lamp = M(0xfff0d1), tailLamp = M(0xc52337);
+  box(0.11, 0.06, 0.02, lamp, 0, 0, 0.09, 0, bars);              // headlight in the number board
+  box(0.08, 0.03, 0.03, tailLamp, 0, 0.328, -0.985);            // tail light on the rear fender's end (not under it: wheelArch)
   // wheels
   const wheels = [];
   for (const [z, front] of [[0.72, true], [-0.73, false]]) {
@@ -513,8 +516,12 @@ export function buildBikeModel() {
   helmet.castShadow = true; rider.add(helmet);
   box(0.22, 0.08, 0.14, black, 0, 0.8, 0.38, 0, rider);                 // goggles
   box(0.12, 0.06, 0.16, helmetMat, 0, 0.7, 0.42, 0.4, rider);              // chin guard
+  // lit lenses (lights.js) on the two lamps' faces; the headlight's turns with the bars, the beam leaves from its rest place
   root.userData = { lean, bars, wheels, rider, blob: [0.9, 2.0], lightMount: body, lights: {
-    head: [new THREE.Vector3(0, .46, .68)], tail: [new THREE.Vector3(0, .46, -.99)],
+    head: [new THREE.Vector3(0, 0, .10)], tail: [new THREE.Vector3(0, .328, -1)], mounts: { head: bars },
+    lens: { head: [[[-.055, -.03, .10], [.055, -.03, .10], [.055, .03, .10], [-.055, .03, .10]]],
+      tail: [[[-.04, .313, -1], [.04, .313, -1], [.04, .343, -1], [-.04, .343, -1]]] },
+    beam: [new THREE.Vector3(0, .42 + .1 * Math.sin(.45), .5 + .1 * Math.cos(.45))],
   } };
   return root;
 }
