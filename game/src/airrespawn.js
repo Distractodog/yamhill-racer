@@ -39,7 +39,13 @@ function buildingDistance(world, x, z) {
 // Find where to put an aircraft down near (x, z) facing yaw. pose(x, z, yaw, y) poses v (quat) on its gear with
 // ground looked up at reference height y and returns the centre height; body: points in vehicle space that must clear
 // the ground; reach: half span (m) kept clear of buildings and trunks. Returns { x, z, y (ref for reset) }.
-export function findGround(v, x, z, yaw, { yRef, pose, body = [], reach = 5 }) {
+// Leaves v standing at the chosen spot at ground level, so reset() poses it from there, below any roof.
+export function findGround(v, x, z, yaw, opts) {
+  const g = search(v, x, z, yaw, opts);
+  v.pos.set(g.x, v.world.terrainAt?.(g.x, g.z) ?? 0, g.z); v.vel.set(0, 0, 0);
+  return g;
+}
+function search(v, x, z, yaw, { yRef, pose, body = [], reach = 5 }) {
   const W = v.world, s = Math.sin(yaw), c = Math.cos(yaw);
   const tries = [[x, z]];
   // rings around the spot: straight ahead and behind first, then the diagonals, then sideways

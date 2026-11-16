@@ -105,8 +105,10 @@ export class Jet extends Vehicle {
     this.sit = this.air.tail;
     this.mode = 'ground'; this.yaw = yaw; this.v = 0; this.rot = 0; this.vy = 0; this.throttle = 0;
     this.crashT = 0; this.stall = false; this.gear = 1; this.mesh.userData.wreck(false);
-    // stand at the new spot first: the ground queries (roofs) go by where the aircraft is (airrespawn.js)
-    this.pos.set(x, this.world.terrainAt?.(x, z) ?? 0, z); this.vel.set(0, 0, 0);
+    // the ground queries (roofs) go by where the aircraft is: reset where it stands (a vehicle switch, F, a type change)
+    // poses it from its height, so a roof under it holds; a new spot is posed from ground level there (airrespawn.js)
+    if (this.pos.x !== x || this.pos.z !== z) this.pos.set(x, this.world.terrainAt?.(x, z) ?? 0, z);
+    this.vel.set(0, 0, 0);
     this.pos.y = this.groundPose(x, z, yaw, 0, y);
     this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.steer = 0; this.burning = false; this._acc.set(0, 0, 0); this.stallT = 0; this.airTime = 0;
     this.afterReset();

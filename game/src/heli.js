@@ -92,8 +92,10 @@ export class Heli extends Vehicle {
   reset(x, z, yaw, y) {
     this.mode = 'ground'; this.yaw = yaw; this.rotor = this.t.idle; this.throttle = this.rotor; this.idleT = 99;
     this.crashT = 0; this.burning = false; this.steep = false; this.mesh.userData.wreck(false);
-    // stand at the new spot first: the ground queries (roofs) go by where the helicopter is (airrespawn.js)
-    this.pos.set(x, this.world.terrainAt?.(x, z) ?? 0, z); this.vel.set(0, 0, 0);
+    // the ground queries (roofs) go by where the helicopter is: reset where it stands (a vehicle switch, F, a type change)
+    // poses it from its height, so a roof under it holds; a new spot is posed from ground level there (airrespawn.js)
+    if (this.pos.x !== x || this.pos.z !== z) this.pos.set(x, this.world.terrainAt?.(x, z) ?? 0, z);
+    this.vel.set(0, 0, 0);
     this.pos.y = this.groundPose(x, z, yaw, y);
     this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this._acc.set(0, 0, 0); this.airTime = 0; this.agl = 0;
     this.grounded = true;
