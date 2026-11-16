@@ -211,12 +211,42 @@ for (const boatKind of ['jetski', 'boat']) for (const landKind of ['car', 'bike'
   veh.switchTo(landKind); const v = veh.current;
   const d = Math.hypot(v.pos.x - bx, v.pos.z - bz), h = v.heading(), ax = v.pos.x + Math.sin(h) * 8, az = v.pos.z + Math.cos(h) * 8;
   const away = Math.hypot(ax - bx, az - bz) > d, sx = v.pos.x, sz = v.pos.z;
-  check(water(v.pos.x, v.pos.z) === -Infinity && dryAround(v.pos.x, v.pos.z, 3.5) && d < 80 && away,
+  check(water(v.pos.x, v.pos.z) === -Infinity && dryAround(v.pos.x, v.pos.z, 3.5) && d <= 300 && away,
     `${boatKind} → ${landKind}: on the nearest bank, facing away from the water`, `${d.toFixed(0)} m from the boat, 8 m ahead is ${Math.hypot(ax - bx, az - bz).toFixed(0)} m from it`);
   let ok = true; const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
   for (let i = 0; i < 240; i++) { v.savePrev(); v.step(DT, inp); ok &&= [v.pos.x, v.pos.y, v.pos.z].every(Number.isFinite); }
   check(ok && !v.onWater && !(v.waterDepth > 0) && water(v.pos.x, v.pos.z) === -Infinity, `${landKind} sits on dry ground for 2 s`, `moved ${Math.hypot(v.pos.x - sx, v.pos.z - sz).toFixed(2)} m`);
 }
+
+// Exact director launch point: the old ~18° south bank started dry, then the car rolled back into the river.
+// Check every wheel and a 3 m disc around it, both at placement and throughout 3 s with no input.
+console.log('\n== launch bank stability and wheel clearance');
+const wheelClear = v => v.wheels.every(wh => {
+  const p = (wh.mount?.clone() || new THREE.Vector3(wh.x || 0, 0, wh.z)).applyQuaternion(v.quat).add(v.pos);
+  for (let dx = -3; dx <= 3; dx += 0.5) for (let dz = -3; dz <= 3; dz += 0.5) {
+    if (dx * dx + dz * dz > 9) continue;
+    if (!W.loadedAt(p.x + dx, p.z + dz) || Number.isFinite(W.waterLevelAt(p.x + dx, p.z + dz))) return false;
+  }
+  return true;
+});
+for (const boatKind of ['jetski', 'boat']) for (const type of ['race', 'sports', 'hatch', 'suv', 'truck']) {
+  veh.switchTo('car'); veh.car.reset(...LAND, 0); veh.setType('car', type);
+  veh.switchTo(boatKind); veh.current.reset(LAUNCH_SPOTS[0].x, LAUNCH_SPOTS[0].z);
+  const before = veh.current.pos.clone(); veh.switchTo('car');
+  const c = veh.current, start = c.pos.clone(), heading = c.heading();
+  let clear = wheelClear(c), maxKmh = 0;
+  const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+  for (let i = 0; i < 360; i++) {
+    c.savePrev(); c.step(DT, inp); maxKmh = Math.max(maxKmh, kmh(c));
+    if (i % 30 === 0) clear &&= wheelClear(c);
+  }
+  const moved = Math.hypot(c.pos.x - start.x, c.pos.z - start.z);
+  check(clear && finite(c) && moved < 1 && maxKmh < 2 &&
+    (start.x - before.x) * Math.sin(heading) + (start.z - before.z) * Math.cos(heading) > 0,
+    `${boatKind} → ${type}: all wheels stay 3 m clear of water for 3 s, facing inland`,
+    `placed ${start.x.toFixed(1)},${start.z.toFixed(1)}; moved ${moved.toFixed(2)} m; max ${maxKmh.toFixed(1)} km/h`);
+}
+veh.setType('car', 'race');
 
 // The same wet return point after its tile has streamed out: hold first, then search for a dry bank once loaded.
 {
@@ -235,6 +265,20 @@ for (const boatKind of ['jetski', 'boat']) for (const landKind of ['car', 'bike'
     check(c.kind === landKind && !(wl > w.terrainAt(c.pos.x, c.pos.z)) &&
       c._lastLoaded[0] === c.pos.x && c.safe[0][0] === c.pos.x,
       `${boatKind} → ${landKind}: wet return point becomes a dry bank after streaming`);
+  }
+  // A saved centre just above the shoreline is dry, but its rear wheels have no 3 m water margin.
+  const edge = [3694, 1366, 0];
+  check(!Number.isFinite(w.waterLevelAt(edge[0], edge[1])) && Number.isFinite(w.waterLevelAt(edge[0], edge[1] - 3)),
+    'shoreline return-point precondition: centre dry, water 3 m behind it');
+  for (const boatKind of ['jetski', 'boat']) {
+    v.switchTo('car'); v.car.reset(...LAND, 0); v.switchTo(boatKind);
+    const b = v.current; b.cameFrom = [...edge, w.heightAt(edge[0], edge[1]) + 0.75];
+    w.remove(tile.tx, tile.tz); v.switchTo('car');
+    check(v.current === b && b.launching?.away, `${boatKind}: shoreline return point waits for streaming`);
+    w.add(tile); await b.launchDone;
+    const c = v.current;
+    check(c.kind === 'car' && Math.hypot(c.pos.x - edge[0], c.pos.z - edge[1]) > 3 && wheelClear(c),
+      `${boatKind}: dry centre is rejected after streaming, all four wheels placed clear of water`);
   }
 }
 

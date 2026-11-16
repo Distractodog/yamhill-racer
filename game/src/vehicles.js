@@ -4,7 +4,7 @@
 import { Car } from './car.js';
 import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
-import { Boat, JETSKI, SPEEDBOAT, findBank } from './boat.js';
+import { Boat, JETSKI, SPEEDBOAT, findBank, dryBankArea } from './boat.js';
 import { activeProxy } from './vehicle.js';
 import { createVehicleTypeSelector } from './vehicletypeselector.js';
 
@@ -57,12 +57,14 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     // streamed out meanwhile, the boat (hidden) holds there until it's loaded, then this switch runs again.
     let land = null;
     if (place && fromBoat && !toBoat) {
-      const dry = spot => world.loadedAt(spot[0], spot[1]) &&
-        !(world.waterLevelAt(spot[0], spot[1]) > world.terrainAt(spot[0], spot[1]));
+      // Cover every wheel in any heading, plus at least 3 m to water (and 1 m of settling margin).
+      const clear = Math.max(6, ...next.wheels.map(w => Math.hypot(w.mount?.x ?? w.x ?? 0, w.mount?.z ?? w.z) + 4));
+      const bank = (x, z) => findBank(world, x, z, { clear });
+      const dry = spot => dryBankArea(world, spot[0], spot[1], clear);
       const back = cur.cameFrom, atBack = back && dry(back) && Math.hypot(p.x - back[0], p.z - back[1]) < 1;
-      // A return point can itself be in water. Only reuse it as-is when it is dry; otherwise find its bank too.
-      land = (atBack ? back : findBank(world, p.x, p.z)) ||
-        (back && (!world.loadedAt(back[0], back[1]) ? back : dry(back) ? back : findBank(world, back[0], back[1])));
+      // Revalidate the complete footprint, including after a streaming hold; a dry centre alone is insufficient.
+      land = (atBack ? back : bank(p.x, p.z)) ||
+        (back && (!world.loadedAt(back[0], back[1]) ? back : dry(back) ? back : bank(back[0], back[1])));
       if (!land) { cur.say('No dry bank loaded nearby yet', 3); return false; }
       if (!world.loadedAt(land[0], land[1])) {
         const boat = cur;

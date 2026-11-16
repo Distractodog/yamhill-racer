@@ -122,15 +122,34 @@ function insideBuilding(W, x, z, margin) {
   }
   return false;
 }
-// Nearest dry ground next to (x0, z0) for a land vehicle leaving a boat: loaded, no water within `clear` m, not
-// steeper than ~25°, clear of trees and buildings; facing away from where the boat was. [x, z, yaw] or null.
-export function findBank(W, x0, z0, { radius = 300, clear = 4 } = {}) {
-  const n = new THREE.Vector3();
+// Dry clearance for a saved return point too: streamed-out neighbours count as unknown, never as dry.
+export function dryBankArea(W, x, z, clear = 6) {
+  const reach = Math.ceil(clear + 0.75);
+  for (let dx = -reach; dx <= reach; dx++) for (let dz = -reach; dz <= reach; dz++) {
+    if (dx * dx + dz * dz > (clear + 0.75) ** 2) continue;
+    if (!W.loadedAt(x + dx, z + dz) || waterAt(W, x + dx, z + dz) !== -Infinity) return false;
+  }
+  return true;
+}
+
+// Nearest flat, dry ground next to (x0, z0), facing away from it. `clear` covers the entire vehicle plus a
+// water margin, in every heading. Check the whole disc, not just its rim: a narrow inlet can lie between probes.
+// Nearly level support is essential: an initially dry car can roll back down a steep bank in under two seconds.
+export function findBank(W, x0, z0, { radius = 300, clear = 6 } = {}) {
+  const n = new THREE.Vector3(), probes = [], reach = Math.ceil(clear + 0.75);
+  // One-metre grid with extra padding keeps at least `clear` metres covered between samples.
+  for (let dx = -reach; dx <= reach; dx++) for (let dz = -reach; dz <= reach; dz++) {
+    if (dx * dx + dz * dz <= (clear + 0.75) ** 2) probes.push([dx, dz]);
+  }
   const dry = (x, z) => W.loadedAt(x, z) && waterAt(W, x, z) === -Infinity;
   const good = (x, z) => {
     if (!dry(x, z)) return false;
-    for (let a = 0; a < 8; a++) if (!dry(x + Math.sin(a * Math.PI / 4) * clear, z + Math.cos(a * Math.PI / 4) * clear)) return false;
-    if (W.normalAt(x, z, n).y < 0.9) return false;
+    const h = W.heightAt(x, z, W.terrainAt(x, z) + 1);
+    if (W.normalAt(x, z, n, h + 1).y < 0.995) return false;
+    if (!dryBankArea(W, x, z, clear)) return false;
+    for (const [dx, dz] of probes) {
+      if (Math.abs(W.heightAt(x + dx, z + dz, h + 1) - h) > 0.6) return false;
+    }
     let tree = false; W.treesNear(x, z, 3.5, () => { tree = true; });
     return !tree && !insideBuilding(W, x, z, 3);
   };
