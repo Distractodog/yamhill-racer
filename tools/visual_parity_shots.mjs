@@ -4,14 +4,16 @@
 //   node tools/visual_parity_shots.mjs --out <dir> [--before http://127.0.0.1:8174/] [--only words] [--tolerance %]
 // Each shot: an atmosphere preset; the car driven along a road at 150 km/h (McMinnville NE 3rd St, a forest gravel
 // track) or the fighter flown straight at 600 km/h 150 m / 800 m above the forest or McMinnville. The vehicle is moved
-// along its path inside its own physics step (camera, streaming, LOD, shadows run as in play), stops at the end, and
-// the game's camera there is held still (position, orientation, field of view, set before world.updateLOD so the
-// streaming and fog decisions see the same camera that draws) with the wind / water / scenery clock fixed. When no
-// tile or road level is left to build, the HUD is hidden and the picture taken. With --before the same is done on the
-// old code, and each pair is compared in the browser: % of pixels differing (any channel > 8 of 255), the largest
-// difference, and <name>.diff.png (red = differs). The dusk / misty-morning shots have the closest fog.
-// Also per shot (after): far tree chunks left out as the fog hides them (fogcull.js), road near levels built at once
-// (roadnear.js) and frames on the way in drawn with a road block's near level missing within its drawing distance.
+// along its path inside its own physics step (camera, streaming, LOD, shadows run as in play), so the streaming state on
+// arrival is a real one. At the end the vehicle is paused there (no velocity, pose held) and hidden with its particles,
+// trails, tyre marks and contact shadows (their state depends on frame timing), and the camera is set every frame,
+// before world.updateLOD, to the shot's fixed pose from the CAMS table (position above the ground, heading, pitch,
+// field of view: the same numbers for before and after, not the live chase camera), with the wind / water / scenery
+// clock fixed. When no tile or road level is left to build, the HUD is hidden and the picture taken. With --before
+// the same is done on the old code, and each pair is compared in the browser: % of pixels differing (any channel > 8
+// of 255), the largest difference, and <name>.diff.png (red = differs). The dusk / misty-morning shots have the
+// closest fog. Also per shot (after): road near levels built at once (roadnear.js) and frames on the way in drawn
+// with a road block's near level missing within its drawing distance.
 // Fails on page errors, late road levels, a flight / drive that did not complete, and pairs differing in more than
 // --tolerance % of pixels (default 0.05). A heavy run: use the gate.
 import fs from 'node:fs';
@@ -28,19 +30,29 @@ const MCM_ROAD = [[19661, -11032], [19451, -11032]];                       // Mc
 const FOREST_ROAD = [[-397, -20252], [-356, -20250], [-315, -20244], [-275, -20239], [-234, -20234], [-193, -20231], [-153, -20226],
   [-113, -20221], [-72, -20215], [-32, -20209], [9, -20212]];               // a gravel track in the north woods (tile 0_-10)
 const FOREST_AIR = [[-1800, -20000], [-500, -20000]], MCM_AIR = [[20400, -11000], [19100, -11000]];
+// fixed camera poses: x, z (m), agl = height above the ground there (terrainAt), yaw (forward = (sin, cos)), pitch
+// (rad, + = up), fov (degrees). Behind each path's end, looking along it.
+const CAMS = {
+  mcmRoad: { x: 19459, z: -11032, agl: 3, yaw: -Math.PI / 2, pitch: -0.08, fov: 72 },
+  forestRoad: { x: 1.0, z: -20211.4, agl: 3, yaw: 1.644, pitch: -0.08, fov: 72 },
+  forestAir150: { x: -530, z: -20000, agl: 158, yaw: Math.PI / 2, pitch: -0.2, fov: 75 },
+  forestAir800: { x: -530, z: -20000, agl: 808, yaw: Math.PI / 2, pitch: -0.35, fov: 75 },
+  mcmAir150: { x: 19130, z: -11000, agl: 158, yaw: -Math.PI / 2, pitch: -0.2, fov: 75 },
+  mcmAir800: { x: 19130, z: -11000, agl: 808, yaw: -Math.PI / 2, pitch: -0.35, fov: 75 },
+};
 const SHOTS = [
-  { name: 'mcminnville-ground-150-midday', kind: 'car', pts: MCM_ROAD, kmh: 150, alt: null, preset: 'midday' },
-  { name: 'forest-road-150-midday', kind: 'car', pts: FOREST_ROAD, kmh: 150, alt: null, preset: 'midday' },
-  { name: 'forest-air-150m-midday', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 150, preset: 'midday' },
-  { name: 'forest-air-800m-midday', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 800, preset: 'midday' },
-  { name: 'mcminnville-air-150m-midday', kind: 'jet', pts: MCM_AIR, kmh: 600, alt: 150, preset: 'midday' },
-  { name: 'mcminnville-air-800m-midday', kind: 'jet', pts: MCM_AIR, kmh: 600, alt: 800, preset: 'midday' },
-  { name: 'mcminnville-ground-150-dusk', kind: 'car', pts: MCM_ROAD, kmh: 150, alt: null, preset: 'dusk' },
-  { name: 'forest-road-150-dusk', kind: 'car', pts: FOREST_ROAD, kmh: 150, alt: null, preset: 'dusk' },
-  { name: 'forest-air-150m-dusk', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 150, preset: 'dusk' },
-  { name: 'forest-air-800m-dusk', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 800, preset: 'dusk' },
-  { name: 'mcminnville-air-800m-dusk', kind: 'jet', pts: MCM_AIR, kmh: 600, alt: 800, preset: 'dusk' },
-  { name: 'forest-air-800m-morning', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 800, preset: 'morning' },
+  { name: 'mcminnville-ground-150-midday', kind: 'car', pts: MCM_ROAD, kmh: 150, alt: null, preset: 'midday' , cam: CAMS.mcmRoad },
+  { name: 'forest-road-150-midday', kind: 'car', pts: FOREST_ROAD, kmh: 150, alt: null, preset: 'midday' , cam: CAMS.forestRoad },
+  { name: 'forest-air-150m-midday', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 150, preset: 'midday' , cam: CAMS.forestAir150 },
+  { name: 'forest-air-800m-midday', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 800, preset: 'midday' , cam: CAMS.forestAir800 },
+  { name: 'mcminnville-air-150m-midday', kind: 'jet', pts: MCM_AIR, kmh: 600, alt: 150, preset: 'midday' , cam: CAMS.mcmAir150 },
+  { name: 'mcminnville-air-800m-midday', kind: 'jet', pts: MCM_AIR, kmh: 600, alt: 800, preset: 'midday' , cam: CAMS.mcmAir800 },
+  { name: 'mcminnville-ground-150-dusk', kind: 'car', pts: MCM_ROAD, kmh: 150, alt: null, preset: 'dusk' , cam: CAMS.mcmRoad },
+  { name: 'forest-road-150-dusk', kind: 'car', pts: FOREST_ROAD, kmh: 150, alt: null, preset: 'dusk' , cam: CAMS.forestRoad },
+  { name: 'forest-air-150m-dusk', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 150, preset: 'dusk' , cam: CAMS.forestAir150 },
+  { name: 'forest-air-800m-dusk', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 800, preset: 'dusk' , cam: CAMS.forestAir800 },
+  { name: 'mcminnville-air-800m-dusk', kind: 'jet', pts: MCM_AIR, kmh: 600, alt: 800, preset: 'dusk' , cam: CAMS.mcmAir800 },
+  { name: 'forest-air-800m-morning', kind: 'jet', pts: FOREST_AIR, kmh: 600, alt: 800, preset: 'morning' , cam: CAMS.forestAir800 },
 ];
 const only = arg('--only')?.split(',').map(w => w.trim()).filter(Boolean) || null;
 const LIST = SHOTS.filter(s => !only || only.every(w => s.name.includes(w)));
@@ -96,28 +108,34 @@ async function approach(spec) {
   const stop = performance.now() + duration * 4000 + 30000;
   while (t < duration && performance.now() < stop) await sleep(30);
   const done = t >= duration;
-  // at the end: hold the camera as it is now, stop moving, fix the clock
-  await new Promise(r => requestAnimationFrame(r));
-  const pose = { p: cam.position.clone(), q: cam.quaternion.clone(), u: cam.up.clone(), fov: cam.fov };
+  // at the end: pause the vehicle (pose held, no velocity), hide it and its effects, put the camera at the shot's
+  // fixed pose every frame before world.updateLOD (streaming and LOD see the camera that draws), fix the clock
+  moving = false; run = false; put();
+  const C = spec.cam, dir = { x: Math.sin(C.yaw) * Math.cos(C.pitch), y: Math.sin(C.pitch), z: Math.cos(C.yaw) * Math.cos(C.pitch) };
+  const fx = g.effects, dfx = g.drivingFX;
+  const hide = [v.mesh, fx?.points, fx?.marks, ...(fx?.tyreBlobs || []), fx?.bodyBlob, dfx?.points, dfx?.trails].filter(Boolean);
+  const wasVisible = hide.map(o => o.visible);
   const updateLOD = g.world.updateLOD;
   g.world.updateLOD = function (...a) {
-    cam.position.copy(pose.p); cam.quaternion.copy(pose.q); cam.up.copy(pose.u); cam.fov = pose.fov; cam.updateProjectionMatrix();
+    const y = g.world.terrainAt(C.x, C.z) + C.agl;
+    cam.position.set(C.x, y, C.z); cam.up.set(0, 1, 0); cam.lookAt(C.x + dir.x * 100, y + dir.y * 100, C.z + dir.z * 100);
+    cam.fov = C.fov; cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+    for (const o of hide) o.visible = false;
     g.world.tick?.(1000);
-    return updateLOD.apply(this, a);
+    return updateLOD.call(this, cam.position, ...a.slice(1));
   };
   const restore = window.__parity.restore;
-  window.__parity.restore = () => { restore(); g.world.updateLOD = updateLOD; };
-  moving = false; run = false;
+  window.__parity.restore = () => { restore(); g.world.updateLOD = updateLOD; hide.forEach((o, i) => { o.visible = wasVisible[i]; }); };
   const lateWay = late;
   const settle = performance.now() + 60000;
   while ((g.world.pendingTiles() > 0 || (g.world.stream?.roadNear?.waiting ?? 0) > 0) && performance.now() < settle) await sleep(100);
   await sleep(2500);                                    // particles fade, the last levels show
   for (const el of document.querySelectorAll('body > *:not(canvas)')) el.style.visibility = 'hidden';
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const info = g.renderer.info.render;
+  const info = g.renderer.info.render, pose = cam.position;
   return { done, flown: +t.toFixed(2), duration: +duration.toFixed(2), late: lateWay, lateAll: late, calls: info.calls, tris: info.triangles,
-    fogHidden: g.world.stream?.fogHidden ?? null, roadForced: forced0 === null ? null : g.world.stream.roadNear.forced - forced0,
-    pending: g.world.pendingTiles(), cam: [pose.p.x, pose.p.y, pose.p.z].map(Math.round) };
+    roadForced: forced0 === null ? null : g.world.stream.roadNear.forced - forced0,
+    pending: g.world.pendingTiles(), cam: [pose.x, pose.y, pose.z].map(Math.round) };
 }
 function cleanup() {
   window.__parity?.restore(); window.__parity = null;
@@ -138,7 +156,7 @@ async function shoot(url, label) {
       if (!r.error) await page.screenshot({ path: file });
       await page.evaluate(cleanup).catch(() => {});
       res[spec.name] = { ...r, file };
-      console.log(`${label.padEnd(6)} ${spec.name.padEnd(30)} ${r.error ? `ERROR ${r.error}` : `cam ${r.cam}  ${r.calls} calls ${(r.tris / 1e6).toFixed(2)} M tris  fog-hidden ${r.fogHidden ?? 'n/a'}  road at once ${r.roadForced ?? 'n/a'}  late ${r.late}${r.done ? '' : `  NOT COMPLETED (${r.flown}/${r.duration} s)`}`}`);
+      console.log(`${label.padEnd(6)} ${spec.name.padEnd(30)} ${r.error ? `ERROR ${r.error}` : `cam ${r.cam}  ${r.calls} calls ${(r.tris / 1e6).toFixed(2)} M tris  road at once ${r.roadForced ?? 'n/a'}  late ${r.late}${r.done ? '' : `  NOT COMPLETED (${r.flown}/${r.duration} s)`}`}`);
     }
   } finally { await browser.close(); }
   return { res, errors };
@@ -181,11 +199,11 @@ const fails = [...(before?.errors || []), ...after.errors].map(e => `page error 
 let diffs = {};
 if (before) diffs = await compare(LIST.filter(s => before.res[s.name]?.file && !before.res[s.name].error && !after.res[s.name].error)
   .map(s => [s.name, before.res[s.name].file, after.res[s.name].file]));
-console.log(`\n${'shot'.padEnd(30)} ${'% px differ'.padStart(11)} ${'max'.padStart(4)}  ${'M tris'.padEnd(13)} fog-hidden  road at once  late`);
+console.log(`\n${'shot'.padEnd(30)} ${'% px differ'.padStart(11)} ${'max'.padStart(4)}  ${'M tris'.padEnd(13)} road at once  late`);
 for (const s of LIST) {
   const a = after.res[s.name], o = before?.res[s.name], d = diffs[s.name];
   console.log(`${s.name.padEnd(30)} ${d ? (d.error || d.pct.toFixed(3)).toString().padStart(11) : '-'.padStart(11)} ${d && !d.error ? String(d.max).padStart(4) : '   -'}  `
-    + `${o?.tris ? `${(o.tris / 1e6).toFixed(2)} → ` : ''}${a.tris ? (a.tris / 1e6).toFixed(2) : '-'}`.padEnd(13) + ` ${String(a.fogHidden ?? 'n/a').padStart(10)}  ${String(a.roadForced ?? 'n/a').padStart(12)}  ${a.late ?? '-'}`);
+    + `${o?.tris ? `${(o.tris / 1e6).toFixed(2)} → ` : ''}${a.tris ? (a.tris / 1e6).toFixed(2) : '-'}`.padEnd(13) + ` ${String(a.roadForced ?? 'n/a').padStart(12)}  ${a.late ?? '-'}`);
   for (const [l, r] of [['before', o], ['after', a]]) if (r && (r.error || !r.done)) fails.push(`${l} ${s.name}: ${r.error || `did not complete (${r.flown}/${r.duration} s)`}`);
   if (a.late > 0) fails.push(`${s.name}: ${a.late} frames with a road near level missing within its drawing distance`);
   if (d && (d.error || d.pct > TOL)) fails.push(`${s.name}: ${d.error || `${d.pct.toFixed(3)}% of pixels differ (> ${TOL}%): see ${s.name}.diff.png`}`);

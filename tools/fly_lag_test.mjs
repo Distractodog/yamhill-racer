@@ -19,9 +19,10 @@
 // with --before or --compare), and what ran in the slow frames.
 // Frame times: the time from one frame's start to the next's (requestAnimationFrame timestamps) is that frame's
 // interval, recorded with that frame's own main-thread timings (a slow frame and what ran in it line up).
-// Also counts per run: road near levels built at once (roadnear.js; should stay ~0) and far tree chunks left out
-// because the fog hides them (fogcull.js) — both 'n/a' on code without them.
-// Fails on page errors, if any run (of the code under test) has frames with no ground under the jet, and if a flight
+// Also counts per run: road near levels built at once (roadnear.js; should stay ~0) and frames drawn with a road
+// block's near level missing within its drawing distance ("late": must be 0) — 'n/a' on code without roadnear.js.
+// Fails on page errors, if any run (of the code under test) has frames with no ground under the jet or late road
+// levels, and if a flight
 // did not complete (the jet held at the start, or physics paused part-way).
 // Headless Chrome is slower than a real browser: compare before/after on the same machine, not to 16.7 ms.
 import fs from 'node:fs';
@@ -42,7 +43,7 @@ if (process.argv.includes('--compare')) {
 function runList() {
   if (process.argv.includes('--full')) return [150, 800].flatMap(alt => scenarios({ allStealth: true }).map(s => ({ ...s, alt, name: `${s.name} @${alt}` })));
   const pick = [['straight', 1000, 'fighter', 150], ['circle', 1000, 'fighter', 150], ['sturn', 1000, 'fighter', 150], ['circle', 600, 'fighter', 150],
-    ['circle', 'max', 'fighter', 150], ['sturn', 'max', 'stealth', 150], ['circle', 1000, 'fighter', 800], ['straight', 'max', 'stealth', 800]];
+    ['circle', 'max', 'fighter', 150], ['sturn', 'max', 'stealth', 150], ['circle', 1000, 'fighter', 800], ['straight', 'max', 'stealth', 800], ['straight', 'max', 'stealth', 150]];
   const all = scenarios();
   return Object.keys(PLACES).flatMap(place => pick.map(([path, sp, type, alt]) => {
     const s = all.find(s => s.place === place && s.path === path && s.type === type && (sp === 'max' ? s.kmh > 1500 : s.kmh === sp));
@@ -66,7 +67,10 @@ function instrument() {
     obj[name] = function (...a) { const t = performance.now(); try { return f.apply(this, a); } finally { if (F.frame) F.frame[key] = (F.frame[key] || 0) + performance.now() - t; } };
   };
   const render = r.render.bind(r);
-  r.render = (s, c) => { const t = performance.now(); render(s, c); if (F.frame) { F.frame.render = performance.now() - t; F.frame.calls = info.calls; F.frame.tris = info.triangles; } };
+  // a road block (roads.js LOD) still without its near level inside the distance it is drawn at (roadnear.js)
+  const lateRoad = () => { const p = c => c.position; for (const tile of g.world.group.children) if (tile.visible) for (const o of tile.children)
+    if (o.isLOD && o.userData.near && p(g.camera).distanceTo(o.position) < o.userData.near.show) return true; return false; };
+  r.render = (s, c) => { if (F.frame && lateRoad()) F.frame.late = true; const t = performance.now(); render(s, c); if (F.frame) { F.frame.render = performance.now() - t; F.frame.calls = info.calls; F.frame.tris = info.triangles; } };
   timed(g.world, 'updateLOD', 'lod'); timed(g.world, 'updateShadows', 'shadows'); timed(g.minimap, 'update', 'minimap');
   timed(g.effects, 'update', 'effects'); timed(g.directions, 'update', 'directions'); timed(g.atmosphere, 'update', 'atmosphere');
   const proto = CanvasRenderingContext2D.prototype;          // 2D canvas (the minimaps): the slowest call of a frame
@@ -92,7 +96,7 @@ function instrument() {
       const v = g.vehicles.current; fr.noGround = !g.world.loadedAt(v.pos.x, v.pos.z);
       const st = g.world.stream || {};
       if (st.roadMs) { fr.build += st.roadMs; (fr.steps ||= {})['road near'] = st.roadMs; }
-      fr.roadForced = st.roadNear ? st.roadNear.forced : null; fr.fogHidden = st.fogHidden ?? null;
+      fr.roadForced = st.roadNear ? st.roadNear.forced : null;
       F.log.push(fr); F.prev = fr;
     }
     F.frame = null;
@@ -146,7 +150,7 @@ async function measure(url, label) {
       const s = runs.at(-1);
       console.log(`${label.padEnd(6)} ${s.name.padEnd(38)} median ${s.median.toFixed(1).padStart(5)}  p95 ${s.p95.toFixed(1).padStart(5)}  worst ${s.worst.toFixed(0).padStart(4)}  >33ms ${s.over33.toFixed(1).padStart(4)}%`
         + `  main p95 ${s.cbP95.toFixed(1)}  lod p95 ${s.lodP95.toFixed(1)}  ${s.calls} calls ${(s.tris / 1e6).toFixed(2)} M tris  noGround ${s.noGround}`
-        + `  road near at once ${s.roadForced ?? 'n/a'}  fog-hidden tree chunks ${s.fogHidden ?? 'n/a'}\n         slow frames: ${s.slow}`);
+        + `  road near at once ${s.roadForced ?? 'n/a'}  late ${s.roadLate ?? 'n/a'}\n         slow frames: ${s.slow}`);
     }
   } finally { await browser.close(); }
   return { url, runs, errors };
@@ -172,7 +176,7 @@ function summarise(spec, { frames, pendingEnd, loaded, flown, duration, held, er
     calls: Math.round(avg('calls')), tris: Math.round(avg('tris')), gcFrames: f.filter(x => x.gcMB).length, noGround: f.filter(x => x.noGround).length,
     pendingEnd, loaded, slowFrames: slow.length, incomplete,
     roadForced: f.some(x => x.roadForced !== null) ? Math.max(0, (f.at(-1)?.roadForced ?? 0) - (f[0]?.roadForced ?? 0)) : null,
-    fogHidden: f.some(x => x.fogHidden !== null) ? +(f.reduce((a, x) => a + (x.fogHidden || 0), 0) / (f.length || 1)).toFixed(1) : null,
+    roadLate: f.some(x => x.roadForced !== null) ? f.filter(x => x.late).length : null,
     slow: Object.entries(parts).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => k === 'gc frames' ? `gc in ${v}` : `${k} ${v.toFixed(0)}`).join(', ') || '-' };
 }
 function table(before, after) {
@@ -180,11 +184,11 @@ function table(before, after) {
   const num = (r, k, d) => Number.isFinite(r?.[k]) ? r[k].toFixed(d) : 'n/a';
   const c = (o, r, k, d = 1) => o ? `${num(o, k, d).padStart(5)} → ${num(r, k, d).padEnd(5)}` : num(r, k, d).padStart(5);
   const m = (r, k) => r && Number.isFinite(r[k]) ? { [k]: r[k] / 1e6 } : null;
-  console.log(`\n${'run'.padEnd(38)} ${'median ms'.padEnd(13)} ${'p95 ms'.padEnd(13)} ${'worst ms'.padEnd(13)} ${'% > 33 ms'.padEnd(13)} ${'M tris'.padEnd(13)} ${'calls'.padEnd(13)} road at once  fog-hidden`);
+  console.log(`\n${'run'.padEnd(38)} ${'median ms'.padEnd(13)} ${'p95 ms'.padEnd(13)} ${'worst ms'.padEnd(13)} ${'% > 33 ms'.padEnd(13)} ${'M tris'.padEnd(13)} ${'calls'.padEnd(13)} road at once  late`);
   for (const r of after) {
     const o = by.get(r.name);
     console.log(`${r.name.padEnd(38)} ${c(o, r, 'median')} ${c(o, r, 'p95')} ${c(o, r, 'worst', 0)} ${c(o, r, 'over33')} ${c(m(o, 'tris'), m(r, 'tris'), 'tris', 2)} ${c(o, r, 'calls', 0)} `
-      + `${String(r.roadForced ?? 'n/a').padStart(12)}  ${o ? `${o.fogHidden ?? 'n/a'} → ` : ''}${r.fogHidden ?? 'n/a'}${r.incomplete ? '  NOT COMPLETED' : ''}`);
+      + `${String(r.roadForced ?? 'n/a').padStart(12)}  ${r.roadLate ?? 'n/a'}${r.incomplete ? '  NOT COMPLETED' : ''}`);
   }
   console.log(`${after.length} run${after.length === 1 ? '' : 's'}${before ? ' (before → after)' : ''}`);
 }
@@ -193,9 +197,10 @@ const before = arg('--before') ? await measure(arg('--before'), 'before') : null
 const after = await measure(GAME_URL, before ? 'after' : 'run');
 if (arg('--out')) fs.writeFileSync(arg('--out'), JSON.stringify({ when: new Date().toISOString(), before, after, runs: after.runs }, null, 1));
 table(before?.runs, after.runs);
-const errors = [...(before?.errors || []), ...after.errors], missing = after.runs.filter(r => r.noGround > 0);
+const errors = [...(before?.errors || []), ...after.errors], missing = after.runs.filter(r => r.noGround > 0), late = after.runs.filter(r => r.roadLate > 0);
 const unfinished = [...(before?.runs || []).map(r => ['before', r]), ...after.runs.map(r => [before ? 'after' : 'run', r])].filter(([, r]) => r.incomplete);
 for (const r of missing) console.log(`FAIL ${r.name}: ${r.noGround} frames with no ground under the jet`);
+for (const r of late) console.log(`FAIL ${r.name}: ${r.roadLate} frames with a road near level missing within its drawing distance`);
 for (const [l, r] of unfinished) console.log(`FAIL ${l} ${r.name}: ${r.incomplete}`);
 if (errors.length) console.log(`FAIL page errors:\n  ${errors.join('\n  ')}`);
-process.exit(errors.length || missing.length || unfinished.length ? 1 : 0);
+process.exit(errors.length || missing.length || late.length || unfinished.length ? 1 : 0);

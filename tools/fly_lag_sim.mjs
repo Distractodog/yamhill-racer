@@ -10,10 +10,6 @@
 //     [--alt 150] [--stream (only tools/stream_test.mjs's run: the car at 1000 km/h across the map)]
 //     [--unpaced: frames back to back, not 60 a second. Steps then run at full CPU speed for every build (paced, macOS
 //      runs short bursts with idle time between them slower), but downloads race behind, so ignore "noGround"]
-//     [--fog m: hand updateLOD the chase camera and a fog ending at m (an atmosphere preset's far: 1500 midday,
-//      1300 dusk, 850 misty morning), so far trees the fog hides are left out (fogcull.js) as in the game; every 20th
-//      frame each left-out chunk is checked against the real ground: rays through its corners and top at fog depth
-//      and meeting built ground within the far plane ("fog check bad", must be 0)]
 // Also counts frames where a road block's near level would be drawn but isn't built (roadnear.js; "late", must be 0).
 //   node tools/fly_lag_sim.mjs --compare before.json after.json          (V=1: a progress line every 0.5 s of flight)
 // Run it through the heavy gate (it builds dozens of tiles). Tiles come from this checkout's game/assets; --src picks
@@ -31,7 +27,6 @@ if (args[0] === '--compare') { compare(JSON.parse(fs.readFileSync(args[1])), JSO
 
 const SRC = path.resolve(opt('src', 'game/src')), GAME = path.resolve('game');      // code from --src, tiles from here
 const LATENCY = +opt('latency', 120), ALT = +opt('alt', 150), FPS = 60, DT = 1 / FPS, UNPACED = args.includes('--unpaced');
-const FOG = opt('fog') ? { far: +opt('fog') } : null;
 const list = args.includes('--stream') ? [STREAM_RUN] : scenarios({
   places: opt('places', '') ? opt('places').split(',') : undefined,
   paths: opt('paths', '') ? opt('paths').split(',') : undefined,
@@ -106,25 +101,6 @@ function lateRoads(group, cam) {
     if (o.isLOD && o.userData.near && Math.hypot(cam.x - o.position.x, cam.y - o.position.y, cam.z - o.position.z) < o.userData.near.show) return true;
   return false;
 }
-// a far tree chunk left out as fogged: rays from the camera through its corners and top centre are at depth ≥ fog far
-// and, marched on, meet the ground (terrainAt, within 2 m: the coarse levels) on built tiles within the far plane
-function fogBacked(world, b) {
-  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(view.quaternion), c = view.position, pts = [[(b.min.x + b.max.x) / 2, b.max.y, (b.min.z + b.max.z) / 2]];
-  for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) pts.push([x, y, z]);
-  for (const [px, py, pz] of pts) {
-    const dx = px - c.x, dy = py - c.y, dz = pz - c.z, L = Math.hypot(dx, dy, dz);
-    if (dx * fwd.x + dy * fwd.y + dz * fwd.z < FOG.far) return false;
-    let hit = false;
-    for (let s = L; s <= view.far; s += 2) {
-      const x = c.x + dx / L * s, y = c.y + dy / L * s, z = c.z + dz / L * s;
-      if (!world.loadedAt(x, z)) return false;
-      if (y <= world.terrainAt(x, z) + 2) { hit = true; break; }
-    }
-    if (!hit) return false;
-  }
-  return true;
-}
-
 const results = [];
 for (const sc of list) {
   globalThis.gc?.();
@@ -141,25 +117,9 @@ for (const sc of list) {
   const cam = { x: s0.x, y: 300, z: s0.z }, vel = { x: s0.vx, y: 0, z: s0.vz };
   for (let i = 0; i < 4000 && (i < 30 || world.pendingTiles() > 0); i++) { world.updateLOD(cam, vel); world.updateShadows(cam); await nextFrame(); }
   Object.assign(ev, { adds: 0, drops: 0, rebuilds: 0, dropped: new Set() });
-  // the far tree chunks' boxes world.js keeps for the fog test hold every vertex of every tree drawn
-  let boxes = 0, boxBad = 0;
-  if (FOG) {
-    const m = new THREE.Matrix4(), v = new THREE.Vector3();
-    for (const tile of world.group.children) for (const o of tile.children) if (o.isInstancedMesh && o.userData.box) {
-      const b = o.userData.box, pos = o.geometry.attributes.position; boxes++;
-      out: for (let i = 0; i < o.count; i++) {
-        o.getMatrixAt(i, m);
-        for (let k = 0; k < pos.count; k++) {
-          v.fromBufferAttribute(pos, k).applyMatrix4(m);
-          if (v.x < b.min.x - 1e-3 || v.y < b.min.y - 1e-3 || v.z < b.min.z - 1e-3 || v.x > b.max.x + 1e-3 || v.y > b.max.y + 1e-3 || v.z > b.max.z + 1e-3) { boxBad++; break out; }
-        }
-      }
-    }
-  }
   const trace = world.buildStep.trace = [], labels = {};
   const frames = [], g0 = gcs.length, draws = [], cal = [];
-  let noGround = 0, offMap = 0, urgent = 0, maxShown = 0, fogHidden = 0, late = 0, fogChecked = 0, fogBad = 0;
-  if (world.stream) world.stream.fogTrace = FOG ? [] : null;
+  let noGround = 0, offMap = 0, urgent = 0, maxShown = 0, late = 0;
   const road0 = { ...(world.stream?.roadNear || {}) };
   const n = Math.ceil(p.duration * FPS);
   for (let f = 0; f < n; f++) {
@@ -170,11 +130,8 @@ for (const sc of list) {
     else if (!world.loadedAt(s.x, s.z)) noGround++;
     trace.length = 0;
     const t0 = performance.now();
-    if (FOG) placeView(s, ground + ALT);
-    world.updateLOD(cam, vel, 0, FOG ? { camera: view, fog: FOG } : undefined); world.updateShadows({ x: s.x, y: ground + ALT, z: s.z });
-    fogHidden += world.stream?.fogHidden || 0;
+    world.updateLOD(cam, vel); world.updateShadows({ x: s.x, y: ground + ALT, z: s.z });
     if (lateRoads(world.group, cam)) late++;
-    if (FOG && f % 20 === 0) for (const box of world.stream?.fogTrace || []) { fogChecked++; if (!fogBacked(world, box)) fogBad++; }
     const t1 = performance.now();
     const step = world.buildStep;
     for (let i = 0; i < trace.length; i += 2) { const l = labels[trace[i]] ||= { n: 0, ms: 0, max: 0 }; l.n++; l.ms += trace[i + 1]; l.max = Math.max(l.max, trace[i + 1]); }
@@ -201,12 +158,12 @@ for (const sc of list) {
     buildTotal: +frames.reduce((a, f) => a + f.build, 0).toFixed(0), worstSlow: worst.slow, worstGc: +(worst.gc || 0).toFixed(1), gcMs: +gcMs.toFixed(1), gcN,
     adds: ev.adds, drops: ev.drops, rebuilds: ev.rebuilds, maxLoaded: ev.maxLoaded, maxShown, urgent, pendingEnd: world.pendingTiles(), noGround, offMap,
     roadForced: (world.stream?.roadNear?.forced ?? 0) - (road0.forced ?? 0), roadBuilt: (world.stream?.roadNear?.built ?? 0) - (road0.built ?? 0),
-    fogHidden: +(fogHidden / n).toFixed(1), late, fogChecked, fogBad, boxes, boxBad,
+    late,
     cpuMs: +pct(cal.sort((a, b) => a - b), .5).toFixed(3), calls: avg('calls'), tris: avg('tris'), trisTerrain: avg('terrain'), trisInstanced: avg('instanced'), trisOther: avg('other'), top, labels };
   results.push(r);
   console.log(`${r.name.padEnd(34)} med ${r.median.toFixed(2).padStart(5)}  p95 ${r.p95.toFixed(2).padStart(5)}  worst ${String(r.worst).padStart(5)}  >8ms ${String(r.over8).padStart(4)}%  >16 ${String(r.over16).padStart(4)}%`
     + `  build ${r.buildTotal} ms  tiles +${r.adds} -${r.drops} rebuilt ${r.rebuilds} max ${r.maxLoaded}/${maxShown} shown  urgent ${urgent}  gc ${r.gcMs}  noGround ${noGround}${offMap ? ` OFFMAP ${offMap}` : ''}  cpu ${r.cpuMs}`
-    + `\n    road near levels built ${r.roadBuilt} (at once: ${r.roadForced}, late: ${late})${FOG ? `  far tree chunks hidden by fog ${FOG.far}: ${r.fogHidden} a frame (checked ${fogChecked}, bad ${fogBad}; chunk boxes ${boxes}, too small ${boxBad})` : ''}`
+    + `\n    road near levels built ${r.roadBuilt} (at once: ${r.roadForced}, late: ${late})`
     + `\n    draw @${ALT} m: ${r.calls} calls ${(r.tris / 1e6).toFixed(2)} M tris (terrain ${(r.trisTerrain / 1e6).toFixed(2)}, instanced ${(r.trisInstanced / 1e6).toFixed(2)}, other ${(r.trisOther / 1e6).toFixed(2)})`
     + `\n    top: ${top}  worst frame: ${worst.slow}${worst.gc ? ` (gc ${worst.gc.toFixed(1)})` : ''}`);
   world.group.clear();
