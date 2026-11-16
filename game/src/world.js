@@ -5,11 +5,12 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
 import { createTileQueue, fetchTileParts } from './tilequeue.js';
-import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
+import { roadLODSteps, roadBatches, buildJunctions, addNearLevelSteps } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import * as STREAM from './streamplan.js';
+import { createRoadNear, nearNow as roadNearNow, dueSlack } from './roadnear.js';
 import { createTileScenery } from './scenery.js';
 import { buildCampusGateGeometry } from './campusgate.js';
 import { placeCampus } from './campusmodel.js';
@@ -71,6 +72,11 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
+  // road blocks' near levels, built as the camera comes near (roadnear.js). Before the first frame (the start-up
+  // tiles) lastCam is null: everything is built, as before
+  const roadNear = createRoadNear();
+  let lastCam = null, lastVel = null;
+  const roadSteps = (D, mat, batch) => roadLODSteps(D, mat, batch, (x, z, show) => roadNearNow(lastCam, lastVel, x, z, show));
 
   // data and ground bitmaps together; if either fails, the bitmaps made are closed (tilequeue.js fetchTileParts)
   function fetchTile(tx, tz) {
@@ -174,8 +180,14 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     // Copy bridge metadata onto rendering strips before drawing the shallow road skirts.
     out.bridges = yield* buildBridgeSteps(td, campusMat);
-    // road / trail strips
-    for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) g.add(yield* placeRoadBlockSteps(td, stripMat, batch, roadLODSteps));   // one near + far pair per block
+    // road / trail strips: one near + far pair per block; a block's near level only once the camera is coming near
+    // (roadnear.js: a far block gets it later, before it would be drawn)
+    out.roadNear = [];
+    for (const batch of mergeRoadBatches(roadBatches(td.renderRoads))) {
+      const lod = yield* placeRoadBlockSteps(td, stripMat, batch, roadSteps); g.add(lod);
+      const n = lod.userData.near;
+      if (n) out.roadNear.push({ lod, x: n.x, z: n.z, show: n.show, steps: () => addNearLevelSteps(lod), gen: null, done: false });
+    }
     if (out.bridges) g.add(out.bridges.near, out.bridges.far);
     for (let k = 0; k < td.renderJunctions.length; k += 300) { g.add(buildJunctions(td.renderJunctions.slice(k, k + 300), stripMat)); yield 'junctions'; }
     // ponds + river pools: a quad per height cell touching one. Each corner sits at its own pool's level (a corner
@@ -341,9 +353,11 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
   const turn = STREAM.createTurnTracker();
   let lastNow = 0, frameMs = 16.7;
-  const stream = { urgent: false, budget: 0, hidden: 0, up: 0, detailMs: 0 };   // this frame's choices (tools/fly_lag_*.mjs read them)
+  // this frame's choices (tools/fly_lag_*.mjs read them); roadNear: forced / built road near levels (roadnear.js)
+  const stream = { urgent: false, budget: 0, hidden: 0, up: 0, detailMs: 0, roadMs: 0, roadNear: roadNear.stats };
   function update(cam, vel, extraMs = 0) {
     const now = performance.now(), dt = lastNow ? now - lastNow : 16.7; lastNow = now;
+    lastCam = cam; lastVel = vel;
     if (dt < 250) frameMs += (dt - frameMs) * 0.1;
     const sp = vel ? Math.hypot(vel.x, vel.z) : 0, w = vel ? turn.update(vel.x, vel.z, now) : 0;
     const ahead = vel ? STREAM.lookAhead(cam.x, cam.z, vel.x, vel.z, w) : [];
@@ -375,7 +389,14 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     // can still hold tiles from where the vehicle was)
     stream.urgent = urgent; stream.budget = STREAM.buildBudget(sp, { urgent, frameMs, extraMs });
     stream.detailMs = buildDetail(stream.budget);
-    queue.update(Math.max(0.1, stream.budget - stream.detailMs), j => need([j.tx, j.tz]));
+    // road near levels (roadnear.js): those due to show soon get up to half of what is left before the tiles, the
+    // rest only what the tiles leave
+    const v3 = vel ? Math.hypot(vel.x, vel.y || 0, vel.z) : 0;
+    let roadMs = roadNear.build((stream.budget - stream.detailMs) / 2, { due: dueSlack(v3), keep: true });
+    const tq = performance.now();
+    queue.update(Math.max(0.1, stream.budget - stream.detailMs - roadMs), j => need([j.tx, j.tz]));
+    roadMs += roadNear.build(stream.budget - stream.detailMs - roadMs - (performance.now() - tq));
+    stream.roadMs = roadNear.stats.ms = roadMs;
   }
 
   // full-detail terrain chunks (buildTile leaves them out) once the camera is within DETAIL_R, nearest first, from the
@@ -453,6 +474,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         const near = (l.cx - cam.x) ** 2 + (l.cz - cam.z) ** 2 + up2 < 420 * 420;
         l.near.visible = near; l.far.visible = !near;
       }
+      if (v.roadNear.length) roadNear.check(v.roadNear, cam, vel, v);
       for (const b of v.buildingLods) {
         const flat = Math.hypot(b.cx - cam.x, b.cz - cam.z), d = Math.sqrt(flat * flat + up2);
         b.near.visible = d < townRange.near;
@@ -469,7 +491,6 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     notePerf();
   }
-
   return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { stripMat.color.setScalar(1 - Math.max(0, Math.min(1, Number(value) || 0)) * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
     loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep, stream });

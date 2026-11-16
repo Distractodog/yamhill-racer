@@ -227,8 +227,11 @@ export function roadLOD(D, groundMat, batch) {
   while (!(r = steps.next()).done);
   return r.value;
 }
-// roadLOD, yielding after each level (far first: it is the cheap one, and the one seen first when arriving fast)
-export function* roadLODSteps(D, groundMat, batch) {
+// roadLOD, yielding after each level (far first: it is the cheap one, and the one seen first when arriving fast).
+// nearNow(cx, cz, show) (optional): false = leave the near level out for now. The near level is drawn while the camera
+// is within `show` m of the LOD's position (cx, 0, cz); lod.userData.near then holds what addNearLevelSteps needs to
+// build it later (world.js / roadnear.js, before the camera gets that close). Without nearNow: both levels, as before.
+export function* roadLODSteps(D, groundMat, batch, nearNow = null) {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
   for (const { r, a, b } of batch) for (let i = a; i <= b; i++) {
     x0 = Math.min(x0, r.x[i]); x1 = Math.max(x1, r.x[i]); z0 = Math.min(z0, r.z[i]); z1 = Math.max(z1, r.z[i]);
@@ -237,10 +240,19 @@ export function* roadLODSteps(D, groundMat, batch) {
   const lod = new THREE.LOD();
   lod.position.set(cx, 0, cz);
   for (const [far, dist] of [[true, FAR_AT + rad], [false, 0]]) {
+    if (!far && nearNow && !nearNow(cx, cz, FAR_AT + rad)) { lod.userData.near = { D, groundMat, batch, x: cx, z: cz, show: FAR_AT + rad }; break; }
     const m = yield* buildRoadsSteps(D, groundMat, batch, far); m.position.set(-cx, 0, -cz);   // geometry stays in world coords
     lod.addLevel(m, dist);                   // addLevel keeps the levels sorted by distance
     yield far ? 'roads-far' : 'roads-near';
   }
+  return lod;
+}
+// the near level roadLODSteps left out: built in slices, then added to the LOD exactly as roadLODSteps adds it
+export function* addNearLevelSteps(lod) {
+  const n = lod.userData.near; if (!n) return lod;
+  const m = yield* buildRoadsSteps(n.D, n.groundMat, n.batch, false); m.position.set(-n.x, 0, -n.z);
+  m.geometry.computeBoundingSphere();        // as placeRoadBlockSteps does for the levels built with the tile
+  lod.addLevel(m, 0); lod.userData.near = null;
   return lod;
 }
 

@@ -10,6 +10,7 @@
 //     [--alt 150] [--stream (only tools/stream_test.mjs's run: the car at 1000 km/h across the map)]
 //     [--unpaced: frames back to back, not 60 a second. Steps then run at full CPU speed for every build (paced, macOS
 //      runs short bursts with idle time between them slower), but downloads race behind, so ignore "noGround"]
+// Also counts frames where a road block's near level would be drawn but isn't built (roadnear.js; "late", must be 0).
 //   node tools/fly_lag_sim.mjs --compare before.json after.json          (V=1: a progress line every 0.5 s of flight)
 // Run it through the heavy gate (it builds dozens of tiles). Tiles come from this checkout's game/assets; --src picks
 // the code (e.g. an unchanged copy of game/src for a before/after table).
@@ -73,9 +74,12 @@ function calibrate() {
 
 // what the renderer would draw of the world: visible meshes inside the camera's frustum (three.js projectObject's rules)
 const view = new THREE.PerspectiveCamera(70, 1280 / 760, 0.3, 2200), frustum = new THREE.Frustum(), pv = new THREE.Matrix4();
-function drawn(group, s, y) {
+function placeView(s, y) {
   view.position.set(s.x - Math.sin(s.yaw) * 30, y + 8, s.z - Math.cos(s.yaw) * 30);
   view.lookAt(s.x + Math.sin(s.yaw) * 60, y - 4, s.z + Math.cos(s.yaw) * 60); view.updateMatrixWorld();
+}
+function drawn(group, s, y) {
+  placeView(s, y);
   frustum.setFromProjectionMatrix(pv.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse));
   const out = { calls: 0, tris: 0, terrain: 0, instanced: 0, other: 0 };
   group.updateMatrixWorld(true);
@@ -91,6 +95,12 @@ function drawn(group, s, y) {
   return out;
 }
 
+// a road block (roads.js LOD) without its near level, inside the distance that level is drawn at (three.js LOD)
+function lateRoads(group, cam) {
+  for (const tile of group.children) if (tile.visible) for (const o of tile.children)
+    if (o.isLOD && o.userData.near && Math.hypot(cam.x - o.position.x, cam.y - o.position.y, cam.z - o.position.z) < o.userData.near.show) return true;
+  return false;
+}
 const results = [];
 for (const sc of list) {
   globalThis.gc?.();
@@ -109,7 +119,8 @@ for (const sc of list) {
   Object.assign(ev, { adds: 0, drops: 0, rebuilds: 0, dropped: new Set() });
   const trace = world.buildStep.trace = [], labels = {};
   const frames = [], g0 = gcs.length, draws = [], cal = [];
-  let noGround = 0, offMap = 0, urgent = 0, maxShown = 0;
+  let noGround = 0, offMap = 0, urgent = 0, maxShown = 0, late = 0;
+  const road0 = { ...(world.stream?.roadNear || {}) };
   const n = Math.ceil(p.duration * FPS);
   for (let f = 0; f < n; f++) {
     const s = p.at(f * DT);
@@ -120,6 +131,7 @@ for (const sc of list) {
     trace.length = 0;
     const t0 = performance.now();
     world.updateLOD(cam, vel); world.updateShadows({ x: s.x, y: ground + ALT, z: s.z });
+    if (lateRoads(world.group, cam)) late++;
     const t1 = performance.now();
     const step = world.buildStep;
     for (let i = 0; i < trace.length; i += 2) { const l = labels[trace[i]] ||= { n: 0, ms: 0, max: 0 }; l.n++; l.ms += trace[i + 1]; l.max = Math.max(l.max, trace[i + 1]); }
@@ -145,10 +157,13 @@ for (const sc of list) {
     over4: +(100 * ms.filter(x => x > 4).length / n).toFixed(1), over8: +(100 * ms.filter(x => x > 8).length / n).toFixed(1), over16: +(100 * ms.filter(x => x > 16).length / n).toFixed(1),
     buildTotal: +frames.reduce((a, f) => a + f.build, 0).toFixed(0), worstSlow: worst.slow, worstGc: +(worst.gc || 0).toFixed(1), gcMs: +gcMs.toFixed(1), gcN,
     adds: ev.adds, drops: ev.drops, rebuilds: ev.rebuilds, maxLoaded: ev.maxLoaded, maxShown, urgent, pendingEnd: world.pendingTiles(), noGround, offMap,
+    roadForced: (world.stream?.roadNear?.forced ?? 0) - (road0.forced ?? 0), roadBuilt: (world.stream?.roadNear?.built ?? 0) - (road0.built ?? 0),
+    late,
     cpuMs: +pct(cal.sort((a, b) => a - b), .5).toFixed(3), calls: avg('calls'), tris: avg('tris'), trisTerrain: avg('terrain'), trisInstanced: avg('instanced'), trisOther: avg('other'), top, labels };
   results.push(r);
   console.log(`${r.name.padEnd(34)} med ${r.median.toFixed(2).padStart(5)}  p95 ${r.p95.toFixed(2).padStart(5)}  worst ${String(r.worst).padStart(5)}  >8ms ${String(r.over8).padStart(4)}%  >16 ${String(r.over16).padStart(4)}%`
     + `  build ${r.buildTotal} ms  tiles +${r.adds} -${r.drops} rebuilt ${r.rebuilds} max ${r.maxLoaded}/${maxShown} shown  urgent ${urgent}  gc ${r.gcMs}  noGround ${noGround}${offMap ? ` OFFMAP ${offMap}` : ''}  cpu ${r.cpuMs}`
+    + `\n    road near levels built ${r.roadBuilt} (at once: ${r.roadForced}, late: ${late})`
     + `\n    draw @${ALT} m: ${r.calls} calls ${(r.tris / 1e6).toFixed(2)} M tris (terrain ${(r.trisTerrain / 1e6).toFixed(2)}, instanced ${(r.trisInstanced / 1e6).toFixed(2)}, other ${(r.trisOther / 1e6).toFixed(2)})`
     + `\n    top: ${top}  worst frame: ${worst.slow}${worst.gc ? ` (gc ${worst.gc.toFixed(1)})` : ''}`);
   world.group.clear();
