@@ -131,7 +131,8 @@ assert(ud.wheelArch.length === 4 && ud.wheelArch.every((c, i) => { const g = c -
 }
 
 // lights anchors on the lenses
-assert(ud.lights.head.length === 2 && ud.lights.tail.length === 2 && [...ud.lights.head, ...ud.lights.tail].every(p => p.isVector3));
+// (tail: the Y and the line toward the middle on each side; lights_test checks every lens lies on its drawn lamp)
+assert(ud.lights.head.length === 2 && ud.lights.tail.length === 4 && [...ud.lights.head, ...ud.lights.tail].every(p => p.isVector3));
 assert(ud.lights.head.every(p => p.z > 1.9) && ud.lights.tail.every(p => p.z < -2.1));
 assert(ud.lightMount === ud.bodyPivot);
 

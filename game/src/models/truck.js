@@ -126,9 +126,15 @@ export function buildTruckModel(p, suspension) {
     }
     lod(w.spin,near,far,55);
   }
+  // lit lenses (lights.js) on the faces of the lamp boxes in body(): each headlight cluster's three bars, the bumper
+  // bar and the roof bar; the red tail lamps. The beam starts from the middle of the two clusters.
+  const face = ([w,h,x,y,z]) => [[x-w/2,y-h/2,z],[x+w/2,y-h/2,z],[x+w/2,y+h/2,z],[x-w/2,y+h/2,z]];
+  const heads = [...[-1,1].flatMap(s=>[[.29,.07,s*1.04,.65,2.7375],[.29,.07,s*1.04,.38,2.7375],[.065,.22,s*1.15,.515,2.7375]]),
+    [.88,.055,0,.13,2.79],[1.48,.075,0,1.85,.4095]], tails = [-1,1].map(s=>[.17,.42,s*1.055,.56,-2.71]);
+  const at = ([,,x,y,z]) => new THREE.Vector3(x,y,z);
   root.userData = { bodyPivot, wheels, lightMount: bodyPivot,
-    lights: { head: [...[-1,1].map(s=>new THREE.Vector3(s*1.04,.65,2.75)),
-      new THREE.Vector3(0,.13,2.795), ...[-1,1].map(s=>new THREE.Vector3(s*.55,1.85,.43))], tail: [-1,1].map(s=>new THREE.Vector3(s*1.055,.56,-2.72)) },
+    lights: { head: heads.map(at), tail: tails.map(at), lens: { head: heads.map(face), tail: tails.map(face) },
+      beam: [-1,1].map(s=>new THREE.Vector3(s*1.07,.515,2.7375)) },
     blob: [3.25,5.6], decalPanels: [[.62,.76,0,.835,1.48,-Math.PI/2]],
   };
   // tyre-top ceiling per wheel from the real body above it, past the tread lugs (wheeltravel.js)

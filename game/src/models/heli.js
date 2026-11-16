@@ -143,7 +143,9 @@ export function buildHeliModel() {
     wreckMats: mats, wreckColor: WRECK, blob: [3.2, 8.5], landingLight: true,
     // livery number boards and scuffs on the cabin sides (cosmetics.js)
     decalSpots: [[.62, .52, 1.0, -.45, -.25, 0, Math.PI / 2], [.62, .52, -1.0, -.45, -.25, 0, -Math.PI / 2]],
-    lights: { head: [new THREE.Vector3(0, -.97, 2.2)], tail: [], nav: {
+    // landing light: the lit lens (lights.js) on the lamp's underside, shining down and ahead
+    lights: { head: [new THREE.Vector3(0, -.95, 2.2)], tail: [], aim: new THREE.Vector3(0, -.5, .87),
+      lens: { head: [[[-.05, -.95, 2.075], [.05, -.95, 2.075], [.05, -.95, 2.325], [-.05, -.95, 2.325]]] }, nav: {
       left: new THREE.Vector3(1.1, .62, -5.4), right: new THREE.Vector3(-1.1, .62, -5.4),
       tail: new THREE.Vector3(0, 1.62, -6.75), strobe: new THREE.Vector3(0, 1.52, -.95),
     } } };

@@ -134,8 +134,13 @@ export function buildSportBikeModel() {
     return group;
   }
   lod(rider,riderParts(true),riderParts(false),38);
+  // lit lenses (lights.js) on the faces of the twin headlight boxes, tilted like them, over the outer part the nose
+  // fairing leaves showing (u = along the box, outward for s*u > 0), and on the tail-lamp box
+  const onLamp = (s,u,v) => { const a = s*.16; return [s*.15 + u*Math.cos(a) - v*Math.sin(a), .447 + u*Math.sin(a) + v*Math.cos(a), .9675]; };
+  const showing = s => [[-.015,-1],[.0625,-1],[.0625,1],[-.015,1]].map(([u,v]) => onLamp(s,s*u,v*.019));
   root.userData = { lean, bars, wheels, rider, lightMount: body, blob: [.95,2.2],
-    lights: { head: [-1,1].map(s=>new THREE.Vector3(s*.15,.447,.978)), tail: [new THREE.Vector3(0,.458,-1.06)] },
+    lights: { head: [-1,1].map(s=>new THREE.Vector3(...onLamp(s,s*.024,0))), tail: [new THREE.Vector3(0,.458,-1.048)],
+      lens: { head: [-1,1].map(showing), tail: [[[-.08,.438,-1.048],[.08,.438,-1.048],[.08,.478,-1.048],[-.08,.478,-1.048]]] } },
     decalPanels: [[.26,.14,.316,.14,.04,0,Math.PI/2],[.26,.14,-.316,.14,.04,0,-Math.PI/2]],
   };
   // tyre-top ceiling per wheel from the real body above it (wheeltravel.js); the front mudguard travels with its wheel

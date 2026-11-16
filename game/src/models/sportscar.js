@@ -81,7 +81,10 @@ function loft(parts, sections, paint, { front = 'body', back = 'body' } = {}) {
       const j2 = (j + 1) % m, k = j < n - 1 ? j : m - 1 - j;        // mirrored edges share the half-edge index
       const a = A[j], b = B[j], c = B[j2], d = A[j2];
       const role = paint(i, k);
-      if (role) { parts.tri(a, b, c, role); parts.tri(a, c, d, role); }
+      // the mirrored half splits each quad along the mirrored diagonal, so both sides are the same surface (a decal
+      // lifted off a non-flat quad on one side was under the other side's paint: the left headlight)
+      if (role && j < n - 1) { parts.tri(a, b, c, role); parts.tri(a, c, d, role); }
+      else if (role) { parts.tri(a, b, d, role); parts.tri(b, c, d, role); }
     }
   }
   const cap = (r, role, dir) => {
@@ -228,14 +231,16 @@ function nose(parts, rings) {
   for (const [x, y] of [[.06, -.17], [.17, -.17]]) face(hexPts(x, y, .035), COL.mesh, .011);
   // headlights on the front slope: a slim angular blade of dark lens (taller at the outer end, u = up the slope,
   // v = inward) with a sideways-Y daytime light
-  decal(parts, rings, 0, 5, [[.12, .03], [.88, .02], [.80, .55], [.68, .96], [.50, .97], [.38, .55]], .006, COL.lens);
+  const blade = [[.12, .03], [.88, .02], [.80, .55], [.68, .96], [.50, .97], [.38, .55]];
+  decal(parts, rings, 0, 5, blade, .006, COL.lens);
   for (const [u0, v0, u1, v1, w] of [[.62, .30, .60, .92, .035], [.62, .32, .25, .07, .035], [.62, .32, .84, .06, .035]]) {
     const du = u1 - u0, dv = v1 - v0, l = Math.hypot(du, dv), nu = -dv / l * w, nv = du / l * w;
     decal(parts, rings, 0, 5, [[u0 - nu, v0 - nv], [u1 - nu, v1 - nv], [u1 + nu, v1 + nv], [u0 + nu, v0 + nv]], .011, COL.drl);
   }
   // splitter following the V front
   parts.prism([[0, 2.37], [.82, 2.12], [.95, 2.00], [.95, 1.90], [-.95, 1.90], [-.95, 2.00], [-.82, 2.12]].map(([x, z]) => [x, z]), 'y', -.275, -.245, 'trim');
-  return onHull(rings, 0, 5, .55, .45, -.02)[0];
+  // the lit lens (lights.js) covers the blade, above the daytime light; anchor + outline for the left (+x) lamp
+  return { at: onHull(rings, 0, 5, .55, .45, .008)[0], outline: blade.map(([u, v]) => onHull(rings, 0, 5, u, v, .008)[0]) };
 }
 function hexPts(x, y, r, rot = 0) { return [0, 1, 2, 3, 4, 5].map(i => [x + r * Math.cos(rot + i * Math.PI / 3), y + r * Math.sin(rot + i * Math.PI / 3)]); }
 
@@ -261,8 +266,10 @@ function tail(parts) {
   // diffuser: plate and fins under the tail
   parts.prism([[-.86, -2.24], [.86, -2.24], [.86, -1.80], [-.86, -1.80]], 'y', -.165, -.145, 'trim');
   for (const x of [-.62, -.36, 0, .36, .62]) parts.prism([[-2.24, -.21], [-1.82, -.25], [-1.82, -.16], [-2.24, -.15]], 'x', x - .012, x + .012, COL.black);
-  // tail light anchors (just inside the lens)
-  return [.80, .36, -2.20 + .025];
+  // lit lenses (lights.js) for the left (+x) side: the Y at the end, the line toward the middle
+  const lens = (at, pts) => ({ at: [...at, z - .006], outline: pts.map(([x, y]) => [x, y, z - .006]) });
+  return [lens([.87, .36], [[.76, .345], [.90, .305], [.945, .32], [.96, .40], [.90, .41], [.76, .375]]),
+    lens([.55, .36], [[.30, .352], [.80, .352], [.80, .368], [.30, .368]])];
 }
 
 function deck(parts) {
@@ -399,9 +406,11 @@ export function buildSportsCarModel(p, suspension) {
     for (let i = -20; i <= 20; i++) low = Math.min(low, archCeiling(i / 20 * W.r, ra, W.front ? ARCH_N.front : ARCH_N.rear));
     wheelArch.push(+(W.y + low - .01).toFixed(3));
   }
-  const headLights = [1, -1].map(s => new THREE.Vector3(s * head[0], head[1], head[2]));
-  const tailLights = [1, -1].map(s => new THREE.Vector3(s * tl[0], tl[1], tl[2]));
-  root.userData = { bodyPivot, wheels, wheelArch, lightMount: bodyPivot, lights: { head: headLights, tail: tailLights },
+  const side = (s, [x, y, z]) => [s * x, y, z];
+  const headLights = [1, -1].map(s => new THREE.Vector3(...side(s, head.at)));
+  const tailLights = tl.flatMap(t => [1, -1].map(s => new THREE.Vector3(...side(s, t.at))));
+  const lens = { head: [1, -1].map(s => head.outline.map(p => side(s, p))), tail: tl.flatMap(t => [1, -1].map(s => t.outline.map(p => side(s, p)))) };
+  root.userData = { bodyPivot, wheels, wheelArch, lightMount: bodyPivot, lights: { head: headLights, tail: tailLights, lens },
     blob: [2.15, 4.6], lod, nearTriangles: near.count(), farTriangles: far.count(),
     // livery decals sit on the flat middle of the bonnet
     decalPanels: [[.5, .5, 0, .296, 1.40, -Math.PI / 2 + .177]] };

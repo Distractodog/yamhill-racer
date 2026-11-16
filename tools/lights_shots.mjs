@@ -115,7 +115,7 @@ try {
   const baseline = (report.bench[0].medianMs + report.bench[2].medianMs) / 2;
   report.extraMedianMs = report.bench[1].medianMs - baseline;
   report.performancePass = report.extraMedianMs <= 1;
-  report.candidate = 'single shadowless spotlight + lenses';
+  report.candidate = 'single shadowless spotlight shaped as low beams (lights.js) + lamp lenses and glows';
   console.log('Extra median ms:', report.extraMedianMs);
   report.status = report.performancePass && !report.pageErrors.length && !report.consoleErrors.length ? 'pass' : 'fail';
   if (report.status === 'fail') process.exitCode = 1;

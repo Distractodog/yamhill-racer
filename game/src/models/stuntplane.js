@@ -74,7 +74,9 @@ export function buildStuntPlaneModel() {
   // lights: landing light in the left wing root, nav lights on the tips, tail light, strobe on the fin
   const ly = WY + 1.8 * DIH;
   put(root, new THREE.BoxGeometry(0.3, 0.08, 0.04), lamp, 1.8, ly, LE(1.8) + 0.01);
-  const lights = { head: [new THREE.Vector3(1.8, ly, LE(1.8) + 0.05)], tail: [], nav: {
+  const lz = LE(1.8) + 0.03;               // the lit lens (lights.js) on the lamp box's front face
+  const lights = { head: [new THREE.Vector3(1.8, ly, lz)], tail: [],
+    lens: { head: [[[1.65, ly - .04, lz], [1.95, ly - .04, lz], [1.95, ly + .04, lz], [1.65, ly + .04, lz]]] }, nav: {
     left: new THREE.Vector3(4.18, WY + 4.1 * DIH, 0.45), right: new THREE.Vector3(-4.18, WY + 4.1 * DIH, 0.45),
     tail: new THREE.Vector3(0, 0.36, -5.0), strobe: new THREE.Vector3(0, 1.4, -4.55),
   } };
