@@ -54,7 +54,7 @@ function fly(j, secs, ctl, setup = null) {
     if (j.mode !== last) {
       st.modes += (st.modes ? '→' : '') + j.mode + '@' + t.toFixed(1);
       if (last === 'ground' && j.mode === 'air' && !st.liftoff) st.liftoff = { t, kmh, dist: Math.hypot(j.pos.x - start.x, j.pos.z - start.z) };
-      if (j.mode === 'crashed') st.crashes.push(`${j.msg} (${j.pos.x.toFixed(0)}, ${j.pos.z.toFixed(0)})`);
+      if (j.mode === 'crashed') st.crashes.push({ reason: j.crashReason, at: j.pos.clone() });
       if (last === 'air' && j.mode === 'ground') st.landed = { t, sink: -j._prevVel.y, kmh, at: j.pos.clone() };
       if (last === 'crashed') st.respawned = true;
       last = j.mode;
@@ -71,9 +71,10 @@ function fly(j, secs, ctl, setup = null) {
   st.end = { mode: j.mode, kmh: j.vel.length() * KMH, agl: j.agl };
   return st;
 }
+const crashSummary = st => st.crashes.map(({ reason, at }) => `${reason} (${at.x.toFixed(0)}, ${at.z.toFixed(0)})`).join(', ');
 const summary = st => `${st.modes || 'no mode change'} · top ${st.maxKmh.toFixed(0)} km/h${st.liftoff ? ` · lift-off ${st.liftoff.kmh.toFixed(0)} km/h after ${st.liftoff.dist.toFixed(0)} m` : ''}` +
   ` · max ${st.maxG.toFixed(1)} g · stalled ${st.stallT.toFixed(1)} s${st.landed ? ` · landed sink ${st.landed.sink.toFixed(1)} m/s at ${st.landed.kmh.toFixed(0)} km/h` : ''}` +
-  `${st.crashes.length ? ' · crashes: ' + st.crashes.join(', ') : ''} · end ${st.end.mode}, ${st.end.kmh.toFixed(0)} km/h${st.nan ? ' · NaN!' : ''}`;
+  `${st.crashes.length ? ' · crashes: ' + crashSummary(st) : ''} · end ${st.end.mode}, ${st.end.kmh.toFixed(0)} km/h${st.nan ? ' · NaN!' : ''}`;
 const sane = (st, what) => { check(!st.nan, `${what}: no NaN`); check(!st.groundFlip, `${what}: never tipped over on the ground`); };
 
 // autopilot pieces
@@ -118,9 +119,9 @@ function flatTests(type) {
     for (let i = 0; i < 4; i++) j.syncMesh(1 / 60);
     check(hub.rotation.z !== r0 && ud.propeller.disc.visible, 'propeller spins with the throttle (blurred disc at full power)');
     j.crash('impact'); for (let i = 0; i < 300; i++) { j.step(DT, { jet: {} }); j.syncMesh(DT); }
-    check(!ud.propeller.disc.visible && j.mesh.scale.y < 1, 'wreck: crumpled, propeller stopped');
+    check(j.mode === 'crashed' && j.crashReason === 'impact' && !ud.propeller.disc.visible && j.mesh.scale.y < 1, 'wreck: impact recorded, crumpled, propeller stopped');
     j.reset(0, 0, 0); j.syncMesh(DT);
-    check(j.mesh.scale.y === 1 && ud.canopy.visible, 'reset: wreck look removed');
+    check(j.crashReason === null && j.mesh.scale.y === 1 && ud.canopy.visible, 'reset: crash reason cleared, wreck look removed');
     sane(st, 'run-up');
   }
   // another player's copy (mp/remotes.js): their type's model, merged per part, moved by Jet.syncMesh on a puppet
@@ -265,15 +266,16 @@ function flatTests(type) {
     console.log(`   dive: ${summary(st)}`);
     check(st.crashes.length === 1 && st.respawned && st.end.mode === 'ground' && j.mesh.scale.y === 1, 'dive: crash, wreck, then back on the ground');
     sane(st, 'dive');
+    // Fresh aircraft have no respawn grace; these impacts must produce a wreck, not a grace recovery.
     const hard = make(type, flat()); hard.reset(0, 0, 0); hard.placeInAir(0, 30, 0, 0, S.approach);
     const st2 = fly(hard, 6, (t, J, k) => { J.thr = 0; J.roll = levelWings(k); J.pitch = holdVy(k, -14, 0.3); });
-    check(st2.crashes.some(m => /too hard/.test(m)), `hard landing (14 m/s down): crash (${st2.crashes.join(', ')})`);
+    check(st2.crashes.some(c => c.reason === 'hard'), `hard landing (14 m/s down): crash (${crashSummary(st2)})`);
     const wing = make(type, flat()); wing.reset(0, 0, 0); wing.placeInAir(0, 40, 0, 0, S.approach + 20);
     const st3 = fly(wing, 20, (t, J, k) => { J.thr = 0.5; J.roll = levelWings(k, 1.2); J.pitch = holdVy(k, -5, 0.2); });
-    check(st3.crashes.length > 0, `steep bank into the ground: crash (${st3.crashes.join(', ')})`);
+    check(st3.crashes.length > 0, `steep bank into the ground: crash (${crashSummary(st3)})`);
     const wet = make(type, flat({ water: 0.5, h: 0 })); wet.reset(0, 0, 0); wet.placeInAir(0, 30, 0, 0, S.approach);
     const st4 = fly(wet, 50, landingCtl(S));
-    check(st4.crashes.some(m => /water/i.test(m)), `landing on water: crash (${st4.crashes.join(', ')})`);
+    check(st4.crashes.some(c => c.reason === 'water'), `landing on water: crash (${crashSummary(st4)})`);
     for (const s of [st2, st3, st4]) sane(s, 'crash');
   }
   // taxi: slow full-rudder circle
