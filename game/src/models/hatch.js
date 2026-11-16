@@ -3,6 +3,7 @@
 // +z forward, +x = the car's left. Paint roles: body = shell and mirrors, trim = grille line, badges and sill stripe,
 // wheels = rims. The wheels sit on the physics mounts (WHEEL_POS × the type's width / length) at the parked stance.
 import * as THREE from 'three';
+import { measureWheelArch } from '../wheeltravel.js';
 import { WHEEL_POS } from '../carmodel.js';
 import { Shape, materials, loft, archFlares, sidePanel, sideSkirt, doorLine, endPanels, rect, oct, buildWheels, lodBody } from './shapedbody.js';
 
@@ -104,10 +105,9 @@ export function buildHatchModel(type, p, suspension) {
   const zN = near.car.nose, zT = near.car.tail;
   root.userData = { bodyPivot, wheels, lightMount: bodyPivot, blob: [2.4 * p.width, 4.6 * p.length],
     lights: { head: [1, -1].map(s => new THREE.Vector3(s * .64, .18, zN + .03)), tail: [1, -1].map(s => new THREE.Vector3(s * .76, .315, zT - .03)) },
-    // per wheel: upward travel from the parked stance before the tyre top meets the arch
-    wheelArch: wheels.map(w => { const a = arches[w.front ? 0 : 1]; return +(a.y + a.r - (w.holder.position.y + w.r)).toFixed(3); }),
     triangles: { near: near.shape.triangles(), far: far.shape.triangles() },
     // livery decals on the bonnet and roof
     decalPanels: [[.55, .55, 0, .434, 1.27, -Math.PI / 2 + .127], [.6, .6, 0, .929, -.55, -Math.PI / 2 - .012]] };
+  root.userData.wheelArch = measureWheelArch(root); // per wheel: tyre-top ceiling from the real arch (wheeltravel.js)
   return root;
 }

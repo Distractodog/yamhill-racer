@@ -41,24 +41,51 @@ function baseline(model) {
   });
   baselines.set(model,data);return data;
 }
+// Sutherland–Hodgman against one half-space: keep points with (v[axis]-edge)*sign >= 0.
+function clip(poly,axis,edge,sign) {
+  const result=[];
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i], b=poly[(i+1)%poly.length], da=(a[axis]-edge)*sign, db=(b[axis]-edge)*sign;
+    if(da>=0)result.push(a);
+    if((da<0)!==(db<0))result.push(a.clone().lerp(b,da/(da-db)));
+  }
+  return result;
+}
+// Smallest distance from the wheel axis (the origin of the y,z plane) to a convex polygon seen along x: 0 if inside.
+function distToPolygonYZ(poly) {
+  let best=Infinity, sign=0, inside=true;
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i], b=poly[(i+1)%poly.length], ey=b.y-a.y, ez=b.z-a.z, len2=ey*ey+ez*ez;
+    const t=len2>0?Math.max(0,Math.min(1,-(a.y*ey+a.z*ez)/len2)):0;
+    best=Math.min(best,Math.hypot(a.y+ey*t,a.z+ez*t));
+    const cross=ey*(-a.z)-ez*(-a.y);
+    if(Math.abs(cross)>1e-12){ if(sign&&Math.sign(cross)!==sign)inside=false; sign=sign||Math.sign(cross); }
+  }
+  return inside?0:best;
+}
 function check(model) {
   const data=baseline(model);
   model.updateWorldMatrix(true,true);
   model.userData.wheels.forEach((w,i)=>{
-    const {body,triangles,restTop}=data[i], inverse=body.matrixWorld.clone().invert();
-    const tyreBox=new THREE.Box3();
-    w.spin.children.find(o=>o.isMesh&&o.visible).traverse(o=>{
-      if(!o.isMesh)return;
-      const transform=new THREE.Matrix4().multiplyMatrices(inverse,o.matrixWorld), pos=o.geometry.attributes.position;
-      for(let j=0;j<pos.count;j++)tyreBox.expandByPoint(p.fromBufferAttribute(pos,j).applyMatrix4(transform));
-    });
-    assert(Number.isFinite(tyreBox.max.y));
-    tyreBox.expandByScalar(-1e-6); // contact within floating-point tolerance is not penetration
-    // Existing skin below the parked tyre-top/bonnet line is not a new suspension intrusion.
-    // Test the swept upper part against real triangles, with Box3's independent SAT test.
-    tyreBox.min.y=Math.max(tyreBox.min.y,restTop+2e-6);
-    if(!tyreBox.isEmpty())for(const tri of triangles){
-      assert(!tyreBox.intersectsTriangle(tri),`${model.name||'race'} wheel ${i}: tyre AABB penetrates actual body underside above parked line ${restTop}`);
+    const {body,triangles,restTop}=data[i];
+    // The tyre is a cylinder (a circle in the side view) about the holder's x axis: the radius and half width come from
+    // the tyre mesh, the pose from the holder, so steering, roll and dive are exact (the old test used the tyre's AABB).
+    const tyre=w.spin.children.find(o=>o.isMesh&&o.visible);
+    tyre.geometry.computeBoundingBox();
+    const tb=tyre.geometry.boundingBox, radius=Math.max(tb.max.y,tb.max.z), xMin=tb.min.x+1e-6, xMax=tb.max.x-1e-6;
+    assert(Number.isFinite(radius)&&radius>0);
+    const toWheel=new THREE.Matrix4().copy(w.holder.matrixWorld).invert().multiply(body.matrixWorld);
+    // Existing skin below the parked tyre-top line is not a new suspension intrusion: only the part of the body above
+    // it counts, tested against the real triangles. A hit is body inside the disc (contact within 1 µm is allowed).
+    for(const tri of triangles){
+      let poly=[tri.a,tri.b,tri.c].map(v=>v.clone());
+      poly=clip(poly,'y',restTop+2e-6,1);
+      if(poly.length<3)continue;
+      poly=poly.map(v=>v.applyMatrix4(toWheel));
+      poly=clip(clip(poly,'x',xMin,1),'x',xMax,-1);
+      if(poly.length<3)continue;
+      const dist=distToPolygonYZ(poly);
+      assert(dist>=radius-1e-6,`${model.name||'race'} wheel ${i}: tyre cylinder penetrates actual body underside above parked line ${restTop} (distance ${dist.toFixed(4)} < radius ${radius.toFixed(4)}, ceiling ${wheelArch(model,i)}, hub y ${w.holder.position.y.toFixed(4)}; wheel-frame polygon ${poly.map(v=>v.toArray().map(n=>n.toFixed(3)).join(',')).join(' | ')})`);
     }
   });
   samples++;

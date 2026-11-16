@@ -52,7 +52,9 @@ for (const id of ['hatch', 'suv']) {
   const ground = Math.min(...ud.wheels.map(w => w.holder.position.y - w.r));
   assert.equal(ud.wheelArch.length, 4);
   for (const [i, w] of ud.wheels.entries()) {
-    assert(ud.wheelArch[i] > .03 && ud.wheelArch[i] < .2, `${id}: wheel ${i} arch gap ${ud.wheelArch[i]}`);
+    // wheelArch is a tyre-top ceiling in the body frame (wheeltravel.js): the gap above the parked tyre top
+    const gap = ud.wheelArch[i] - w.holder.position.y - w.r;
+    assert(gap > .03 && gap < .2, `${id}: wheel ${i} arch gap ${gap}`);
     const wb = new THREE.Box3().setFromObject(w.holder);
     assert(Math.abs(wb.max.x) <= box.max.x + .005 && Math.abs(wb.min.x) <= box.max.x + .005, `${id}: wheel ${i} sticks out of the body width`);
   }

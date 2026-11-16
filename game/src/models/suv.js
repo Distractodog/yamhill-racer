@@ -4,6 +4,7 @@
 // Paint roles: body = shell and mirrors, trim = roof rails, grille frame, skid plates and badges, wheels = rims (spare
 // too). The wheels sit on the physics mounts (WHEEL_POS × the type's width / length) at the parked stance.
 import * as THREE from 'three';
+import { measureWheelArch } from '../wheeltravel.js';
 import { WHEEL_POS } from '../carmodel.js';
 import { Shape, materials, loft, archFlares, sidePanel, sideSkirt, doorLine, endPanels, rect, oct, wheelGeometry, buildWheels, lodBody } from './shapedbody.js';
 
@@ -109,10 +110,9 @@ export function buildSuvModel(type, p, suspension) {
   const zN = near.car.nose, zT = near.car.tail;
   root.userData = { bodyPivot, wheels, lightMount: bodyPivot, blob: [2.4 * p.width, 4.6 * p.length],
     lights: { head: [1, -1].map(s => new THREE.Vector3(s * .91, .29, zN + .03)), tail: [1, -1].map(s => new THREE.Vector3(s * 1.0, .30, zT - .03)) },
-    // per wheel: upward travel from the parked stance before the tyre top meets the arch
-    wheelArch: wheels.map(w => { const a = arches[w.front ? 0 : 1]; return +(a.y + a.r - (w.holder.position.y + w.r)).toFixed(3); }),
     triangles: { near: near.shape.triangles(), far: far.shape.triangles() },
     // livery decals on the bonnet and roof (between the rails)
     decalPanels: [[.6, .6, 0, .515, 1.55, -Math.PI / 2 + .047], [.6, .6, 0, 1.064, -.7, -Math.PI / 2]] };
+  root.userData.wheelArch = measureWheelArch(root); // per wheel: tyre-top ceiling from the real arch (wheeltravel.js)
   return root;
 }

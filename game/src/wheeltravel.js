@@ -93,3 +93,71 @@ export function drawnWheelY(model, index, requestedY) {
   if (requestedY <= start) return requestedY;
   return ease > 1e-9 ? start + ease * (1 - Math.exp(-(requestedY - start) / ease)) : Math.min(requestedY, limit);
 }
+
+// Model builders: the tyre-top ceiling per wheel (the wheelArch metadata, body frame) measured from the model's real
+// arch underside, so a parked tyre keeps its natural gap. For each wheel the downward-facing body triangles above the
+// parked tyre top and inside the tyre's width are collected in the wheel's own frame; the tyre is a cylinder (a circle
+// in the side view), and the ceiling is the tyre top after the largest rise that keeps the circle clear of all of them
+// (less `margin`; less any tread lugs standing out past w.r). Wheels with nothing above them get NaN, which
+// wheelArch() answers from the geometry. Call once the model is fully built (parked pose, userData set).
+// Distance from the wheel axis (origin of the y,z plane) to a convex polygon seen along x: 0 when it covers the axis.
+function distanceToPolygonYZ(poly) {
+  let best = Infinity, sign = 0, inside = true;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], ey = b.y - a.y, ez = b.z - a.z, len2 = ey * ey + ez * ez;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, -(a.y * ey + a.z * ez) / len2)) : 0;
+    best = Math.min(best, Math.hypot(a.y + ey * t, a.z + ez * t));
+    const cross = -ey * a.z + ez * a.y;
+    if (Math.abs(cross) > 1e-12) { if (sign && Math.sign(cross) !== sign) inside = false; sign = sign || Math.sign(cross); }
+  }
+  return inside ? 0 : best;
+}
+export function measureWheelArch(model, margin = .005) {
+  const ud = model.userData, holders = new Set(ud.wheels.map(w => w.holder));
+  model.updateMatrixWorld(true);
+  const meshes = [];
+  model.traverse(o => {
+    if (!o.isMesh) return;
+    for (let p = o; p && p !== model; p = p.parent) {
+      if (holders.has(p) || p === ud.rider || p === ud.bars || p.name.startsWith('cosmetic-') || p.userData.cosmetic) return;
+    }
+    meshes.push(o);
+  });
+  const hub = new THREE.Vector3(), toWheel = new THREE.Matrix4(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+  return ud.wheels.map(w => {
+    const body = ud.bodyPivot || w.holder.parent, tyre = w.spin.children.find(o => o.isMesh);
+    tyre.geometry.computeBoundingBox();
+    const tb = tyre.geometry.boundingBox, R = Math.max(tb.max.y, tb.max.z), xMin = tb.min.x, xMax = tb.max.x;
+    const polys = [], inverse = new THREE.Matrix4().copy(w.holder.matrixWorld).invert();
+    for (const o of meshes) {
+      toWheel.multiplyMatrices(inverse, o.matrixWorld);
+      const pos = o.geometry.attributes.position, idx = o.geometry.index;
+      for (let j = 0; j < (idx ? idx.count : pos.count); j += 3) {
+        const p = [a, b, c].map((v, k) => v.fromBufferAttribute(pos, idx ? idx.getX(j + k) : j + k).applyMatrix4(toWheel).clone());
+        if (n.crossVectors(b.copy(p[1]).sub(p[0]), c.copy(p[2]).sub(p[0])).y >= 0) continue;   // undersides only
+        let poly = clipPolygon(p, 'y', R + 2e-6, 1);
+        if (poly.length < 3) continue;
+        poly = clipPolygon(clipPolygon(poly, 'x', xMin, 1), 'x', xMax, -1);
+        if (poly.length >= 3) polys.push(poly);
+      }
+    }
+    // largest rise of the tyre circle before any polygon is inside it (scan, then bisect)
+    const clear = rise => polys.every(poly => distanceToPolygonYZ(poly.map(v => ({ y: v.y - rise, z: v.z }))) >= R);
+    if (!polys.length) return NaN;
+    let lo = 0, hi = .5;
+    for (let r = .005; r <= .5; r += .005) { if (!clear(r)) { hi = r; break; } lo = r; }
+    if (hi >= .5 && clear(.5)) return NaN;
+    for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (clear(mid)) lo = mid; else hi = mid; }
+    return +(body.worldToLocal(w.holder.getWorldPosition(hub)).y + R + lo - margin - (R - w.r)).toFixed(3);
+  });
+}
+// Sutherland–Hodgman against one half-space: keep points with (v[axis] - edge) * sign >= 0.
+function clipPolygon(poly, axis, edge, sign) {
+  const result = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], da = (a[axis] - edge) * sign, db = (b[axis] - edge) * sign;
+    if (da >= 0) result.push(a);
+    if ((da < 0) !== (db < 0)) result.push(a.clone().lerp(b, da / (da - db)));
+  }
+  return result;
+}

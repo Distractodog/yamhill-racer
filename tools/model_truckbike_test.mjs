@@ -51,7 +51,7 @@ for(const [kind,type,limits] of [['car','truck',[[3,3.5],[2.7,3.3],[5.3,5.9]]],[
       const dz=radius*j/9, y=Math.sqrt(radius*radius-dz*dz);
       ray.set(hub.clone().add(new THREE.Vector3(0,0,dz)),new THREE.Vector3(0,1,0));
       const hit=ray.intersectObjects(solid,false)[0];
-      if(hit){const gap=hit.distance-y;minGap=Math.min(minGap,gap);assert(gap>=ud.wheelArch[i]-.005,`${type} wheel ${i} arch gap ${gap} at dz ${dz}`);}
+      if(hit){const gap=hit.distance-y;minGap=Math.min(minGap,gap);assert(gap>=ud.wheelArch[i]-w.holder.position.y-radius-.005,`${type} wheel ${i} arch gap ${gap} at dz ${dz}`);}
     }
     assert(Number.isFinite(minGap),`${type} wheel ${i}: arch probe missed`);
     if(kind==='car')assert(Math.abs(hub.x)+.24<1.62,'truck tyre outside flare');

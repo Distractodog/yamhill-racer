@@ -1,5 +1,6 @@
 // Lifted crew-cab pickup. Wheel mounts/radii come from the existing type, never from new physics.
 import * as THREE from 'three';
+import { measureWheelArch } from '../wheeltravel.js';
 import { WHEEL_POS } from '../carmodel.js';
 import { material, mesh, box, rod, hull, sideShape, lod, wheel } from './truckbikeparts.js';
 
@@ -129,9 +130,8 @@ export function buildTruckModel(p, suspension) {
     lights: { head: [...[-1,1].map(s=>new THREE.Vector3(s*1.04,.65,2.75)),
       new THREE.Vector3(0,.13,2.795), ...[-1,1].map(s=>new THREE.Vector3(s*.55,1.85,.43))], tail: [-1,1].map(s=>new THREE.Vector3(s*1.055,.56,-2.72)) },
     blob: [3.25,5.6], decalPanels: [[.62,.76,0,.835,1.48,-Math.PI/2]],
-    // Maximum upward displacement from each parked hub before the tyre meets its arch.
-    // Includes the tread lugs and leaves 2 cm margin for the wheel-clip clamp.
-    wheelArch: wheels.map(()=>archRadius-.63-.02),
   };
+  // tyre-top ceiling per wheel from the real body above it, past the tread lugs (wheeltravel.js)
+  root.userData.wheelArch = measureWheelArch(root, .02);
   return root;
 }

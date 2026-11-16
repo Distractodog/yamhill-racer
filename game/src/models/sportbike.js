@@ -1,5 +1,6 @@
 // Fully faired road bike with a tucked rider. Suspension/lean/bars use Bike.syncMesh's contract.
 import * as THREE from 'three';
+import { measureWheelArch } from '../wheeltravel.js';
 import { material, mesh, box, rod, hull, lod, wheel } from './truckbikeparts.js';
 
 export function buildSportBikeModel() {
@@ -126,9 +127,9 @@ export function buildSportBikeModel() {
   lod(rider,riderParts(true),riderParts(false),38);
   root.userData = { lean, bars, wheels, rider, lightMount: body, blob: [.95,2.2],
     lights: { head: [-1,1].map(s=>new THREE.Vector3(s*.15,.447,.978)), tail: [new THREE.Vector3(0,.458,-1.06)] },
-    // Upward travel from the parked hub; the front mudguard travels with its wheel.
-    wheelArch: [.18,.14],
     decalPanels: [[.26,.14,.316,.14,.04,0,Math.PI/2],[.26,.14,-.316,.14,.04,0,-Math.PI/2]],
   };
+  // tyre-top ceiling per wheel from the real body above it (wheeltravel.js); the front mudguard travels with its wheel
+  root.userData.wheelArch = measureWheelArch(root);
   return root;
 }
