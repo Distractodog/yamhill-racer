@@ -107,7 +107,6 @@ export class Car extends Vehicle {
   }
 
   hudInfo() {
-    if (this.bankT > 0) return 'Sunk – back on the bank · ';
     if (this.underT > 0 || (this.waterSub > 0.3 && this.flood > 0.5)) return 'SINKING · ';
     return this.skimming ? 'SKIMMING · ' : '';
   }

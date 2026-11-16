@@ -362,7 +362,6 @@ export class Jet extends Vehicle {
     this.mode = 'ground'; this.rot = clamp(Math.asin(clamp(_fw.y, -1, 1)), 0, this.air.rotMax); this.vy = 0;
     this.pos.y = this.groundPose(this.pos.x, this.pos.z, this.yaw, this.rot, this.pos.y);
     this.landing = Math.min(1, sink / 9); this.stall = false; this.pullUp = false;
-    if (this.airTime > 1.5) this.say(sink < 2.5 ? 'Smooth landing' : 'Landed', 2);   // not for every hop off a bump
   }
 
   // A wreck retains its impact momentum; the rotating body contacts the terrain and rebounds.
@@ -405,8 +404,6 @@ export class Jet extends Vehicle {
     this.throttle = 0; this.gear = 0;
     this.stall = false; this.pullUp = false;
     this.mesh.userData.wreck(true);
-    this.say(why === 'water' ? 'Splash! Crashed into the water' : why === 'tree' ? 'Crashed into the trees!' :
-      why === 'building' ? 'Crashed into a building!' : why === 'hard' ? 'Crashed: came down too hard' : 'Crashed!', 4.5);
   }
 
   // tree crowns (like the glider): cones for conifers, a ball-ish crown on broadleaf trees; wings reach 4.9 m
@@ -423,16 +420,14 @@ export class Jet extends Vehicle {
   }
 
   hudInfo() {
-    if (this.mode === 'crashed') return 'CRASHED · back in a moment (R now)';
+    if (this.mode === 'crashed') return '';
     const thr = `THR ${Math.round(this.throttle * 100)}%`;
     if (this.mode === 'ground') {
       const hint = this.v * 3.6 > this.t.rotateKmh ? ' · ↓ to lift the nose' : this.throttle < 0.3 && this.v < 3 ? ' · hold W to throttle up' : '';
       return `${thr} · on the ground${hint} · `;
     }
     const vs = this.vel.y;
-    let h = `${thr} · ALT ${Math.max(0, Math.round(this.agl))} m · ${vs >= 0 ? '↑' : '↓'}${Math.abs(vs).toFixed(0)} m/s · ${this.gLoad.toFixed(1)} g`;
-    if (this.stall) h += ' · <span style="color:#ff5a4a">STALL – nose down, more throttle</span>';
-    else if (this.pullUp) h += ' · <span style="color:#ffb02e">PULL UP</span>';
+    const h = `${thr} · ALT ${Math.max(0, Math.round(this.agl))} m · ${vs >= 0 ? '↑' : '↓'}${Math.abs(vs).toFixed(0)} m/s · ${this.gLoad.toFixed(1)} g`;
     return h + ' · ';
   }
 

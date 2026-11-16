@@ -28,8 +28,8 @@ function fly(h, inp, secs, ctl = () => {}) {
     assert([...h.pos, ...h.vel, ...h.quat, ...h.ang, h.rotor, h.agl].every(Number.isFinite), `non-finite state at ${t.toFixed(2)} s`);
     if (h.mode !== last) {
       st.modes.push(`${h.mode}@${t.toFixed(1)}`);
-      if (h.mode === 'ground' && last === 'air') st.landed = { t, sink: -h._prevVel.y, kmh: kmh(h), msg: h.msg };
-      if (h.mode === 'crashed') st.crashed = { t, msg: h.msg };
+      if (h.mode === 'ground' && last === 'air') st.landed = { t, sink: -h._prevVel.y, kmh: kmh(h) };
+      if (h.mode === 'crashed') st.crashed = { t, mode: h.mode };
       last = h.mode;
     }
     if (h.mode === 'air') { st.minAgl = Math.min(st.minAgl, h.agl); st.maxAgl = Math.max(st.maxAgl, h.agl); }
@@ -125,7 +125,7 @@ check('landing: hold S from 40 m, gentle touchdown on the skids, rotor winds dow
   assert.equal(h.mode, 'ground'); assert(Math.abs(h.pos.y - 1.6) < 1e-6, `on skids y ${h.pos.y}`);
   fly(h, inp, 6);
   assert(h.rotor < HELI.idle + 0.05, `rotor ${h.rotor.toFixed(2)}`);
-  return `touchdown at ${st.landed.sink.toFixed(2)} m/s ("${st.landed.msg}"), rotor back to ${(h.rotor * 100).toFixed(0)}%`;
+  return `touchdown at ${st.landed.sink.toFixed(2)} m/s, rotor back to ${(h.rotor * 100).toFixed(0)}%`;
 });
 check('landing with some forward speed: skids slide to a stop', () => {
   const h = new Heli(flat()), inp = input(); airborne(h, inp, 6);
@@ -153,9 +153,9 @@ check('crash: coming down too hard (12 m/s sink)', () => {
   const h = new Heli(flat()), inp = input(); airborne(h, inp, 10);
   h.vel.y = -12; h.rotor = 0.2;
   const st = fly(h, inp, 3);
-  assert(st.crashed && /too hard/.test(st.crashed.msg), JSON.stringify(st));
+  assert(st.crashed?.mode === 'crashed', JSON.stringify(st));
   assert.equal(h.mesh.scale.y, 0.7); assert(!h.mesh.userData.canopy.visible);
-  return st.crashed.msg;
+  return st.modes.join(' → ');
 });
 check('crash: flying into the ground at speed', () => {
   const h = new Heli(flat()), inp = input(); airborne(h, inp, 20);
@@ -163,37 +163,37 @@ check('crash: flying into the ground at speed', () => {
   const st = fly(h, inp, 10, (t, J) => { J.pitch = -1; J.thr = -1; });
   // the sink eases near the ground, so dive with the collective down hard
   assert(st.crashed, `modes ${st.modes} ${JSON.stringify(st.landed)} agl ${st.minAgl}`);
-  return h.msg;
+  return h.mode;
 });
 check('crash: tipped past 60°', () => {
   const h = new Heli(flat()), inp = input(); airborne(h, inp);
   h.pitch = 2.6; h.setPose();          // (the stick stops well short of this: knocked over, e.g. in a collision)
   h.step(DT, inp);
-  assert(h.mode === 'crashed' && /tipped/.test(h.msg), h.msg);
-  return h.msg;
+  assert.equal(h.mode, 'crashed');
+  return h.mode;
 });
 check('crash: rotor into a cliff while sliding sideways', () => {
   const W = flat({ heightAt: x => x < -12 ? 60 : 0, terrainAt: x => x < -12 ? 60 : 0 });
   const h = new Heli(W), inp = input(); airborne(h, inp, 20);
   const st = fly(h, inp, 6, (t, J) => { J.roll = 1; });
-  assert(st.crashed && /rotor/.test(st.crashed.msg), JSON.stringify(st));
-  return st.crashed.msg;
+  assert(st.crashed?.mode === 'crashed', JSON.stringify(st));
+  return st.modes.join(' → ');
 });
 check('crash: water under the skids, trees, buildings', () => {
   const wet = new Heli(flat({ waterLevelAt: () => 0.5 })), inp = input();
   wet.reset(0, 0, 0); wet.placeInAir(0, 20, 0, 0, 0);
   const a = fly(wet, inp, 15, (t, J) => { J.thr = -1; });
-  assert(a.crashed && /water/.test(a.crashed.msg), JSON.stringify(a));
+  assert(a.crashed?.mode === 'crashed', JSON.stringify(a));
   const trees = new Heli(flat({ treesNear(x, z, r, cb) { cb(0, 60, 0.4, 25, 1); } })), inp2 = input();
   airborne(trees, inp2, 10);
   const b = fly(trees, inp2, 10, (t, J) => { J.pitch = -1; });
-  assert(b.crashed && /trees/.test(b.crashed.msg), JSON.stringify(b));
+  assert(b.crashed?.mode === 'crashed', JSON.stringify(b));
   const box = { pts: [[-20, 50], [20, 50], [20, 70], [-20, 70]], h: 30, top: 30 };
   const bld = new Heli(flat({ buildingsNear: () => [box] })), inp3 = input();
   airborne(bld, inp3, 10);
   const c = fly(bld, inp3, 10, (t, J) => { J.pitch = -1; });
-  assert(c.crashed && /building/.test(c.crashed.msg), JSON.stringify(c));
-  return `${a.crashed.msg} / ${b.crashed.msg} / ${c.crashed.msg}`;
+  assert(c.crashed?.mode === 'crashed', JSON.stringify(c));
+  return `${a.crashed.mode} / ${b.crashed.mode} / ${c.crashed.mode}`;
 });
 check('wreck: tumbles with its momentum, bounces, then back at the last safe spot', () => {
   const h = new Heli(flat()), inp = input(); airborne(h, inp, 15);
@@ -468,7 +468,7 @@ if (!process.argv.includes('--flat')) {
       prev = p;
     });
     assert(done !== null, `${rings}/${G.length - 1} rings, modes ${st.modes.slice(0, 6)}`);
-    assert(!st.crashed, `crashed: ${st.crashed?.msg}`);
+    assert(!st.crashed, `crashed: ${JSON.stringify(st.crashed)}`);
     return `all ${rings} rings in ${(done / 60).toFixed(0)}:${String(Math.round(done % 60)).padStart(2, '0')}, top ${st.maxKmh.toFixed(0)} km/h, lowest ${st.minAgl.toFixed(0)} m`;
   });
 }

@@ -3,8 +3,7 @@
 //   python3 tools/serve.py 8173 game        then        node tools/water_shots.mjs --out <dir> [--url http://127.0.0.1:8173/]
 // Sites and run-ups are picked in Node from the committed tiles exactly as tools/water_test.mjs does (tools/lib/water.mjs).
 // Per site and vehicle:
-//   deep   — in at ~40 km/h, W held: shots on entry (splash / wading spray), floating, sinking (HUD 'SINKING' for the car,
-//            'Bail! Into the water' for the bike), and back on the bank (car HUD 'Sunk – back on the bank')
+//   deep   — in at ~40 km/h, W held: shots on entry (splash / wading spray), floating, sinking, and back on the bank
 //   skim   — in at 150 km/h from 8 m up the bank: a shot while planing (HUD 'SKIMMING')
 //   shallow (pond edge only; the river banks are near-vertical) — wading out of 0.1–0.55 m of water: spray
 // Driving uses the real keys (game.keys); the camera is the normal chase camera. Prints every shot with the HUD text,
@@ -118,9 +117,9 @@ try {
     const start = [s.x, s.z];
     await sleep(250); await shot(`${tag}-1-entry`, 'entry', await state());
     await sleep(1000); await shot(`${tag}-2-floating`, 'floating', await state());
-    s = await until(s => s.underT > 0 || s.sunk || /SINKING|Bail/.test(s.hud) || Math.hypot(s.x - start[0], s.z - start[1]) > 60, 15000);
+    s = await until(s => s.underT > 0 || s.sunk || (s.sub > 0.3 && s.flood > 0.5) || Math.hypot(s.x - start[0], s.z - start[1]) > 60, 15000);
     if (s && Math.hypot(s.x - start[0], s.z - start[1]) <= 60) await shot(`${tag}-3-sinking`, 'sinking', s);
-    else missing.push(`${tag}: no sinking read-out`);
+    else missing.push(`${tag}: never started sinking`);
     let last = s ? [s.x, s.z] : start;
     s = await until(s => { const j = Math.hypot(s.x - last[0], s.z - last[1]) > 6; last = [s.x, s.z]; return j && !s.wet; }, 20000);
     if (s) { await keys([], ['KeyW']); await sleep(500); await shot(`${tag}-4-bank`, 'bank', await state()); }

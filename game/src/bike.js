@@ -181,7 +181,6 @@ export class Bike extends Vehicle {
     this.flood = Math.min(1, Math.max(0, this.flood + dt * floodRate(sub, FLOOD_RATE)));
     this.waterSub = sub; this.skimming = skimming >= 1;
     const sinking = sub > 0.3 && this.flood > 0.5;
-    if (sinking && !this.sunk) this.say('Bail! Into the water', 2.5);
     this.sunk = sinking;
     // how much the tyres drive: on the bed (less as the bike floats), or planing on the water
     let drive = 0;
@@ -381,7 +380,6 @@ export class Bike extends Vehicle {
   bail() {
     this.vel.multiplyScalar(0.35); this.pitch = this.groundPitch; this.pitchRate = 0;
     this.hit = Math.max(this.hit, 20); this.landing = 1;
-    this.say('Bail! Rough landing', 1.8);
   }
 
   hudInfo() {
