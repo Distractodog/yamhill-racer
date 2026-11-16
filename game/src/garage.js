@@ -116,7 +116,7 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
   button.addEventListener('click',()=>open?close():show());button.setAttribute('aria-controls','cosmetic-garage');button.setAttribute('aria-expanded','false');
   dialog.querySelector('form').addEventListener('submit',e=>e.preventDefault());
   dialog.querySelectorAll('[data-kind]').forEach(b=>b.addEventListener('click',()=>{kind=b.dataset.kind;rotation=.65;zoom=1;refresh();}));
-  dialog.querySelectorAll('input[name],select[name]').forEach(field=>field.addEventListener('input',()=>{if(field.name==='vehicleType'){const saved=vehicles.setType(kind,field.value);refresh();message(saved?'Type saved to this browser.':'Browser storage is unavailable; changes last until you reload.');return;}if(field.name==='number'&&!/^\d{1,2}$/.test(field.value))return;const saved=cosmetics.set(kind,{[field.name]:field.value});message(saved?'Saved to this browser.':'Browser storage is unavailable; changes last until you reload.');}));
+  dialog.querySelectorAll('input[name],select[name]').forEach(field=>field.addEventListener('input',()=>{if(field.name==='vehicleType'){const saved=vehicles.setType(kind,field.value,{activate:true});refresh();message(saved?'Type saved to this browser.':'Browser storage is unavailable; changes last until you reload.');return;}if(field.name==='number'&&!/^\d{1,2}$/.test(field.value))return;const saved=cosmetics.set(kind,{[field.name]:field.value});message(saved?'Saved to this browser.':'Browser storage is unavailable; changes last until you reload.');}));
   dialog.querySelectorAll('[data-glider-color]').forEach(field => field.addEventListener('input', () => {
     gliderMessage(gliderColors.set(kind, { [field.dataset.gliderColor]: field.value }));
   }));

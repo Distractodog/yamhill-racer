@@ -5,6 +5,8 @@ export function createSpawn() {
   addEventListener('keydown', e => {
     if (!choosing && !loading) return;
     if (choosing && !loading && allowed.has(e.code)) return;
+    // H pauses driving while home streams in, but the V picker must still work.
+    if (!choosing && loading && /^(KeyV|(Digit|Numpad)[123]|ArrowUp|ArrowDown|Enter|Escape)$/.test(e.code)) return;
     e.preventDefault(); e.stopImmediatePropagation();
   }, true);
   async function move(x, z) {
