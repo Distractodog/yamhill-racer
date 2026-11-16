@@ -13,7 +13,7 @@ assert.equal(sanitizeCosmetics({body:'red',number:'<img>',livery:'campus'},'car'
 assert.equal(sanitizeCosmetics({livery:'campus'},'car').livery,'classic');
 assert.equal(cosmetics.set('car',{body:'#123456',wheels:'#ffd000',number:'42',wheelStyle:'rally'}),true,'saved status reflects successful storage');
 assert.equal(cosmetics.get('car').body,'#123456');assert.equal(JSON.parse(saved.get(COSMETIC_KEY)).car.number,'42');
-const body=vehicles.all.car.mesh.userData.bodyPivot.children[0],color=body.geometry.attributes.color,expected=new THREE.Color('#123456');
+const body=vehicles.all.car.mesh.getObjectByName('body-near').children[0],color=body.geometry.attributes.color,expected=new THREE.Color('#123456');
 assert(Math.abs(color.getX(0)-expected.r)<1e-6,'merged car vertex colors update');
 assert.equal(vehicles.all.car.mesh.userData.wheels[0].spin.children.at(-1).visible,true);
 cosmetics.set('bike',{helmet:'#00ff00',body:'#ff0000',jacket:'#0000ff',gloves:'#ff00ff'});
