@@ -34,6 +34,14 @@ export function createQuiet(delay = QUIET_MS) {
   let last = -Infinity;
   return { touch(now) { last = now; }, busy(now) { return now - last < delay; }, reset() { last = -Infinity; } };
 }
+// main.js: draw the 3D view this frame? Map closed: always. Full map open: it holds its last frame (one is drawn if
+// there is none yet), except in a multiplayer game mid-game (not the spawn map), where it is redrawn every
+// BEHIND_MAP_MS so the other players behind the map don't freeze; never while the map is busy (zoomed / dragged).
+export const BEHIND_MAP_MS = 250;
+export function draw3D({ open, drawn, multiplayer, spawn, busy, now, last }) {
+  if (!open || !drawn) return true;
+  return multiplayer && !spawn && !busy && now - last >= BEHIND_MAP_MS;
+}
 // Where a drawing made of view `snap` ({ ox, oy, s, w, h }: canvas px of picture pixel 0, canvas px per picture pixel,
 // its size) goes in the view (ox, oy, s): [x, y, w, h] in canvas px, or null when it would be scaled too far.
 export function snapshotPlace(snap, ox, oy, s, maxUp = SNAPSHOT_MAX_UP, maxDown = SNAPSHOT_MAX_DOWN) {

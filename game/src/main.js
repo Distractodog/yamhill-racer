@@ -12,6 +12,7 @@ import { createAtmosphere } from './atmosphere.js';
 import { CarAudio } from './audio.js';
 import { createDirections } from './directions.js';
 import { createMinimap, preloadMinimap } from './minimap.js';
+import { draw3D } from './mapview.js';
 import { createChallenges } from './challenges.js';
 import { createPinGuide } from './pin.js';
 import { Glider, BIKE_GLIDER } from './glider.js';
@@ -388,7 +389,7 @@ function updateCamera(dt) {
 
 // ---------------------------------------------------------------- loop
 const STEP = 1 / 120;
-let acc = 0, last = performance.now(), fps = 60, frames = 0, fpsT = 0, drawn3D = false;
+let acc = 0, last = performance.now(), fps = 60, frames = 0, fpsT = 0, drawn3D = false, last3D = -Infinity;
 const speedEl = document.getElementById('speed'), infoEl = document.getElementById('info');
 const vmsgEl = Object.assign(document.createElement('div'), { id: 'veh-msg' }); document.getElementById('hud').append(vmsgEl);
 // bike / jet read-out (throttle, height, warnings…) sits above the speed, clear of the help text bottom-right
@@ -483,8 +484,10 @@ function frame(now) {
   if (!holdWarmup) warmup.step();
   if (!holdWarmup && warmup.done && !vehicleThumbs.started) vehicleThumbs.start(['car', 'bike', 'jet'].map(k => [k, vehicles.getType(k)]));
   // the full map (M, or the spawn map) covers the screen: the 3D view, dimmed behind it, holds its last frame (one is
-  // drawn if there is none yet: the spawn map opens before the first frame)
-  if (!minimap.open || !drawn3D) { renderer.render(scene, camera); drawn3D = true; }
+  // drawn if there is none yet: the spawn map opens before the first frame); in multiplayer ~4 times a second (mapview.js)
+  if (draw3D({ open: minimap.open, drawn: drawn3D, multiplayer: mp.inGame, spawn: sessionSpawn.blocked, busy: mapBusy, now, last: last3D })) {
+    renderer.render(scene, camera); drawn3D = true; last3D = now;
+  }
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
