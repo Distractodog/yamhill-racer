@@ -26,6 +26,8 @@ export function createGameMenu({ onOpen = () => {}, onChange = () => {} } = {}) 
       if (e.target === button && /^(Enter|NumpadEnter|Space)$/.test(e.code)) e.gameUI = true;
       return;
     }
+    // Dismiss for game actions and let the existing settings/game handlers use the key.
+    if (/^(Key[VJMTPRFHCGLU]|F8|Backspace)$/.test(e.code)) { close(true); return; }
     e.gameUI = true;
     if (e.code === 'Escape') {
       e.preventDefault(); e.stopImmediatePropagation(); close(true); return;

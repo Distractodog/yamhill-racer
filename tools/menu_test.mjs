@@ -42,6 +42,13 @@ const escape = key('Escape'); assert.equal(escape.stopped, true); assert.equal(m
 assert.equal(button.attributes.get('aria-expanded'), 'false'); assert.equal(document.activeElement, button);
 assert.equal(key('Space').gameUI, true); // native button activation never brakes the car
 assert.equal(key('KeyM').gameUI, undefined); // map shortcut remains available when closed
+for (const code of ['KeyV', 'KeyJ', 'KeyM', 'KeyT', 'KeyP', 'KeyR', 'KeyF', 'KeyH', 'KeyC', 'KeyG', 'KeyL', 'KeyU', 'F8', 'Backspace']) {
+  button.emit('click');
+  const event = key(code);
+  assert.equal(menu.open, false, `${code} closes the menu`);
+  assert.equal(event.gameUI, undefined, `${code} reaches the game`);
+  assert.equal(event.prevented, undefined); assert.equal(event.stopped, undefined);
+}
 button.emit('click'); documentListeners.get('pointerdown')({ target: garage }); assert.equal(menu.open, true);
 documentListeners.get('pointerdown')({ target: outside }); assert.equal(menu.open, false);
 button.emit('click'); documentListeners.get('focusin')({ target: outside }); assert.equal(menu.open, false);
@@ -49,4 +56,4 @@ button.emit('click'); panel.emit('click', { target: link }); assert.equal(menu.o
 assert.equal(document.activeElement, button); // subsequent item handlers can focus their own dialog
 button.emit('click'); button.emit('click'); assert.equal(menu.open, false);
 assert.equal(changes, opens * 2);
-console.log('PASS: disclosure state/ARIA, disabled items, focus return, Tab wrap, input isolation, map shortcut, outside pointer/focus, item activation, toggle');
+console.log('PASS: disclosure state/ARIA, disabled items, focus return, Tab wrap, input isolation, game shortcut passthrough, outside pointer/focus, item activation, toggle');

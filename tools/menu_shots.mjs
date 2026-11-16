@@ -1,11 +1,14 @@
 // Director: serve game/ at YR_URL (default 8173), then run through the heavy gate:
-// node tools/menu_shots.mjs /tmp/yr-menu
+// node tools/menu_shots.mjs --out /tmp/yr-menu
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
+import { parseArgs } from 'node:util';
 import puppeteer from 'puppeteer-core';
 import { startGame, openMenu, watchErrors } from './lib/startgame.mjs';
 
-const out = process.argv[2] || '/tmp/yr-menu';
+const { values, positionals } = parseArgs({ options: { out: { type: 'string' } }, allowPositionals: true });
+if (positionals.length > 1) throw new Error('Usage: node tools/menu_shots.mjs [--out <dir> | <dir>]');
+const out = values.out || positionals[0] || '/tmp/yr-menu';
 await mkdir(out, { recursive: true });
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
   args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
