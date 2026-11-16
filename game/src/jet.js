@@ -57,7 +57,7 @@ export class Jet extends Vehicle {
     this.name = 'Jet'; this.t = tuning;
     this.mode = 'ground'; this.throttle = 0; this.yaw = 0; this.v = 0; this.rot = 0; this.vy = 0;
     this.alpha = 0; this.bank = 0; this.gLoad = 1; this.stall = false; this.stallT = 0; this.agl = 0;
-    this.pullUp = false; this.crashT = 0; this.gear = 1; this.respawn = null;
+    this.pullUp = false; this.crashT = 0; this.crashReason = null; this.gear = 1; this.respawn = null;
     this.grace = 0; this.graceAir = false; this.lastRespawn = null;   // respawn crash grace (airrespawn.js)
     this._acc = new THREE.Vector3();
     this.mesh = buildJetModel();
@@ -104,7 +104,7 @@ export class Jet extends Vehicle {
   reset(x, z, yaw, y) {
     this.sit = this.air.tail;
     this.mode = 'ground'; this.yaw = yaw; this.v = 0; this.rot = 0; this.vy = 0; this.throttle = 0;
-    this.crashT = 0; this.stall = false; this.gear = 1; this.mesh.userData.wreck(false);
+    this.crashT = 0; this.crashReason = null; this.stall = false; this.gear = 1; this.mesh.userData.wreck(false);
     // the ground queries (roofs) go by where the aircraft is: reset where it stands (a vehicle switch, F, a type change)
     // poses it from its height, so a roof under it holds; a new spot is posed from ground level there (airrespawn.js)
     if (this.pos.x !== x || this.pos.z !== z) this.pos.set(x, this.world.terrainAt?.(x, z) ?? 0, z);
@@ -458,7 +458,7 @@ export class Jet extends Vehicle {
   crash(why) {
     if (this.mode === 'crashed') return;
     if (this.grace > 0) { this.recover(); return; }      // just respawned: never a wreck (no respawn loop)
-    this.mode = 'crashed'; this.crashT = 0; this.burning = true; this.grounded = false;
+    this.mode = 'crashed'; this.crashReason = why; this.crashT = 0; this.burning = true; this.grounded = false;
     this.hit = Math.max(this.hit, 40); this.landing = 1;
     // Keep position and attitude at impact rather than teleporting to a flat wreck on the ground.
     this.vel.multiplyScalar(0.7);
