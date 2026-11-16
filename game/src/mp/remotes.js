@@ -446,7 +446,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
   function bodyColor(r, kind) { return sanitizeCosmetics(colorsFor(r, kind), kind).body; }
   function applySkin(r, skin) {
     if (!skin || typeof skin !== 'object') return;
-    const kind = KINDS.includes(skin.vehicle) ? skin.vehicle : 'car';
+    const kind = KINDS.includes(skin.vehicle) ? skin.vehicle : ['jetski', 'boat'].includes(skin.vehicle) ? 'car' : null;
     // tuning (spring length, steering lock, travel) only retunes the puppet; paint rebuilds the model
     if (kind) { r.tune[kind] = parseTune(skin.tune, kind); if (r.bodies[kind]) r.bodies[kind].pz.t = r.tune[kind]; }
     // the type (car: race / sports / hatch / suv / truck, bike: dirt / sport), checked against vehicletypes.js

@@ -135,11 +135,17 @@ export function paintedModel(kind, colors, type = null) {
 
 function browserStorage() { try { return globalThis.localStorage; } catch { return null; } }
 export function createCosmetics(vehicles, { isUnlocked = () => false, storage = browserStorage() } = {}) {
-  let saved = {}; try { saved = JSON.parse(storage?.getItem(COSMETIC_KEY) || '{}'); } catch {}
+  let saved = {}, raw = null; try { raw = storage?.getItem(COSMETIC_KEY); saved = JSON.parse(raw || '{}'); } catch {}
   const configs = {}, bindings = {}, wear = {}, listeners = new Set(); let accumulator = 0, forcedWet = 0;
   for (const kind of Object.keys(BUILDERS).filter(k => vehicles.all[k])) { configs[kind] = sanitizeCosmetics(saved?.[kind], kind, isUnlocked); bindings[kind] = bindModel(vehicles.all[kind].mesh, kind); wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], configs[kind], wear[kind]); }
   const persist = () => { try { if (!storage) return false; storage.setItem(COSMETIC_KEY, JSON.stringify(configs)); return true; } catch { return false; } };
-  persist(); // Rewrite only supported vehicle colours, discarding obsolete entries.
+  const unchanged = saved && typeof saved === 'object' && !Array.isArray(saved) &&
+    Object.keys(saved).length === Object.keys(configs).length && Object.entries(configs).every(([kind, config]) => {
+      const prior = saved[kind];
+      return prior && typeof prior === 'object' && !Array.isArray(prior) &&
+        Object.keys(prior).length === Object.keys(config).length && Object.entries(config).every(([key, value]) => prior[key] === value);
+    });
+  if (raw != null && !unchanged) persist(); // Rewrite existing saves only when sanitization changed them.
   const notify = kind => listeners.forEach(fn => fn(kind));
   const api = {
     get: kind => ({ ...configs[kind] }),

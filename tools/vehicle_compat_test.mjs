@@ -18,7 +18,8 @@ try {
       ['yr-vehicle-1', legacy],
       [COSMETIC_KEY, JSON.stringify({ [legacy]: { body: '#abcdef' }, car: { body: '#112233' } })],
     ]);
-    const storage = { getItem: k => saved.get(k) ?? null, setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) };
+    let writes = 0;
+    const storage = { getItem: k => saved.get(k) ?? null, setItem: (k, v) => { writes++; saved.set(k, v); }, removeItem: k => saved.delete(k) };
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
     const vehicles = createVehicles({ scene: new THREE.Scene(), world, tuning: { ...TUNING_DEFAULTS } });
     assert.equal(vehicles.current.kind, 'car');
@@ -26,8 +27,21 @@ try {
     assert.equal(saved.has('yr-vehicle-1'), false);
     assert.equal(vehicles.switchTo(legacy), false);
     const cosmetics = createCosmetics(vehicles, { storage });
+    assert.equal(writes, 1, 'legacy colours are sanitized and persisted once');
     assert.deepEqual(Object.keys(JSON.parse(saved.get(COSMETIC_KEY))), supported);
     assert.equal(cosmetics.get('car').body, '#112233');
+    writes = 0;
+    const clean = JSON.parse(saved.get(COSMETIC_KEY));
+    saved.set(COSMETIC_KEY, JSON.stringify(Object.fromEntries(Object.entries(clean).reverse().map(([kind, config]) =>
+      [kind, Object.fromEntries(Object.entries(config).reverse())]))));
+    createCosmetics(vehicles, { storage });
+    assert.equal(writes, 0, 'valid colours are not rewritten, regardless of property order');
+    saved.delete(COSMETIC_KEY);
+    createCosmetics(vehicles, { storage });
+    assert.equal(writes, 0, 'a fresh browser does not persist defaults on startup');
+    saved.set(COSMETIC_KEY, '{bad json');
+    createCosmetics(vehicles, { storage });
+    assert.equal(writes, 1, 'malformed saved colours are repaired');
     assert.deepEqual(sanitizeCosmetics(null, legacy), DEFAULT_COSMETICS.car);
     const model = paintedModel(legacy, { body: '#abcdef' });
     assert.equal(model.userData.wheels.length, 4);

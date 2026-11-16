@@ -206,6 +206,14 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
     [['car', 'truck', 'car-truck'], ['bike', 'sport', 'bike-sport'], ['car', 'race', by('j').model], ['car', 'race', by('o').model], ['car', 'race', by('x').model]],
     'kind + type → that model (an unknown type falls back to the Race car)');
   assert.notEqual(by('x').model, 'car-truck');
+  // Missing / unknown skin kinds are ignored, preserving the current model, type, paint and tuning.
+  const truck = R3.model('t');
+  for (const vehicle of [undefined, null, 'unknown', 3]) {
+    m3.emit('skin', { t: 'skin', from: 't', skin: { vehicle, type: 'hatch', colors: { body: '#ff0000' }, tune: { rl: .9 } } });
+    go(4);
+    assert.equal(R3.model('t'), truck, 'invalid skin kind must not rebuild the car');
+    assert.equal(by('t').type, 'truck');
+  }
   for (const id of ['j', 'o']) assert.equal(by(id).model, by('x').model, 'legacy kind uses the car stand-in');
   // Legacy animation packets can have three contacts and a leaning pose; the car stays valid.
   const lean = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), .3);
