@@ -464,8 +464,8 @@ export class Car extends Vehicle {
     this.wheels.forEach((wh, i) => {
       const g = ud.wheels[i];
       const drop = wh.contact ? (this.t.restLength - wh.comp) : this.t.restLength;
-      g.holder.position.y = drawnWheelY(m, i, g.restY + 0.3 - drop - (RADIUS - g.r));
       g.holder.rotation.y = wh.front ? -this.steer * this.t.steerLock * 0.9 : 0;
+      g.holder.position.y = drawnWheelY(m, i, g.restY + 0.3 - drop - (RADIUS - g.r));
       g.spin.rotation.x = wh.spin;
     });
   }
