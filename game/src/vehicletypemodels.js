@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WHEEL_POS } from './carmodel.js';
 import { buildTruckModel } from './models/truck.js';
+import { buildSportsCarModel } from './models/sportscar.js';
 export { buildSportBikeModel } from './models/sportbike.js';
 
 function material(color, role) {
@@ -48,18 +49,13 @@ function wheel(parent, tyre, rim, x,y,z,r,width,front) {
 }
 export function buildTypeCarModel(type, p, suspension) {
   if (type === 'truck') return buildTruckModel(p, suspension);
+  if (type === 'sports') return buildSportsCarModel(p, suspension);
   const root=new THREE.Group();root.name=`car-${type}`;
   const bodyPivot=new THREE.Group();root.add(bodyPivot);
   const paint=material('#e8402f','body'),trim=material('#ffffff','trim'),black=material('#20242a'),glass=material('#263b49'),rim=material('#d9dce2','wheels');
   const w=1.0*p.width, nose=2.12*p.length, tail=-2.05*p.length;
   let lampY=.25;
-  if(type==='sports') {
-    hull(bodyPivot,paint,[[nose,w*.85,-.22,.04],[1.1,w,-.22,.28],[-.6,w,-.22,.35],[tail,w*.92,-.17,.26]]);
-    hull(bodyPivot,glass,[[.95,.78,.28,.29,.66],[.10,.79,.30,.73,.59],[-.9,.8,.30,.76,.58],[-1.36,.8,.30,.33,.72]]);
-    box(bodyPivot,paint,1.18,.045,.95,0,.77,-.4);
-    for(const s of [-1,1]){box(bodyPivot,black,.08,.18,.66,s*w,.05,-.66);box(bodyPivot,trim,.09,.05,2.1,s*(w-.1),-.15,-.05);}
-    box(bodyPivot,black,w*1.75,.09,.24,0,-.19,nose);lampY=.11;
-  } else {
+  {
     const tall=type==='hatch'?.85:type==='suv'?1.25:1.42, rear=type==='truck'?-.15:tail+.17;
     hull(bodyPivot,paint,[[nose,w*.91,-.17,.34],[nose-.55,w,-.17,.48],[tail,w,-.17,.44]]);
     hull(bodyPivot,glass,[[.94,w*.88,.45,.47],[.48,w*.88,.45,tall,w*.73],[rear,w*.88,.45,tall,w*.73],[rear-.23,w*.88,.45,.48]]);

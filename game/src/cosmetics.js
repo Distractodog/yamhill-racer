@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { buildCarModel } from './carmodel.js';
 import { buildBikeModel } from './bike.js';
 import { buildJetModel } from './jet.js';
-import { buildVehicleTypeModel, VEHICLE_TYPES } from './vehicletypes.js';
+import { buildVehicleTypeModel, VEHICLE_TYPES, typeInfo } from './vehicletypes.js';
 
 export const COSMETIC_KEY = 'yr-cosmetics-1';
 export const LIVERIES = [
@@ -28,6 +28,19 @@ export function sanitizeCosmetics(value, kind = 'car', isUnlocked = () => false)
   if (typeof value.number === 'string' && /^\d{1,2}$/.test(value.number)) base.number = value.number;
   if (['factory', 'sport', 'rally'].includes(value.wheelStyle)) base.wheelStyle = value.wheelStyle;
   return base;
+}
+// A vehicle type's own factory colours (vehicletypes.js `colors`, e.g. the Sports car's black trim). They replace the
+// kind's defaults for every colour the player has not picked themselves (`custom`).
+const typeColors = (kind, type) => (type && VEHICLE_TYPES[kind] && typeInfo(kind, type)?.colors) || {};
+function withTypeColors(config, kind, type, custom = new Set()) {
+  const out = { ...config };
+  for (const [key, value] of Object.entries(typeColors(kind, type))) if (!custom.has(key)) out[key] = value;
+  return out;
+}
+// colours the player picked: stored with the config; older saves count every colour that differs from the default
+function pickedColors(saved, config, kind) {
+  if (Array.isArray(saved?.custom)) return new Set(saved.custom.filter(key => COLOR_FIELDS.includes(key)));
+  return new Set(COLOR_FIELDS.filter(key => config[key].toLowerCase() !== DEFAULT_COSMETICS[kind][key]));
 }
 const BUILDERS = { car: buildCarModel, bike: buildBikeModel, jet: buildJetModel };
 const mudColor = new THREE.Color('#66523b'), scratchColor = new THREE.Color('#aeb2b3');
@@ -127,37 +140,58 @@ function applyBinding(binding, config, wear) {
 }
 
 // Another player's vehicle (mp/remotes.js): the same model (of their type, vehicletypes.js) and paint rules, in their
-// colours (no wear, no unlock check).
+// colours (no wear, no unlock check); colours they don't send take their type's factory colours.
 export function paintedModel(kind, colors, type = null) {
   kind = Object.hasOwn(BUILDERS, kind) ? kind : 'car';
-  const model = type && VEHICLE_TYPES[kind] ? buildVehicleTypeModel(kind, type) : BUILDERS[kind](); applyBinding(bindModel(model, kind), sanitizeCosmetics(colors, kind, () => true), { dirt: 0, scuff: 0, wet: 0 }); return model;
+  const model = type && VEHICLE_TYPES[kind] ? buildVehicleTypeModel(kind, type) : BUILDERS[kind]();
+  applyBinding(bindModel(model, kind), sanitizeCosmetics({ ...typeColors(kind, type), ...colors }, kind, () => true), { dirt: 0, scuff: 0, wet: 0 }); return model;
 }
 
 function browserStorage() { try { return globalThis.localStorage; } catch { return null; } }
 export function createCosmetics(vehicles, { isUnlocked = () => false, storage = browserStorage() } = {}) {
   let saved = {}, raw = null; try { raw = storage?.getItem(COSMETIC_KEY); saved = JSON.parse(raw || '{}'); } catch {}
-  const configs = {}, bindings = {}, wear = {}, listeners = new Set(); let accumulator = 0, forcedWet = 0;
-  for (const kind of Object.keys(BUILDERS).filter(k => vehicles.all[k])) { configs[kind] = sanitizeCosmetics(saved?.[kind], kind, isUnlocked); bindings[kind] = bindModel(vehicles.all[kind].mesh, kind); wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], configs[kind], wear[kind]); }
-  const persist = () => { try { if (!storage) return false; storage.setItem(COSMETIC_KEY, JSON.stringify(configs)); return true; } catch { return false; } };
+  const configs = {}, custom = {}, bindings = {}, wear = {}, listeners = new Set(); let accumulator = 0, forcedWet = 0;
+  // what a kind is painted with now: the player's config, with the current type's factory colours where they picked none
+  const effective = kind => withTypeColors(configs[kind], kind, vehicles.getType?.(kind), custom[kind]);
+  for (const kind of Object.keys(BUILDERS).filter(k => vehicles.all[k])) { configs[kind] = sanitizeCosmetics(saved?.[kind], kind, isUnlocked); custom[kind] = pickedColors(saved?.[kind], configs[kind], kind); bindings[kind] = bindModel(vehicles.all[kind].mesh, kind); wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], effective(kind), wear[kind]); }
+  const persist = () => {
+    try {
+      if (!storage) return false;
+      storage.setItem(COSMETIC_KEY, JSON.stringify(Object.fromEntries(Object.entries(configs).map(([kind, c]) => [kind, { ...c, custom: [...custom[kind]] }]))));
+      return true;
+    } catch { return false; }
+  };
+  // Rewrite existing saves only when sanitization changed them (`custom` is optional while no colour was picked).
   const unchanged = saved && typeof saved === 'object' && !Array.isArray(saved) &&
     Object.keys(saved).length === Object.keys(configs).length && Object.entries(configs).every(([kind, config]) => {
       const prior = saved[kind];
-      return prior && typeof prior === 'object' && !Array.isArray(prior) &&
-        Object.keys(prior).length === Object.keys(config).length && Object.entries(config).every(([key, value]) => prior[key] === value);
+      if (!prior || typeof prior !== 'object' || Array.isArray(prior)) return false;
+      const { custom: priorCustom, ...rest } = prior;
+      return Object.keys(rest).length === Object.keys(config).length && Object.entries(config).every(([key, value]) => rest[key] === value) &&
+        JSON.stringify(priorCustom ?? []) === JSON.stringify([...custom[kind]]);
     });
-  if (raw != null && !unchanged) persist(); // Rewrite existing saves only when sanitization changed them.
+  if (raw != null && !unchanged) persist();
   const notify = kind => listeners.forEach(fn => fn(kind));
   const api = {
-    get: kind => ({ ...configs[kind] }),
+    get: kind => effective(kind),
     getWear: kind => ({ ...wear[kind] }),
     isUnlocked,
-    set(kind, patch) { if (!configs[kind]) return; configs[kind] = sanitizeCosmetics({ ...configs[kind], ...patch }, kind, isUnlocked); applyBinding(bindings[kind], configs[kind], wear[kind]); const saved = persist(); notify(kind); return saved; },
-    reset(kind) { api.set(kind, DEFAULT_COSMETICS[kind]); api.wash(kind); },
-    wash(kind) { if (!wear[kind]) return; wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], configs[kind], wear[kind]); notify(kind); },
+    set(kind, patch) {
+      if (!configs[kind]) return;
+      const before = effective(kind), next = sanitizeCosmetics({ ...configs[kind], ...patch }, kind, isUnlocked);
+      // a colour counts as the player's own once they change what they see (then it beats the type's factory colour)
+      for (const key of COLOR_FIELDS) if (key in patch && next[key] === patch[key] && next[key].toLowerCase() !== before[key].toLowerCase()) custom[kind].add(key);
+      configs[kind] = next; applyBinding(bindings[kind], effective(kind), wear[kind]); const saved = persist(); notify(kind); return saved;
+    },
+    reset(kind) {
+      if (!configs[kind]) return;
+      configs[kind] = sanitizeCosmetics(DEFAULT_COSMETICS[kind], kind, isUnlocked); custom[kind].clear(); persist(); api.wash(kind);
+    },
+    wash(kind) { if (!wear[kind]) return; wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], effective(kind), wear[kind]); notify(kind); },
     setWetness(value) { forcedWet = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     refreshUnlocks() { notify(vehicles.current.kind); },
-    createPreview(kind) { const model = vehicles.getType?.(kind) ? buildVehicleTypeModel(kind, vehicles.getType(kind)) : BUILDERS[kind](); const binding = bindModel(model, kind); applyBinding(binding, configs[kind], wear[kind]); return model; },
+    createPreview(kind) { const model = vehicles.getType?.(kind) ? buildVehicleTypeModel(kind, vehicles.getType(kind)) : BUILDERS[kind](); const binding = bindModel(model, kind); applyBinding(binding, effective(kind), wear[kind]); return model; },
     update(dt, vehicle = vehicles.current) {
       if (!vehicle || !wear[vehicle.kind] || !Number.isFinite(dt)) return;
       const state = wear[vehicle.kind], speed = vehicle.vel.length();
@@ -167,12 +201,12 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
       state.wet = vehicle.surface === 5 ? 1 : Math.max(forcedWet, state.wet - dt * .02);
       accumulator += dt; if (accumulator < .2) return; accumulator = 0;
       const wearSignature = [state.dirt,state.scuff,state.wet].map(v=>Math.round(v*1000)).join('/');
-      if (wearSignature !== bindings[vehicle.kind].wearSignature) applyBinding(bindings[vehicle.kind], configs[vehicle.kind], state);
+      if (wearSignature !== bindings[vehicle.kind].wearSignature) applyBinding(bindings[vehicle.kind], effective(vehicle.kind), state);
     },
   };
   vehicles.onTypeChange?.(kind => {
     bindings[kind] = bindModel(vehicles.all[kind].mesh, kind);
-    applyBinding(bindings[kind], configs[kind], wear[kind]); notify(kind);
+    applyBinding(bindings[kind], effective(kind), wear[kind]); notify(kind);    // the new type's factory colours too
   });
   return api;
 }

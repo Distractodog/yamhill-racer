@@ -14,7 +14,8 @@ export const VEHICLE_TYPES = {
     { id: 'race', name: 'Race car', description: 'Original open-wheel racer.', tuning: {} },
     { id: 'sports', name: 'Sports car', description: 'Low, wide and fast. Asphalt grip; limited off-road traction.',
       tuning: { accel: 40, topSpeed: 1100, cornerGrip: 36, gripAlign: 19, restLength: .30, springK: 68000, damping: 5900 },
-      physics: { mass: 1000, width: 1.1, length: 1, radius: .38, lean: .65, grip: [.52,.45,.60,1.12,.58,.9,1.1,1], drive: [.65,.55,.70,1,.68,1,1,1] } },
+      physics: { mass: 1000, width: 1.1, length: 1, radius: .38, lean: .65, grip: [.52,.45,.60,1.12,.58,.9,1.1,1], drive: [.65,.55,.70,1,.68,1,1,1] },
+      colors: { trim: '#17181b' } },   // factory paint for this type (cosmetics.js); colours the player picked still win
     { id: 'hatch', name: 'Hatchback', description: 'Light and nimble, with a modest top speed.',
       tuning: { accel: 25, topSpeed: 480, steerRate: 9, turnResponse: 22, restLength: .40, springK: 50000, damping: 4900 },
       physics: { mass: 720, width: .88, length: .84, radius: .34, lean: 1.15 } },
