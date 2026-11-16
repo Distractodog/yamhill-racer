@@ -5,18 +5,15 @@ const TILE = 512, PAD = 4, LIMIT = 16;
 // A big picture can be given its file's bytes (prepareMapImage). Then a missing patch is cut off the main thread
 // (createImageBitmap from the bytes, one at a time) instead of from the <img>: for the 9600² minimap that meant
 // decoding the whole picture again (the browser can't keep ~370 MB decoded), a freeze of a few hundred ms whenever
-// the map needed a new patch: after every R reset, respawn or H, and every ~2 km of driving. Until its patch is
-// ready, that part is drawn from a quarter-size copy of the picture (also made off the main thread, at start-up).
+// the map needed a new patch: after every R reset, respawn or H, and every ~2 km of driving. Until its patch is ready
+// (a fraction of a second) that square shows the background; the street imagery (minimapdetail.js) is drawn over it.
+// (A quarter-size stand-in copy was tried: drawing from it cost ~100 ms the first time and ~10 ms a frame after.)
 const sources = new WeakMap();
 export function prepareMapImage(image, blob) {
   if (!blob || typeof createImageBitmap !== 'function') return;
-  const width = image.naturalWidth || image.width, height = image.naturalHeight || image.height;
-  const src = { blob, low: null, busy: false, revision: 0 };
-  sources.set(image, src);
-  createImageBitmap(blob, { resizeWidth: Math.round(width / 4), resizeHeight: Math.round(height / 4), resizeQuality: 'medium' })
-    .then(low => { src.low = low; src.revision++; }, () => {});
+  sources.set(image, { blob, busy: false, revision: 0 });
 }
-// changes when a patch (or the small copy) arrives, for callers that cache what they drew (minimap.js full map)
+// changes when a patch arrives, for callers that cache what they drew (minimap.js full map)
 export const mapImageRevision = image => sources.get(image)?.revision ?? 0;
 const keep = cache => { while (cache.size > LIMIT) cache.delete(cache.keys().next().value); };
 export function drawMapImage(ctx, image, ox, oy, scale) {
@@ -43,12 +40,6 @@ export function drawMapImage(ctx, image, ox, oy, scale) {
         src.busy = true;
         createImageBitmap(src.blob, sx, sy, sw, sh).then(canvas => { cache.set(key, { canvas, sx, sy }); keep(cache); src.revision++; },
           () => sources.delete(image)).finally(() => { src.busy = false; });       // failed: cut them as before
-      }
-      if (src.low) {
-        const k = src.low.width / width;
-        ctx.save(); ctx.beginPath(); ctx.rect(ox + x * scale, oy + y * scale, Math.min(TILE, width - x) * scale, Math.min(TILE, height - y) * scale); ctx.clip();
-        ctx.drawImage(src.low, sx * k, sy * k, sw * k, sh * k, ox + sx * scale, oy + sy * scale, sw * scale, sh * scale);
-        ctx.restore();
       }
       continue;
     }

@@ -8,6 +8,10 @@
 // ground. Cases: near (already loaded: placed at once, as before), 5 km back (tiles dropped), at the map edge, no safe
 // spot (map spawn), a race air respawn, the helicopter, car + bike R, and 30 seeded crashes all over the map. The
 // same far case without the hold is run too and must show the old bug (so the test can see it).
+// Slow / failing loads: the spot's tile takes 40 s (longer than the hold's 30 s timeout): physics stays paused and it
+// is placed there once loaded, never on unloaded ground; a spot whose tile never loads falls back after the timeout to
+// a loaded safe spot. Vehicle switches during a hold (the real vehicles.js: V car → jet, V jet → bike, a Garage type
+// change jet → helicopter during a race air respawn) hand the hold to the new vehicle, placed the same way.
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createRespawnHold } from '../game/src/respawnhold.js';
@@ -15,6 +19,7 @@ import { Jet, JET } from '../game/src/jet.js';
 import { Heli } from '../game/src/heli.js';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 import { Bike, BIKE } from '../game/src/bike.js';
+import { createVehicles } from '../game/src/vehicles.js';
 
 const T = 2000, LOAD_R = 1300, DROP_R = 2600, DT = 1 / 60;
 const TILES = []; for (let tx = -3; tx <= 3; tx++) for (let tz = -2; tz <= 2; tz++) TILES.push([tx, tz]);
@@ -23,7 +28,8 @@ const tileIndex = (x, z) => [Math.round(x / T), Math.round(z / T)];
 const key = (tx, tz) => `${tx},${tz}`;
 const available = new Set(TILES.map(([a, b]) => key(a, b)));
 
-function makeWorld({ delayFrames = 90 } = {}) {
+// slow: { 'tx,tz': frames } tiles that take longer to load; broken: tiles that never load
+function makeWorld({ delayFrames = 90, slow = {}, broken = new Set() } = {}) {
   const loaded = new Set(), wantedAt = new Map();
   const at = (x, z) => loaded.has(key(...tileIndex(x, z)));
   const h = (x, z) => at(x, z) ? terrain(x, z) : 0;
@@ -40,7 +46,7 @@ function makeWorld({ delayFrames = 90 } = {}) {
       for (const [tx, tz] of TILES) {
         const k = key(tx, tz), dx = Math.max(tx * T - T / 2 - fx, 0, fx - tx * T - T / 2), dz = Math.max(tz * T - T / 2 - fz, 0, fz - tz * T - T / 2), d = Math.hypot(dx, dz);
         if (d > DROP_R) { loaded.delete(k); wantedAt.delete(k); continue; }
-        if (d < LOAD_R && !loaded.has(k)) { if (!wantedAt.has(k)) wantedAt.set(k, this.frame); if (this.frame - wantedAt.get(k) >= delayFrames) loaded.add(k); }
+        if (d < LOAD_R && !loaded.has(k) && !broken.has(k)) { if (!wantedAt.has(k)) wantedAt.set(k, this.frame); if (this.frame - wantedAt.get(k) >= (slow[k] ?? delayFrames)) loaded.add(k); }
       }
     },
     loadAround(x, z) { for (let i = 0; i <= delayFrames + 1; i++) this.stream(x, z); },
@@ -50,9 +56,11 @@ function makeWorld({ delayFrames = 90 } = {}) {
 const idle = { throttle: 0, brake: 0, steer: 0, handbrake: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 const rand = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(12345);
 
-// one main.js frame: hold, physics unless held, interpolation, camera = vehicle, streaming
-function frame(v, world, hold) {
+// one main.js frame: hold, physics unless held, interpolation, camera = vehicle, streaming. v: a vehicle or a getter
+// for the one you're in (vehicles.current)
+function frame(vehicle, world, hold) {
   hold?.update(DT);
+  const v = typeof vehicle === 'function' ? vehicle() : vehicle;
   if (!hold?.blocked) for (let i = 0; i < 2; i++) { v.savePrev(); v.step(1 / 120, idle); if (hold?.blocked) break; }
   v.interpolate(1); world.stream(v.renderPos.x, v.renderPos.z);
 }
@@ -61,20 +69,28 @@ const HEIGHT = { jet: [1.0, 2.4], heli: [0, 3], car: [0, 1.6], bike: [0, 1.6] };
 const kindOf = v => v instanceof Heli ? 'heli' : v.kind;
 
 // Run until the respawn is placed, then 3 s more. spot: where the respawn must end (x, z). Returns a summary.
-function followRespawn(v, world, hold, spot, { air = false, start = () => {}, label }) {
+// heldAt: where it waits (default: the spot); onFrame(frame number, held) runs each frame (switches)
+function followRespawn(vehicle, world, hold, spot, { air = false, start = () => {}, label, heldAt = spot, onFrame = () => {} }) {
+  const cur = typeof vehicle === 'function' ? vehicle : () => vehicle;
   start();
-  let frames = 0, heldFrames = 0, placedAt = null, worstJump = 0, lowest = Infinity, crashes = 0, last = v.pos.clone();
+  let frames = 0, heldFrames = 0, placedAt = null, worstJump = 0, lowest = Infinity, crashes = 0, last = cur().pos.clone(), v = cur();
   const limit = 60 * 60;
   while (frames++ < limit) {
-    const wasCrashed = v.mode === 'crashed';
-    frame(v, world, hold);
-    if (hold?.blocked) { heldFrames++; assert(Math.hypot(v.pos.x - spot[0], v.pos.z - spot[1]) < 1, `${label}: held at the spot`); last.copy(v.pos); continue; }
+    onFrame(frames, !!hold?.blocked);                       // (a switch here is seen by the next hold.update)
+    const wasCrashed = cur().mode === 'crashed';
+    frame(cur, world, hold); v = cur();
+    if (hold?.blocked) {
+      heldFrames++;
+      assert(hold.holding.vehicle === v, `${label}: the hold is on the vehicle you're in (${v.kind})`);
+      assert(Math.hypot(v.pos.x - heldAt[0], v.pos.z - heldAt[1]) < 1, `${label}: held at the spot`); last.copy(v.pos); continue;
+    }
     if (v.mode === 'crashed') { last.copy(v.pos); if (placedAt !== null) crashes++; continue; }
     if (placedAt === null) {
       placedAt = frames;
       assert(world.loadedAt(v.pos.x, v.pos.z), `${label}: placed on loaded ground`);
       assert(Math.hypot(v.pos.x - spot[0], v.pos.z - spot[1]) < (air ? 6 : 2), `${label}: placed at the spot (${Math.hypot(v.pos.x - spot[0], v.pos.z - spot[1]).toFixed(1)} m off)`);
-      if (air) assert(v.mode === 'air' && clearance(v) >= 39, `${label}: an air respawn flies ≥ 40 m up (${v.mode}, ${clearance(v).toFixed(1)} m)`);
+      if (air) { const up = kindOf(v) === 'heli' ? 30 : 40;     // placeInAir's floor: jet 40 m, helicopter 30 m
+        assert(v.mode === 'air' && clearance(v) >= up - 1, `${label}: an air respawn flies ≥ ${up} m up (${v.mode}, ${clearance(v).toFixed(1)} m)`); }
       else { const [lo, hi] = HEIGHT[kindOf(v)]; assert(clearance(v) > lo - 0.01 && clearance(v) < hi, `${label}: on the ground (${clearance(v).toFixed(2)} m)`); }
       last.copy(v.pos); continue;
     }
@@ -164,6 +180,46 @@ for (const [Ctor, name, tuning] of [[Car, 'car', { ...TUNING_DEFAULTS }], [Bike,
   }
   rows.push({ label: '30 seeded crashes', held: `${held} held`, placed: 'all', worstJump: '<3', lowest: '>-0.3' });
 }
+// 8) the spot's tile takes 40 s, longer than the 30 s timeout; the crash site is 5 km away (dropped): no loaded
+//    fallback, so physics stays paused past the timeout and it is placed at the spot once that has loaded
+{
+  const spot = [-4000, 0], world = makeWorld({ slow: { [key(-2, 0)]: 40 * 60 } }), v = new Jet(world, { ...JET });
+  const hold = createRespawnHold({ world, vehicles: [v] });
+  v.safe = [[...spot, 0]];
+  const r = followRespawn(v, world, hold, spot, { label: 'spot loads after 40 s (> timeout)', start: () => crashAt(v, world, 1000, 0, Math.PI / 2) });
+  assert(r.held > 38, `held past the timeout until the spot loaded (${r.held} s)`); rows.push(r);
+}
+// 9) the spot's tile never loads: after the timeout, the newest loaded safe spot (1.5 km away, in a tile that streams in
+//    around the held spot) — never the unloaded spot
+{
+  const spot = [-4000, 0], fall = [-2500, 0], world = makeWorld({ broken: new Set([key(-2, 0)]) }), v = new Car(world, { ...TUNING_DEFAULTS });
+  const hold = createRespawnHold({ world, vehicles: [v] });
+  world.loadAround(3000, 0); v.reset(3000, 0, 0); for (let i = 0; i < 10; i++) frame(v, world, hold);
+  v.safe = [[...spot, 0], [...fall, 1]];          // R takes safe[0] (fewer than 40 spots): the broken one
+  const r = followRespawn(v, world, hold, fall, { heldAt: spot, label: 'spot never loads: loaded fallback after the timeout', start: () => v.resetToSafe() });
+  assert(r.held > 29.9, `waited the timeout first (${r.held} s)`); rows.push(r);
+}
+// 10) switching vehicles during a hold (the real vehicles.js): the hold moves to the vehicle you're in now
+{
+  const run = (label, { kind = 'car', air = false, crash = air, switchAt = 20, doSwitch, expectKind, expectAir = false }) => {
+    const world = makeWorld(), vehicles = createVehicles({ scene: new THREE.Scene(), world, tuning: { ...TUNING_DEFAULTS } });
+    const hold = createRespawnHold({ world, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft], current: () => vehicles.current });
+    const spot = [-4500, 600];
+    world.loadAround(1500, 0); vehicles.switchTo(kind); const v = vehicles.current; v.reset(1500, 0, 0);
+    let start;
+    if (air) { v.respawn = () => [spot[0], 30, spot[1], 0.5, 450]; start = () => crashAt(v, world, 1500, 0, 0); }
+    else { v.safe = [[...spot, 1]]; start = crash ? () => crashAt(v, world, 1500, 0, 0) : () => v.resetToSafe(); }
+    let switched = false;
+    const r = followRespawn(() => vehicles.current, world, hold, spot, { air: expectAir, label, start,
+      onFrame: (f, held) => { if (held && !switched && (f > switchAt)) { doSwitch(vehicles); switched = true; } } });
+    assert(switched, `${label}: switched during the hold`);
+    assert.equal(vehicles.current.kind === 'jet' && vehicles.current.mesh.userData.mainRotor ? 'heli' : vehicles.current.kind, expectKind, `${label}: placed the new vehicle`);
+    rows.push(r);
+  };
+  run('V car → jet while held', { kind: 'car', doSwitch: vs => vs.switchTo('jet'), expectKind: 'jet' });
+  run('V jet → bike while held (crash respawn)', { kind: 'jet', crash: true, doSwitch: vs => vs.switchTo('bike'), expectKind: 'bike', switchAt: 300 });
+  run('Garage jet → helicopter in a race air respawn', { kind: 'jet', air: true, switchAt: 300, doSwitch: vs => vs.setType('jet', 'heli'), expectKind: 'heli', expectAir: true });
+}
 console.table(rows);
 
 // the browser part: the real game, real streaming (needs the dev server)
@@ -176,15 +232,13 @@ if (process.argv.includes('--browser')) {
   try {
     const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 800 }); watchErrors(page, 'game', errors);
     await startGame(page, { storage: { 'yr-cosmetics-1': JSON.stringify({ jet: { body: '#000000', custom: ['body'] } }) } });
-    const report = await page.evaluate(`(${hitchSuite.toString()})(window, { only: ['reset', 'crash'], settle: 1500 })`);
-    console.table(report.rows); report.notes.forEach(n => console.log('note:', n));
-    for (let round = 0; round < 3; round++) {        // more crash respawns in a row
-      const again = await page.evaluate(`(${hitchSuite.toString()})(window, { only: ['crash'], settle: 800 })`);
-      report.fails.push(...again.fails); console.table(again.rows);
-    }
+    page.setDefaultTimeout(0);
+    // R near / 5 km out and back, jet crash respawns near / 5 km out and back, three times each
+    const report = await page.evaluate(`(${hitchSuite.toString()})(window, { only: ['reset', 'crash'], repeat: 3, settle: 1500 })`);
+    console.table(report.rows.map(r => ({ action: r.label, 'worst ms': r.worst, top: r.top, note: r.note }))); report.notes.forEach(n => console.log('note:', n));
     assert.deepEqual(report.fails, [], report.fails.join('\n'));
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('PASS browser: R resets and jet crash respawns (near, far) placed on loaded ground, paint shown on the first frame');
+    console.log('PASS browser: R resets and jet crash respawns (near, far, 3 times each) placed on loaded ground at their spot, paint shown on the first frame');
   } finally { await browser.close(); }
 } else console.log('browser part not run (add --browser with the dev server running)');
 console.log('PASS jet respawn: held until the ground is built, then placed cleanly; near respawns unchanged');

@@ -70,8 +70,10 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
   const loading = new Set();
+  const failedAt = new Map();       // tile key -> when its download failed (retried after 3 s)
   const jobs = [];                  // generators building tile visuals, stepped within the frame budget
-  const stepCost = new Map();       // step kind (what the generator yielded before it) -> recent cost, ms
+  const stepCost = new Map();
+  const slowStep = { label: '', ms: 0 };   // this frame's slowest build step (tools/lib/hitchprobe.mjs reads it)       // step kind (what the generator yielded before it) -> recent cost, ms
 
   async function fetchTile(tx, tz) {
     const dir = `${base}tiles/${tx}_${tz}/`;
@@ -290,21 +292,31 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     return out;
   }
 
+  // A dropped tile's materials are disposed, except one that is the last user of its shader program: three.js would
+  // delete that program and compile it again (a stutter) as soon as the next tile using it is drawn, which happens after
+  // every teleport, H or far respawn (all old tiles drop before the new ones arrive). Kept, it costs no GPU memory (its
+  // textures are freed with the tile); at most one is kept per program.
+  const keepers = new Set();
+  const lastUser = m => { const ps = renderer.properties?.get(m)?.programs; return !!ps && [...ps.values()].some(p => p.usedTimes === 1); };
   function dispose(v) {
     v.group.traverse(o => { if (o.isInstancedMesh) o.dispose(); if (o.geometry && !SHARED.has(o.geometry)) o.geometry.dispose(); });
-    v.textures.forEach(t => t.dispose()); v.materials.forEach(m => m.dispose());
+    v.textures.forEach(t => t.dispose()); v.materials.forEach(m => { if (lastUser(m)) keepers.add(m); else m.dispose(); });
     group.remove(v.group);
   }
 
   function startLoad(tx, tz, now = false) {
     const k = world.key(tx, tz);
-    if (loading.has(k) || vis.has(k) || !available.has(k)) return null;
+    if (loading.has(k) || vis.has(k) || !available.has(k) || (failedAt.get(k) ?? -Infinity) > performance.now() - 3000) return null;
     loading.add(k);
     return fetchTile(tx, tz).then(({ data, img }) => {
       const gen = buildTile(tx, tz, data, img);
       const finish = v => { world.add(v.td); vis.set(k, v); group.add(v.group); loading.delete(k); lastShadowAt = null; };
       if (now) { let r; while (!(r = gen.next()).done); finish(r.value); }
       else jobs.push({ gen, finish, tx, tz });
+    }).catch(e => {
+      // a failed download is tried again a few seconds later (it used to stay "loading" for good: that tile never
+      // came, and it held one of the 3 streaming slots, so a respawn there waited forever)
+      console.warn(`tile ${k}:`, e); loading.delete(k); failedAt.set(k, performance.now());
     });
   }
 
@@ -351,11 +363,13 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     // nearest tile first, by the same point the loads are ordered by (after a respawn / teleport the queue can still
     // hold tiles from where the vehicle was)
     if (jobs.length > 1) jobs.sort((p, q) => d2([p.tx, p.tz]) - d2([q.tx, q.tz]));
+    slowStep.ms = 0;
     for (let first = true; jobs.length; first = false) {
       const now = performance.now(), j = jobs[0];
       if (!first && now - t0 + (stepCost.get(j.next) || 0) > budget) break;
       const r = j.gen.next(), d = performance.now() - now, c = stepCost.get(j.next);
       stepCost.set(j.next, c === undefined ? d : Math.max(d, c * 0.9 + d * 0.1));   // falls slowly, jumps up at once
+      if (d > slowStep.ms) { slowStep.ms = d; slowStep.label = j.next || 'decode-height'; }
       if (r.done) { jobs.shift(); j.finish(r.value); } else j.next = r.value;
     }
   }
@@ -417,7 +431,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { stripMat.color.setScalar(1 - Math.max(0, Math.min(1, Number(value) || 0)) * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
-    loadedTiles: () => vis.size, pendingTiles: () => loading.size + jobs.length });
+    loadedTiles: () => vis.size, pendingTiles: () => loading.size + jobs.length, buildStep: slowStep });
 }
 
 
