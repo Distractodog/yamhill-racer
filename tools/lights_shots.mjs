@@ -2,6 +2,7 @@
 // node tools/lights_shots.mjs /tmp/yr-lights
 // Captures require visual review. Night A/B/A benchmark compares the same frozen scene.
 import puppeteer from 'puppeteer-core';
+import { GAME_URL, startGame, holdCar } from './lib/startgame.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 const out = process.argv[2] || '/tmp/yr-lights';
@@ -16,19 +17,7 @@ try {
   page.setDefaultTimeout(120000);
   page.on('pageerror', e => { report.pageErrors.push(e.message); console.error('PAGE ERROR', e.message); });
   page.on('console', m => { if (m.type() === 'error' && !m.location().url?.endsWith('/favicon.ico')) report.consoleErrors.push(m.text()); });
-  await page.evaluateOnNewDocument(() => { localStorage.setItem('yr-welcome-hidden-1', '1'); Object.defineProperty(navigator, 'getGamepads', { value: () => [] }); });
-  await page.goto(process.env.GAME_URL || 'http://127.0.0.1:8173/', { waitUntil: 'load' });
-  await page.waitForFunction(() => window.game?.sessionSpawn);
-  // Select the actual McMinnville bench spot through the spawn picker.
-  const click = await page.evaluate(async () => {
-    const m = await fetch('./assets/minimap.json').then(r => r.json()), im = new Image();
-    im.src = './assets/minimap.jpg'; await im.decode();
-    const r = document.querySelector('#fullmap canvas').getBoundingClientRect(), s = Math.min(r.width / im.width, r.height / im.height);
-    return [r.left + r.width / 2 + ((19451 - m.extent[0]) / m.mpp - im.width / 2) * s,
-      r.top + r.height / 2 + ((-11032 - m.extent[1]) / m.mpp - im.height / 2) * s];
-  });
-  await page.mouse.click(...click);
-  await page.waitForFunction(() => !game.sessionSpawn.blocked && game.world.pendingTiles() === 0);
+  await startGame(page, { url: process.env.GAME_URL || GAME_URL, hold: { x: 19451, z: -11032, yaw: -1.573, kind: 'car' } });
   await page.evaluate(() => {
     const g = game; g.atmosphere.setPreset('night', false); g.setCam(0);
     window.lightsEvidence = { view: 'behind', enabled: true, renderMs: [], strobeOn: 0, strobeOff: 0 };
@@ -98,8 +87,7 @@ try {
     g.atmosphere.setPreset('midday', false); await wait(600); g.atmosphere.setPreset('night', false); await wait(600);
     return { before, after: count() };
   });
-  await page.evaluate(() => { game.vehicles.switchTo('car'); game.teleport(3694, 1350); });
-  await page.waitForFunction(() => game.world.loadedAt(3694, 1350) && game.world.pendingTiles() === 0);
+  await holdCar(page, { x: 3694, z: 1350, kind: 'car' });
   for (const kind of ['jetski', 'boat']) {
     await page.evaluate(kind => { const g = game; g.vehicles.switchTo(kind); g.vehicles.current.reset(3694, 1350); lightsEvidence.view = 'behind'; }, kind);
     await new Promise(r => setTimeout(r, 1200));
@@ -109,9 +97,7 @@ try {
       report.shots.push({ file: name, kind, lenses: await page.evaluate(() => game.vehicles.current.mesh.getObjectByName('vehicle-lenses').children.filter(o => o.visible).map(o => o.name)) });
     }
   }
-  await page.evaluate(() => { game.vehicles.switchTo('car'); });
-  await page.evaluate(() => game.teleport(19451, -11032));
-  await page.evaluate(() => { const v = game.vehicles.current; v.reset(19451, -11032, -1.573); lightsEvidence.view = 'behind'; });
+  await holdCar(page, { x: 19451, z: -11032, yaw: -1.573, kind: 'car' });
   await page.evaluate(() => { lightsEvidence.view = null; game.setCam(0); });
   await page.waitForFunction(() => game.world.loadedAt(19451, -11032) && game.world.pendingTiles() === 0);
   // Baseline removes both lenses and spotlight, then warms shader variants before sampling.

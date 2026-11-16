@@ -57,9 +57,14 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     // streamed out meanwhile, the boat (hidden) holds there until it's loaded, then this switch runs again.
     let land = null;
     if (place && fromBoat && !toBoat) {
-      const back = cur.cameFrom, atBack = back && Math.hypot(p.x - back[0], p.z - back[1]) < 1;   // a hold there just ended
-      land = (atBack ? back : findBank(world, p.x, p.z)) || back || null;
-      if (land && !world.loadedAt(land[0], land[1])) {
+      const dry = spot => world.loadedAt(spot[0], spot[1]) &&
+        !(world.waterLevelAt(spot[0], spot[1]) > world.terrainAt(spot[0], spot[1]));
+      const back = cur.cameFrom, atBack = back && dry(back) && Math.hypot(p.x - back[0], p.z - back[1]) < 1;
+      // A return point can itself be in water. Only reuse it as-is when it is dry; otherwise find its bank too.
+      land = (atBack ? back : findBank(world, p.x, p.z)) ||
+        (back && (!world.loadedAt(back[0], back[1]) ? back : dry(back) ? back : findBank(world, back[0], back[1])));
+      if (!land) { cur.say('No dry bank loaded nearby yet', 3); return false; }
+      if (!world.loadedAt(land[0], land[1])) {
         const boat = cur;
         boat.holdAt({ x: land[0], z: land[1], y: land[3] }, () => { if (cur === boat) switchTo(kind); }, { away: true });
         return true;
@@ -70,8 +75,11 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     scene.remove(cur.mesh);
     next.safe = cur.safe.slice();
     next._lastLoaded = cur._lastLoaded;
-    if (land) next.reset(land[0], land[1], land[2]);
-    else if (place) {
+    if (land) {
+      next.reset(land[0], land[1], land[2]);
+      next._lastLoaded = [land[0], land[1]];
+      next.safe = [[land[0], land[1], land[2]]];
+    } else if (place) {
       if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
       else next.reset(p.x, p.z, yaw);
     }

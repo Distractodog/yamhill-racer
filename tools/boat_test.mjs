@@ -200,10 +200,15 @@ for (const P of [JETSKI, SPEEDBOAT]) {
 console.log('\n== boat → land vehicle');
 const veh = createVehicles({ scene: new THREE.Scene(), world: W, tuning: { ...TUNING_DEFAULTS } });
 const dryAround = (x, z, r) => [...Array(8)].every((_, a) => water(x + Math.sin(a * Math.PI / 4) * r, z + Math.cos(a * Math.PI / 4) * r) === -Infinity);
-for (const [boatKind, landKind, from] of [['jetski', 'car', RIVER], ['boat', 'bike', POND], ['jetski', 'jet', RIVER]]) {
+for (const boatKind of ['jetski', 'boat']) for (const landKind of ['car', 'bike', 'jet']) {
+  const from = landKind === 'bike' ? POND : RIVER;
   veh.car.reset(...LAND, 0); veh.switchTo('car');
   veh.switchTo(boatKind); const b = veh.current; b.reset(...from); drive(b, 1, () => false);
-  const bx = b.pos.x, bz = b.pos.z; veh.switchTo(landKind); const v = veh.current;
+  const bx = b.pos.x, bz = b.pos.z;
+  // A saved return point can itself be wet (e.g. a car was moved to the river before picking a boat).
+  // Being at that point must not bypass the nearest-bank search.
+  b.cameFrom = [bx, bz, b.heading(), b.pos.y];
+  veh.switchTo(landKind); const v = veh.current;
   const d = Math.hypot(v.pos.x - bx, v.pos.z - bz), h = v.heading(), ax = v.pos.x + Math.sin(h) * 8, az = v.pos.z + Math.cos(h) * 8;
   const away = Math.hypot(ax - bx, az - bz) > d, sx = v.pos.x, sz = v.pos.z;
   check(water(v.pos.x, v.pos.z) === -Infinity && dryAround(v.pos.x, v.pos.z, 3.5) && d < 80 && away,
@@ -211,6 +216,26 @@ for (const [boatKind, landKind, from] of [['jetski', 'car', RIVER], ['boat', 'bi
   let ok = true; const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
   for (let i = 0; i < 240; i++) { v.savePrev(); v.step(DT, inp); ok &&= [v.pos.x, v.pos.y, v.pos.z].every(Number.isFinite); }
   check(ok && !v.onWater && !(v.waterDepth > 0) && water(v.pos.x, v.pos.z) === -Infinity, `${landKind} sits on dry ground for 2 s`, `moved ${Math.hypot(v.pos.x - sx, v.pos.z - sz).toFixed(2)} m`);
+}
+
+// The same wet return point after its tile has streamed out: hold first, then search for a dry bank once loaded.
+{
+  const w = makeWorld(WJ), tile = [...W.tiles.values()].find(t => t.tx === 2 && t.tz === 1);
+  w.add(tile);
+  const v = createVehicles({ scene: new THREE.Scene(), world: w, tuning: { ...TUNING_DEFAULTS } });
+  for (const boatKind of ['jetski', 'boat']) for (const landKind of ['car', 'bike', 'jet']) {
+    v.switchTo('car'); v.car.reset(...RIVER, 0); v.switchTo(boatKind);
+    const b = v.current;
+    b.cameFrom = [b.pos.x, b.pos.z, b.heading(), b.pos.y];
+    w.remove(tile.tx, tile.tz);
+    v.switchTo(landKind);
+    check(v.current === b && b.launching?.away, `${boatKind} → ${landKind}: unloaded return point is held while streaming`);
+    w.add(tile); await b.launchDone;
+    const c = v.current, wl = w.waterLevelAt(c.pos.x, c.pos.z);
+    check(c.kind === landKind && !(wl > w.terrainAt(c.pos.x, c.pos.z)) &&
+      c._lastLoaded[0] === c.pos.x && c.safe[0][0] === c.pos.x,
+      `${boatKind} → ${landKind}: wet return point becomes a dry bank after streaming`);
+  }
 }
 
 // ---- no water loaded near: off to the nearest launch spot, held there until it's loaded, then on the water
