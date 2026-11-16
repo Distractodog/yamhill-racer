@@ -127,5 +127,46 @@ function taxiOff(world, x0, z0, yaw, kmh, secs = 3) {
     ok(off.modes.includes('air') && off.maxStep < 0.3, `roof edge 1.2 m at 20 km/h: the jet rolls off and falls, no snap (modes ${off.modes}, biggest step ${off.maxStep.toFixed(2)} m)`);
   }
 }
+// ---------------------------------------------------------------- a jet touching a roof = touching the ground
+// The same touchdowns on a big flat roof 10 m up and on flat ground 10 m up: identical outcome (land / which crash),
+// and a fast low pass flown into a roof's edge crashes.
+function touch(world, { kmh, sink, pitch = 0, gear = 1, x = 0, yaw = Math.PI / 2, above = 0.3, secs = 1.5 }) {
+  const j = new Jet(world); j.pos.set(x, 30, 0); j.reset(x, 0, yaw);
+  j.mode = 'air'; j.gear = gear; j.airTime = 1; j.throttle = 0.4;
+  j.pos.set(x, 10 + j.air.gearH + above, 0);
+  j.quat.setFromEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ'));
+  j.vel.set(Math.sin(yaw) * kmh / 3.6, -sink, Math.cos(yaw) * kmh / 3.6);
+  const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
+  const modes = [j.mode]; let msg = '';
+  for (let i = 0; i < secs / DT; i++) {
+    j.step(DT, inp);
+    if (j.mode !== modes[modes.length - 1]) { modes.push(j.mode); if (j.mode === 'crashed') msg = j.msg; }
+    if (j.mode === 'crashed') break;
+  }
+  return { modes: modes.join('→'), msg };
+}
+{
+  const roof = makeWorld(flat, [{ pts: [[-400, -400], [400, -400], [400, 400], [-400, 400]], top: 10, h: 10 }]);
+  const field = makeWorld(() => 10);
+  for (const [name, c, want] of [
+    ['gentle gear touch, 250 km/h, sinking 1.2 m/s', { kmh: 250, sink: 1.2 }, 'air→ground'],
+    ['hard: sinking 11 m/s', { kmh: 250, sink: 11, above: 0.1 }, 'crashed'],
+    ['nose down 20°', { kmh: 250, sink: 2, pitch: -0.35, above: 0.1 }, 'crashed'],
+    ['belly: gear up, gentle', { kmh: 250, sink: 1.2, gear: 0 }, 'crashed'],
+    ['too fast: 600 km/h', { kmh: 600, sink: 1.2 }, 'crashed']]) {
+    const a = touch(roof, c), b = touch(field, c);
+    ok(a.modes === b.modes && a.msg === b.msg && a.modes.endsWith(want),
+      `jet ${name} on a flat roof = on the ground: ${a.modes}${a.msg ? ' (' + a.msg + ')' : ''} vs ${b.modes}${b.msg ? ' (' + b.msg + ')' : ''}`);
+  }
+  // flown at 300 km/h into the edge of a roof 10 m up (the building is x < 0), wheels 0.5 m / centre 1 m below its top
+  const block = makeWorld(flat, [{ pts: [[-400, -400], [0, -400], [0, 400], [-400, 400]], top: 10, h: 10 }]);
+  for (const below of [0.5, 2.6]) {
+    const r = touch(block, { kmh: 300, sink: 0, x: 60, yaw: -Math.PI / 2, above: -below, secs: 2 });
+    ok(r.modes.endsWith('crashed'), `jet flown at 300 km/h into a roof's edge, wheels ${below} m below its top: crashes (${r.modes}, ${r.msg})`);
+  }
+  // the same gentle touch just past a roof's edge, moving away from it: rides the edge and goes on (no crash, no snap)
+  const off = touch(block, { kmh: 250, sink: 0.3, x: 1.0, yaw: Math.PI / 2, above: 0.05, secs: 0.5 });
+  ok(!off.modes.includes('crashed'), `jet touching a roof's edge gently while leaving it: no crash (${off.modes})`);
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

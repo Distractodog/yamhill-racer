@@ -278,8 +278,9 @@ export class Heli extends Vehicle {
     const groundUp = _up.y, level = _n.dot(_up);
     this.quat.copy(_q0); this.pitch = pitch; this.roll = roll;
     if (wet) { this.crash('water'); return; }
-    // the centre is past a ledge (a roof edge) with skid ends on top: it bumps off the edge and slides clear of it
-    if (sink < t.landSink && kmh < 100 && this.ledgeAway(_v)) {
+    // the centre is past a roof's edge with skid ends on top: a touch the ground would allow (not too hard, not too
+    // fast, not tipped: its own up vector, as the pose across a ledge says nothing) bumps off the edge and slides clear
+    if (sink < t.landSink && kmh < 100 && _n.y >= 0.5 && this.ledgeAway(_v)) {
       v.y = Math.max(0, sink * 0.3); v.x += _v.x * 1.5; v.z += _v.z * 1.5;
       if (sink > 1) { this.hit = Math.max(this.hit, sink); this.landing = Math.min(1, sink / 8); }
       return;

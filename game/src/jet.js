@@ -321,16 +321,20 @@ export class Jet extends Vehicle {
     const low = this.airTime > 0.2 ? this.wheelsAGL() : 1;
     // tail-wheel plane, nose high just off the ground and not sinking: the tail wheel only bumps along
     if (low < 0 && A.tail && this.vel.y > -1 && this.wheelsAGL(1) > 0) { this.pos.y -= low; this.vel.y = Math.max(this.vel.y, 0); }
-    else if (low < 0 && this.ledgeAway(_p)) {
-      // a wheel on a ledge (a roof edge) with the centre past it: it rides the edge and slides off it, no snap down
-      this.pos.y -= low; this.vel.y = Math.max(this.vel.y, 0); this.vel.x += _p.x * 4 * dt; this.vel.z += _p.z * 4 * dt;
-    } else if (low < 0) {
+    else if (low < 0) {
       _up.set(0, 1, 0).applyQuaternion(this.quat); _fw.set(0, 0, 1).applyQuaternion(this.quat);
       const sink = -this.vel.y, kmh = s * 3.6, slide = Math.abs(this.vel.dot(_lt.set(1, 0, 0).applyQuaternion(this.quat)));
       const wet = W.waterLevelAt(this.pos.x, this.pos.z) > W.heightAt(this.pos.x, this.pos.z, this.pos.y);
-      if (!wet && _up.y > t.landUp && sink < t.landSink && _fw.y > -0.12 && kmh < t.landKmh && slide < 12 && this.gear > 0.8) this.land(sink);
-      else this.crash(wet ? 'water' : sink >= t.landSink ? 'hard' : 'impact');
-      return;
+      const gentle = !wet && _up.y > t.landUp && sink < t.landSink && _fw.y > -0.12 && kmh < t.landKmh && slide < 12 && this.gear > 0.8;
+      // a wheel on a roof's edge with the centre past it (roofs.js): a gentle touch that isn't flying into the edge
+      // rides the edge and slides off it, no snap down; anything else crashes exactly as on the ground
+      if (gentle && this.ledgeAway(_p) && this.vel.x * _p.x + this.vel.z * _p.z > -2) {
+        this.pos.y -= low; this.vel.y = Math.max(this.vel.y, 0); this.vel.x += _p.x * 4 * dt; this.vel.z += _p.z * 4 * dt;
+      } else {
+        if (gentle && !this.ledgeAway(_p)) this.land(sink);
+        else this.crash(wet ? 'water' : sink >= t.landSink ? 'hard' : 'impact');
+        return;
+      }
     }
     let scrape = 0;
     for (const [x, y, z] of A.body) {

@@ -192,7 +192,7 @@ function run(v, kind, secs, bs, ctl = () => {}) {
     const d = last.distanceTo(p);
     if (d > r.maxJump) { r.maxJump = d; r.jumpAt = `${t.toFixed(2)} s: ${[last.x, last.y, last.z].map(q => q.toFixed(2))} → ${[p.x, p.y, p.z].map(q => q.toFixed(2))}`; }
     last.copy(p);
-    if (v.mode === 'crashed' && !r.crashed) { r.crashed = true; if (V) r.rows.push(`  crash at ${t.toFixed(2)} s: ${v.msg}`); }
+    if (v.mode === 'crashed' && !r.crashed) { r.crashed = true; r.crashAt = t; r.crashMsg = v.msg; if (V) r.rows.push(`  crash at ${t.toFixed(2)} s: ${v.msg}`); }
     r.minY = Math.min(r.minY, p.y);
     let on = null;
     for (const b of v.mode === 'crashed' ? [] : bs) {       // (a tumbling wreck has no building collisions)
@@ -214,7 +214,7 @@ function run(v, kind, secs, bs, ctl = () => {}) {
           r.roofContacts++; r.roofErr = Math.max(r.roofErr, Math.abs(c.y - top));
         }
       }
-      if (AIR.has(kind) && on) r.landed = true;
+      if (AIR.has(kind) && on && !r.landed) { r.landed = true; r.landedAt = t; }
     }
     if (r.everOn && !on && r.leftRoofAt === null && !grounded) r.leftRoofAt = t;
     if (on) { r.everOn = true; r.leftRoofAt = null; }
@@ -389,8 +389,17 @@ for (const [label, b, x, z] of parapetRoofs) for (const kind of ['car', 'bike', 
     const name = `museum gear landing: ${kind}`; if (!want(name)) continue;
     const v = make(kind); drop(v, kind, x0 + 4, zl, Math.PI / 2, top + v.air.gearH + 0.8, 1.2, kmh / 3.6);
     const r = run(v, kind, 8, [museum], (t, i) => { i.handbrake = v.mode === 'ground'; i.jet.pitch = v.mode === 'air' ? 0.15 : 0; });
+    // a gentle gear touchdown is not a crash (the fighter can't stop in 164 m: it may hit the far parapet later)
     check(name, r, [[r.landed, 'never landed on the roof'], [r.roofErr < 0.05, `gear ${(r.roofErr * 100).toFixed(1)} cm off the drawn roof`],
+      [!r.crashed || r.crashAt > r.landedAt + 1.5, `crashed ${(r.crashAt - (r.landedAt ?? 0)).toFixed(2)} s after touching down: ${r.crashMsg}`],
       [kind !== 'prop' || r.endOn === 0, 'prop plane did not stop on the roof']]);
+  }
+  // flown at 300 km/h into the roof's east edge, the gear 0.5 m (and 2 m) below its top: a crash, as into the ground
+  for (const below of [0.5, 2]) {
+    const name = `museum fast low pass into the roof edge, gear ${below} m below the top: jet`; if (!want(name)) continue;
+    const v = make('jet'); drop(v, 'jet', x1 + 120, zl, -Math.PI / 2, top + v.air.gearH - below, 0, 300 / 3.6); v.throttle = 0.5;
+    const r = run(v, 'jet', 3, [museum]);
+    check(name, r, [[r.crashed && r.crashAt < 2, `no crash (${r.crashMsg ?? 'flew on'})`], [!(r.landed && r.landedAt < (r.crashAt ?? Infinity)), 'landed on the edge it flew into']]);
   }
 }
 // Hotel / Third Street landmark row and the downtown roof with a helicopter: lands, sits, lifts off again
