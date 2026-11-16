@@ -1,5 +1,6 @@
 // Headless check of the welcome card (needs the preview server on 127.0.0.1:8173): node tools/welcome_test.mjs <dir>
 import puppeteer from 'puppeteer-core';
+import { openMenu } from './lib/startgame.mjs';
 const OUT = process.argv[2] || '.';
 const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: 'new', args: ['--window-size=1280,760', '--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
@@ -34,7 +35,7 @@ console.log('5. reload without ticking the box: shown again', await shown());
 await page.click('#welcome-hide'); await page.click('#welcome-start'); await wait(200);
 await load();
 console.log('6. after "don\'t show again" + reload: shown', await shown());
-await page.click('#help-button'); await wait(300);
+await openMenu(page); await page.click('#help-button'); await wait(300);
 console.log('7. How to play? button still opens the panel:', await page.evaluate(() => !document.getElementById('settings-panel').hidden && !document.getElementById('help-content').hidden));
 await page.evaluate(() => localStorage.removeItem('yr-welcome-hidden-1'));
 console.log('page errors', errs.length);

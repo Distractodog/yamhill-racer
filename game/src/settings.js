@@ -1,3 +1,5 @@
+import { createGameMenu } from './gamemenu.js';
+
 // Small, keyboard-accessible panels. Register before game input so UI keys never drive the vehicle.
 export function createSettings() {
   const panel = document.getElementById('settings-panel');
@@ -11,6 +13,10 @@ export function createSettings() {
   const closeButton = document.getElementById('settings-close');
   let current = null, ready = false, changed = () => {}, beforeOpen = () => {}, returnFocus = null;
   let external = null;
+  const menu = createGameMenu({
+    onOpen: () => { close(); closeExternal(); closeWelcome(); beforeOpen(); },
+    onChange: () => changed(),
+  });
   function closeExternal() { if (external) { const previous = external; external = null; previous.close(); changed(); } }
   // welcome card: shown once the map has loaded, unless "Don't show this again" was ticked (saved per browser)
   const WELCOME_KEY = 'yr-welcome-hidden-1';
@@ -40,7 +46,7 @@ export function createSettings() {
     if (!ready) return;
     closeExternal();
     if (current === view) { close(); return; }
-    beforeOpen(); returnFocus = trigger; current = view;
+    menu.close(); beforeOpen(); returnFocus = trigger?.closest('#menu-panel') ? document.getElementById('menu-button') : trigger; current = view;
     title.textContent = view === 'tuning' ? 'Vehicle tuning' : view === 'atmosphere' ? 'Atmosphere' : 'How to play';
     tuning.hidden = view !== 'tuning'; help.hidden = view !== 'help'; atmosphereContent.hidden = view !== 'atmosphere'; panel.hidden = false;
     settingsButton.setAttribute('aria-expanded', String(view === 'tuning'));
@@ -93,8 +99,8 @@ export function createSettings() {
     }
   }, true);
   return {
-    get open() { return current !== null || welcomeOpen || external !== null; }, close() { close(); closeExternal(); }, showWelcome, closeWelcome,
-    openExternal(panel, onClose) { closeExternal(); closeWelcome(); close(); beforeOpen(); external = { panel, close: onClose }; changed(); },
+    get open() { return current !== null || welcomeOpen || external !== null || menu.open; }, close() { menu.close(); close(); closeExternal(); }, showWelcome, closeWelcome,
+    openExternal(panel, onClose) { menu.close(); closeExternal(); closeWelcome(); close(); beforeOpen(); external = { panel, close: onClose }; changed(); },
     get welcomeOpen() { return welcomeOpen; },
     bindAtmosphere(atmosphere, presets = atmosphere.presets) {
       const host = document.getElementById('atmosphere-presets');
@@ -111,6 +117,6 @@ export function createSettings() {
       }
       refresh(); atmosphereButton.disabled = false;
     },
-    ready(onChange, onOpen) { changed = onChange; beforeOpen = onOpen; ready = true; settingsButton.disabled = false; helpButton.disabled = false; showWelcome(); },
+    ready(onChange, onOpen) { changed = onChange; beforeOpen = onOpen; ready = true; menu.ready(); settingsButton.disabled = false; helpButton.disabled = false; showWelcome(); },
   };
 }

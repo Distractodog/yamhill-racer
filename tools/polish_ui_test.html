@@ -4,6 +4,8 @@
 <p>Map pointer events are synthetic; pointer capture is stubbed inside the test frame only. Native pointer capture, touch hardware and visual appearance still require manual checks.</p>
 <button id="run">Run functional checks</button><pre id="results" role="status">Ready.</pre><iframe id="game" title="Functional test game" allow="autoplay"></iframe>
 <script type="module">
+// Browser-only opener: the Puppeteer startup helper reads Node environment variables.
+function openMenu(d){if(d.querySelector('#menu-panel').hidden)d.querySelector('#menu-button').click();}
 const frame=document.querySelector('#game'),results=document.querySelector('#results'),button=document.querySelector('#run');
 const wait=ms=>new Promise(r=>setTimeout(r,ms)),lines=[],errors=[];
 function log(text){lines.push(text);results.textContent=lines.join('\n');}
@@ -42,13 +44,13 @@ button.onclick=async()=>{
   point(w,canvas,'pointerdown',cx,cy);point(w,canvas,'pointercancel',cx,cy);point(w,canvas,'pointerup',cx,cy);assert(g.minimap.pin===null,'cancelled pointer cannot place a pin');
   key(w,'KeyM','m');assert(!g.minimap.open&&g.keys.size===0,'map close releases all keys');
   g.car.reset(target[0]+40,target[1]+40,0);key(w,'KeyH','h');await until(()=>!g.sessionSpawn.blocked,'H return timed out');log('H return: expected '+JSON.stringify(target)+', actual '+JSON.stringify([g.car.pos.x,g.car.pos.z]));assert(Math.hypot(g.car.pos.x-target[0],g.car.pos.z-target[1])<3,'H returns to the session spawn');
-  d.querySelector('#garage-button').click();assert(g.garage.open,'Garage button opens live customization');const kind=g.vehicles.current.kind;
+  openMenu(d);d.querySelector('#garage-button').click();assert(g.garage.open,'Garage button opens live customization');const kind=g.vehicles.current.kind;
   for(const code of ['KeyV','KeyJ','KeyM','KeyH','KeyW'])key(w,code,code.slice(-1).toLowerCase());assert(g.garage.open&&g.vehicles.current.kind===kind&&!g.challenges.menuOpen&&!g.minimap.open&&g.keys.size===0,'garage isolates gameplay shortcuts and held keys');
   const field=d.querySelector('#cosmetic-garage input[name="body"]');field.value='#3478ab';field.dispatchEvent(new w.Event('input',{bubbles:true}));assert(g.cosmetics.get(kind).body==='#3478ab','garage paint control updates live configuration');
   d.querySelector('#cosmetic-garage [data-save="0"]').click();field.value='#aa3322';field.dispatchEvent(new w.Event('input',{bubbles:true}));d.querySelector('#cosmetic-garage [data-load="0"]').click();assert(g.cosmetics.get(kind).body==='#3478ab','saved look restores paint');
   const done=d.querySelector('.garage-done');done.focus();key(w,'Tab','Tab');assert(d.activeElement===d.querySelector('.garage-close'),'garage Tab wraps focus');
   key(w,'Escape','Escape');assert(!g.garage.open&&g.keys.size===0,'Escape closes garage without stuck keys');
-  d.querySelector('#atmosphere-button').click();d.querySelector('[data-preset="golden"]').click();assert(g.atmosphere.preset==='golden','atmosphere UI selects golden hour');key(w,'Escape','Escape');
+  openMenu(d);d.querySelector('#atmosphere-button').click();d.querySelector('[data-preset="golden"]').click();assert(g.atmosphere.preset==='golden','atmosphere UI selects golden hour');key(w,'Escape','Escape');
   w=await load();g=w.game;assert(g.sessionSpawn.blocked&&g.sessionSpawn.point===null,'reload requires a new spawn choice');assert(g.cosmetics.get(kind).body==='#3478ab'&&g.atmosphere.preset==='golden','paint and lighting preferences survive reload');
   assert(errors.length===0,'no page errors or unhandled rejections');results.className='pass';log('ALL FUNCTIONAL UI CHECKS PASSED');
  }catch(error){results.className='fail';log('FAIL '+error.message);if(errors.length)log(errors.join('\n'));}
