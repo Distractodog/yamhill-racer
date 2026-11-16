@@ -348,6 +348,8 @@ export function makeWorld(W) {
   }
   return {
     W, tiles, extent: W.extent, spawn: W.spawn, tileIndex, tileAt, key, mapContains,
+    wetness: 0,
+    setWetness(value) { this.wetness = Math.max(0, Math.min(1, Number(value) || 0)); },
     add(t) { tiles.set(key(t.tx, t.tz), t); last = null; },
     remove(tx, tz) { tiles.delete(key(tx, tz)); last = null; },
     has: (tx, tz) => tiles.has(key(tx, tz)),

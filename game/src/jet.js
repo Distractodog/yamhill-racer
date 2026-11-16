@@ -13,6 +13,7 @@
 // World queries only: heightAt / surfaceAt / normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt).
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { wetBraking } from './wetgrip.js';
 import { LEDGE, onRoofAt, roofLedge } from './roofs.js';
 import { GRACE, findGround, airHeight } from './airrespawn.js';
 
@@ -203,7 +204,7 @@ export class Jet extends Vehicle {
     a -= worstRoll * load * Math.sign(this.v) * Math.min(1, Math.abs(this.v));
     if (J.hold) { this.v = 0; a = 0; }                          // race countdown: held on the brakes
     else if (input.handbrake || J.brake) {
-      if (Math.abs(this.v) < 1.5 && this.throttle < 0.9) { this.v = 0; a = 0; } else a -= t.brakes * Math.sign(this.v) * Math.min(1, Math.abs(this.v));
+      if (Math.abs(this.v) < 1.5 && this.throttle < 0.9) { this.v = 0; a = 0; } else a -= t.brakes * wetBraking(W, this.surface) * Math.sign(this.v) * Math.min(1, Math.abs(this.v));
     } else if (!this.throttle && Math.abs(this.v) < 0.5) { this.v = 0; a = 0; }
     this.v += a * dt;
     // nose-wheel steering (A/D) + rudder at speed

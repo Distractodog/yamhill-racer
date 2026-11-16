@@ -491,7 +491,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     notePerf();
   }
-  return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { stripMat.color.setScalar(1 - Math.max(0, Math.min(1, Number(value) || 0)) * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
+  return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
     loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep, stream });
 }

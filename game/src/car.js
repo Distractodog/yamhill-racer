@@ -7,6 +7,7 @@
 //   * drifting starts on the handbrake (or when the car slides too far) and ends when you straighten out.
 // A ground "snap" stops the car floating off small crests; big ramps still launch it.
 import * as THREE from 'three';
+import { wetGrip, wetBraking } from './wetgrip.js';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
@@ -183,7 +184,8 @@ export class Car extends Vehicle {
     this.grounded = contacts > 0;
     const firm = contacts >= 2;
     if (contacts) { let b = 0; for (let i = 1; i < 8; i++) if (counts[i] > counts[b]) b = i; this.surface = b; }
-    const grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1);   // steep roofs slip
+    const rainGrip = wetGrip(W, this.surface), brakeGrip = wetBraking(W, this.surface);
+    const grip = rainGrip * GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1);   // steep roofs slip
     if (contacts) _nAvg.normalize(); else _nAvg.set(0, 1, 0);
     if (bed >= 2) _F.addScaledVector(_nAvg, -t.downforce * speed * speed * MASS);
 
@@ -253,7 +255,7 @@ export class Car extends Vehicle {
       this.slipSigned = beta; this.slip = Math.abs(beta);
 
       // drift state
-      if (!this.drifting && vf > 12 && ((input.handbrake && Math.abs(this.steer) > 0.2) || this.slip > 0.42)) {
+      if (!this.drifting && vf > 12 && ((input.handbrake && Math.abs(this.steer) > 0.2) || this.slip > 0.42 * rainGrip)) {
         this.drifting = true; this.driftDir = Math.sign(this.steer) || -Math.sign(beta) || 1;
       }
       if (this.drifting) {
@@ -300,14 +302,14 @@ export class Car extends Vehicle {
       const vmax = t.topSpeed / 3.6 / Math.sqrt(Math.max(0.05, 1 - TOP_DRAG / t.accel));
       let a = 0;
       if (input.throttle > 0) {
-        a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2);
+        a = reversing ? t.brakeDecel * brakeGrip * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2);
         if (this.drifting) a += t.driftBoost * this.slip;
       }
       if (input.brake > 0) {
-        if (vf > 1) a -= t.brakeDecel * input.brake;
+        if (vf > 1) a -= t.brakeDecel * brakeGrip * input.brake;
         else if (vf > -11) a -= input.brake * 9;
       }
-      if (input.handbrake) a -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 7);
+      if (input.handbrake) a -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 7 * brakeGrip);
       const coast = input.throttle || input.brake ? 0 : 1.2;
       // parked or crawling with no pedals: hold the car on a hill instead of rolling away
       if (!input.throttle && !input.brake && Math.abs(vf) < 2) a -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 9);
