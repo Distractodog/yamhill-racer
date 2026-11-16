@@ -13,6 +13,7 @@
 // World queries only: heightAt / surfaceAt / normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt).
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { LEDGE, onRoofAt, roofLedge } from './roofs.js';
 
 export const JET = {
   gravity: 12,
@@ -76,6 +77,9 @@ export class Jet extends Vehicle {
     const W = this.world, A = this.air, s = Math.sin(yaw), c = Math.cos(yaw);
     const pt = ([gx, gz]) => { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; return [px, W.heightAt(px, pz, y), pz]; };
     const N = pt(A.gear[0]), L = pt(A.gear[1]), R = pt(A.gear[2]);
+    // a wheel hanging over a roof's edge rests on it, level, while the centre is over the roof (terrain: unchanged)
+    const pts = [N, L, R];
+    if (roofLedge(W, pts) && W.heightAt(x, z, y) > pts.top - LEDGE) for (const p of pts.off) p[1] = pts.top;
     const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2, mz = (L[2] + R[2]) / 2;
     if (A.tail) _fw.set(mx - N[0], my - N[1], mz - N[2]).normalize();      // tail wheel behind: forward is away from it
     else _fw.set(N[0] - mx, N[1] - my, N[2] - mz).normalize();
@@ -146,7 +150,7 @@ export class Jet extends Vehicle {
     this.grounded = true; this.airTime = 0; this.contacts = 3; this.agl = 0;
     // surface + water under the wheels
     const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
-    let worstRoll = 0, wet = false;
+    let worstRoll = 0, wet = false, onRoof = false;
     for (const wh of this.wheels) {
       const px = this.pos.x + c * wh.x + s * wh.z, pz = this.pos.z - s * wh.x + c * wh.z;
       const py = _w.set(wh.x, -wh.h, wh.z).applyQuaternion(this.quat).y + this.pos.y;
@@ -154,6 +158,7 @@ export class Jet extends Vehicle {
       if (W.waterLevelAt(px, pz) > W.heightAt(px, pz, py)) wet = true;
       worstRoll = Math.max(worstRoll, ROLL[sc] ?? 1);
       wh.contactPoint.set(px, W.heightAt(px, pz, py), pz);
+      if (onRoofAt(W, px, wh.contactPoint.y, pz)) onRoof = true;          // a wheel on a roof (roofs.js)
     }
     this.surface = W.surfaceAt(this.pos.x, this.pos.z, this.pos.y);
     if (wet && Math.abs(this.v) > 2) { this.crash('water'); return; }
@@ -186,7 +191,8 @@ export class Jet extends Vehicle {
     const vyNew = (ny - this.pos.y) / dt;
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
     // ground falling away faster than gravity can follow (crest / ramp lip): it's in the air
-    if (ny < this.pos.y - 2 || (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50)) {
+    // (or a ledge: 2 m down in one step; rolling off a roof's edge, half a metre: falls instead of snapping down)
+    if (ny < this.pos.y - (onRoof ? 0.5 : 2) || (vyNew < this.vy - g * dt * 1.2 - 0.05 && this.v > 50)) {
       this.toAir(); this.vel.set(Math.sin(this.yaw) * this.v, this.vy, Math.cos(this.yaw) * this.v); return;
     }
     this.vy = vyNew;
@@ -208,6 +214,22 @@ export class Jet extends Vehicle {
     this.mode = 'air'; this.grounded = false; this.contacts = 0; this.airTime = 0; this.stallT = 0;
     this.ang.set(0, 0, 0);
     for (const wh of this.wheels) { wh.contact = false; wh.comp = 0; }
+  }
+
+  // the lowest wheel is on a roof and the ground under the centre is far below it (the centre is past the roof's edge):
+  // true, and out = the flat way off the edge (from that wheel toward the centre). Terrain ledges: false.
+  ledgeAway(out) {
+    const W = this.world; let low = Infinity, wx = 0, wz = 0, wy = 0;
+    for (const { x, z, h } of this.wheels) {
+      _w.set(x, -h, z).applyQuaternion(this.quat).add(this.pos);
+      const g = W.heightAt(_w.x, _w.z, _w.y), a = _w.y - g;
+      if (a < low) { low = a; wx = _w.x; wz = _w.z; wy = g; }
+    }
+    const cy = W.heightAt(this.pos.x, this.pos.z, this.pos.y);
+    if (cy > wy - LEDGE || !onRoofAt(W, wx, wy, wz) || onRoofAt(W, this.pos.x, cy, this.pos.z)) return false;
+    out.set(this.pos.x - wx, 0, this.pos.z - wz);
+    const L = Math.hypot(out.x, out.z) || 1; out.x /= L; out.z /= L;
+    return true;
   }
 
   // height of the lowest wheel above ground / water
@@ -303,9 +325,16 @@ export class Jet extends Vehicle {
       _up.set(0, 1, 0).applyQuaternion(this.quat); _fw.set(0, 0, 1).applyQuaternion(this.quat);
       const sink = -this.vel.y, kmh = s * 3.6, slide = Math.abs(this.vel.dot(_lt.set(1, 0, 0).applyQuaternion(this.quat)));
       const wet = W.waterLevelAt(this.pos.x, this.pos.z) > W.heightAt(this.pos.x, this.pos.z, this.pos.y);
-      if (!wet && _up.y > t.landUp && sink < t.landSink && _fw.y > -0.12 && kmh < t.landKmh && slide < 12 && this.gear > 0.8) this.land(sink);
-      else this.crash(wet ? 'water' : sink >= t.landSink ? 'hard' : 'impact');
-      return;
+      const gentle = !wet && _up.y > t.landUp && sink < t.landSink && _fw.y > -0.12 && kmh < t.landKmh && slide < 12 && this.gear > 0.8;
+      // a wheel on a roof's edge with the centre past it (roofs.js): a gentle touch that isn't flying into the edge
+      // rides the edge and slides off it, no snap down; anything else crashes exactly as on the ground
+      if (gentle && this.ledgeAway(_p) && this.vel.x * _p.x + this.vel.z * _p.z > -2) {
+        this.pos.y -= low; this.vel.y = Math.max(this.vel.y, 0); this.vel.x += _p.x * 4 * dt; this.vel.z += _p.z * 4 * dt;
+      } else {
+        if (gentle && !this.ledgeAway(_p)) this.land(sink);
+        else this.crash(wet ? 'water' : sink >= t.landSink ? 'hard' : 'impact');
+        return;
+      }
     }
     let scrape = 0;
     for (const [x, y, z] of A.body) {

@@ -3,10 +3,10 @@
 // mesh builder; colours are converted to linear there. Campus buildings are not handled here.
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildCampusGeometry } from './campusmodel.js';
-import { planBuilding } from './townbuild.js';
+import { floorOf, planBuilding, roadContext } from './townbuild.js';
+export { roadContext };
 
 const CELL = 200;
-const MAIN = /^(motorway|trunk|primary|secondary|tertiary)/;
 
 // Near buildings (windows) out to `near`, simple buildings out to `far`, none past that.
 // Shadows only inside `shadow`. Step 0 is the full range; step 1 is the fallback.
@@ -22,28 +22,6 @@ export function setTownStep(step) {
   townRange.far = s.far;
   townRange.shadow = s.shadow;
   townRange.step = step > 0 ? 1 : 0;
-}
-
-// A short sample of each road, split into "main" and "other", for door facing and class.
-export function roadContext(roads) {
-  const all = [], main = [];
-  for (const r of roads || []) {
-    const cls = String(r.osm || '').split(':')[0];
-    const n = r.n || 0;
-    const step = Math.max(1, Math.floor(n / 6));
-    for (let i = 0; i < n; i += step) {
-      const p = [r.x[i], r.z[i]];
-      all.push(p);
-      if (MAIN.test(cls)) main.push(p);
-    }
-  }
-  return [{ cls: 'residential', pts: all }, { cls: 'primary', pts: main }];
-}
-
-function floorOf(pts, ground) {
-  let s = 0;
-  for (const [x, z] of pts) s += ground(x, z);
-  return s / pts.length;
 }
 
 function forMesh(parts, detailed) {

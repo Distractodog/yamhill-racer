@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
 import { Jet } from './jet.js';
+import { LEDGE, roofLedge } from './roofs.js';
 import { buildHeliModel, HELI_SKIDS, HELI_SKID_H, HELI_BODY } from './models/heli.js';
 
 export const HELI = {
@@ -68,6 +69,8 @@ export class Heli extends Vehicle {
   groundPose(x, z, yaw, y) {
     const W = this.world, s = Math.sin(yaw), c = Math.cos(yaw), h = [];
     for (const [gx, gz] of HELI_SKIDS) { const px = x + c * gx + s * gz, pz = z - s * gx + c * gz; h.push([px, W.heightAt(px, pz, y), pz]); }
+    // skid ends hanging over a roof's edge rest on it, level, while the centre is over the roof (terrain: unchanged)
+    if (roofLedge(W, h) && W.heightAt(x, z, y) > h.top - LEDGE) for (const p of h.off) p[1] = h.top;
     const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
     const F = mid(h[0], h[1]), B = mid(h[2], h[3]), L = mid(h[0], h[2]), R = mid(h[1], h[3]);
     _fw.set(F[0] - B[0], F[1] - B[1], F[2] - B[2]).normalize();
@@ -241,6 +244,19 @@ export class Heli extends Vehicle {
       Math.abs(W.heightAt(x - 3, z) - h) < 1 && Math.abs(W.heightAt(x, z - 3) - h) < 1;
   }
 
+  // skid ends on a roof's edge with the centre past it: true, and out = the flat way off it (from the centroid of the
+  // ends on the roof to the centroid of those hanging over the drop). Terrain ledges: false (old behaviour).
+  ledgeAway(out) {
+    const W = this.world, s = Math.sin(this.yaw), c = Math.cos(this.yaw), h = [];
+    for (const [gx, gz] of HELI_SKIDS) { const px = this.pos.x + c * gx + s * gz, pz = this.pos.z - s * gx + c * gz; h.push([px, W.heightAt(px, pz, this.pos.y), pz]); }
+    if (!roofLedge(W, h) || W.heightAt(this.pos.x, this.pos.z, this.pos.y) > h.top - LEDGE) return false;
+    let hx = 0, hz = 0, nh = 0, lx = 0, lz = 0, nl = 0;
+    for (const p of h) if (h.off.includes(p)) { lx += p[0]; lz += p[2]; nl++; } else { hx += p[0]; hz += p[2]; nh++; }
+    out.set(lx / nl - hx / nh, 0, lz / nl - hz / nh);
+    const L = Math.hypot(out.x, out.z) || 1; out.x /= L; out.z /= L;
+    return true;
+  }
+
   // height of the lowest skid end above ground / water
   skidsAGL() {
     const W = this.world; let low = Infinity;
@@ -262,6 +278,13 @@ export class Heli extends Vehicle {
     const groundUp = _up.y, level = _n.dot(_up);
     this.quat.copy(_q0); this.pitch = pitch; this.roll = roll;
     if (wet) { this.crash('water'); return; }
+    // the centre is past a roof's edge with skid ends on top: a touch the ground would allow (not too hard, not too
+    // fast, not tipped: its own up vector, as the pose across a ledge says nothing) bumps off the edge and slides clear
+    if (sink < t.landSink && kmh < 100 && _n.y >= 0.5 && this.ledgeAway(_v)) {
+      v.y = Math.max(0, sink * 0.3); v.x += _v.x * 1.5; v.z += _v.z * 1.5;
+      if (sink > 1) { this.hit = Math.max(this.hit, sink); this.landing = Math.min(1, sink / 8); }
+      return;
+    }
     if (sink >= t.landSink) { this.crash('hard'); return; }
     if (kmh > 100 || level < 0.5) { this.crash('impact'); return; }
     if (groundUp > t.maxSlope && kmh < t.landKmh && level > t.landTilt) { this.land(sink, y); return; }

@@ -5,7 +5,7 @@
 // normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt / loadedAt / extent for bookkeeping).
 // The car keeps its own (older) copies of the collision helpers so its handling is byte-for-byte unchanged.
 import * as THREE from 'three';
-import { createVehicleWorld, buildingRoofAt, buildingRoofFloor } from './roofs.js';
+import { createVehicleWorld, collideBuilding } from './roofs.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 
@@ -42,6 +42,7 @@ export class Vehicle {
     if (s) this.reset(s[0], s[1], s[2]);
   }
   rememberSafe() {
+    if (this.world.onRoof?.()) return;            // a roof is no place to respawn (R would put you inside the building)
     _v.set(0, 0, 1).applyQuaternion(this.quat);
     const last = this.safe[this.safe.length - 1];
     if (!last || Math.hypot(last[0] - this.pos.x, last[1] - this.pos.z) > 6) {
@@ -72,32 +73,10 @@ export class Vehicle {
     return worst;
   }
 
-  // building footprints (polygons) as walls up to their roof; returns the hardest hit
+  // building footprints (polygons) as walls up to their drawn roof (roofs.js); returns the hardest hit
   collideBuildings(R) {
-    const roofSupport = this.world.canReachRoof?.();
     let worst = 0;
-    for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) {
-      if (!b.pts) continue;
-      const top = b.top ?? this.world.heightAt(b.pts[0][0], b.pts[0][1], this.pos.y) + (b.h || 6);   // top is set when the game meshes it
-      const roof = roofSupport && this.pos.y > buildingRoofFloor(b, this.world) ? buildingRoofAt(b, this.pos.x, this.pos.z, this.world) : Infinity;
-      if (this.pos.y > top + 1 || (Number.isFinite(roof) && this.pos.y > roof + 0.05)) continue;
-      const pts = b.pts; let inside = false, bestD = Infinity, bx = 0, bz = 0;
-      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const [x1, z1] = pts[j], [x2, z2] = pts[i];
-        if (((z2 > this.pos.z) !== (z1 > this.pos.z)) && (this.pos.x < (x1 - x2) * (this.pos.z - z2) / (z1 - z2) + x2)) inside = !inside;
-        const ex = x2 - x1, ez = z2 - z1, L = ex * ex + ez * ez || 1;
-        const u = Math.max(0, Math.min(1, ((this.pos.x - x1) * ex + (this.pos.z - z1) * ez) / L));
-        const cx = x1 + ex * u, cz = z1 + ez * u, d = Math.hypot(this.pos.x - cx, this.pos.z - cz);
-        if (d < bestD) { bestD = d; bx = cx; bz = cz; }
-      }
-      if (!inside && bestD >= R) continue;
-      let nx = this.pos.x - bx, nz = this.pos.z - bz; const d = Math.hypot(nx, nz) || 1; nx /= d; nz /= d;
-      if (inside) { nx = -nx; nz = -nz; }
-      const pen = inside ? R + bestD : R - bestD;
-      this.pos.x += nx * pen; this.pos.z += nz * pen;
-      const vn = this.vel.x * nx + this.vel.z * nz;
-      if (vn < 0) { this.vel.x -= nx * vn * 1.3; this.vel.z -= nz * vn * 1.3; this.vel.multiplyScalar(0.85); this.hit = Math.max(this.hit, -vn); worst = Math.max(worst, -vn); }
-    }
+    for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) worst = Math.max(worst, collideBuilding(this, b, R));
     return worst;
   }
 

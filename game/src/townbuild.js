@@ -133,6 +133,30 @@ function decompose(world, ang) {
   ]);
 }
 
+// A short sample of each road, split into "main" and "other", for door facing and class.
+// (Here, not in townmodel.js, so the roof physics in roofs.js plans the same building as the mesh.)
+export function roadContext(roads) {
+  const all = [], main = [];
+  for (const r of roads || []) {
+    const cls = String(r.osm || '').split(':')[0];
+    const n = r.n || 0;
+    const step = Math.max(1, Math.floor(n / 6));
+    for (let i = 0; i < n; i += step) {
+      const p = [r.x[i], r.z[i]];
+      all.push(p);
+      if (MAIN.test(cls)) main.push(p);
+    }
+  }
+  return [{ cls: 'residential', pts: all }, { cls: 'primary', pts: main }];
+}
+
+// The floor a planned building stands on: the mean ground under its first part's corners.
+export function floorOf(pts, ground) {
+  let s = 0;
+  for (const [x, z] of pts) s += ground(x, z);
+  return s / pts.length;
+}
+
 function closestRoad(x, z, roads) {
   let bestD = Infinity, mainD = Infinity, point = null;
   for (const r of roads || []) {

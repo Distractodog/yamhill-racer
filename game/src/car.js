@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
-import { buildingRoofAt, buildingRoofFloor } from './roofs.js';
+import { collideBuilding } from './roofs.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const TUNING_DEFAULTS = {
@@ -181,7 +181,7 @@ export class Car extends Vehicle {
     this.grounded = contacts > 0;
     const firm = contacts >= 2;
     if (contacts) { let b = 0; for (let i = 1; i < 8; i++) if (counts[i] > counts[b]) b = i; this.surface = b; }
-    const grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1);
+    const grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1);   // steep roofs slip
     if (contacts) _nAvg.normalize(); else _nAvg.set(0, 1, 0);
     if (bed >= 2) _F.addScaledVector(_nAvg, -t.downforce * speed * speed * MASS);
 
@@ -359,7 +359,7 @@ export class Car extends Vehicle {
     const fwdSpeed = this.vel.dot(_fw);
     for (const wh of this.wheels) wh.spin += fwdSpeed * dt / RADIUS * (input.handbrake && !wh.front ? 0 : 1);
 
-    if (firm && _up.y > 0.8 && speed > 3 && !this.drifting && !this.onWater && !this.waterDepth && !inWater) {
+    if (firm && _up.y > 0.8 && speed > 3 && !this.drifting && !this.onWater && !this.waterDepth && !inWater && !W.onRoof?.()) {
       const last = this.safe[this.safe.length - 1];
       if (!last || Math.hypot(last[0] - this.pos.x, last[1] - this.pos.z) > 6) {
         this.safe.push([this.pos.x, this.pos.z, Math.atan2(_fw.x, _fw.z)]); if (this.safe.length > 200) this.safe.shift();
@@ -412,29 +412,10 @@ export class Car extends Vehicle {
     }
   }
 
+  // walls up to the drawn roof, roofs from above (roofs.js; same wall response as before)
   collideBuildings() {
-    const R = 1.5 * (this.typePhysics?.width ?? 1), roofSupport = this.world.canReachRoof?.();
-    for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) {
-      if (!b.pts || this.pos.y > b.top + 1) continue;
-      const roof = roofSupport && this.pos.y > buildingRoofFloor(b, this.world) ? buildingRoofAt(b, this.pos.x, this.pos.z, this.world) : Infinity;
-      if (Number.isFinite(roof) && this.pos.y > roof + 0.05) continue;
-      const pts = b.pts; let inside = false, bestD = Infinity, bx = 0, bz = 0;
-      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const [x1, z1] = pts[j], [x2, z2] = pts[i];
-        if (((z2 > this.pos.z) !== (z1 > this.pos.z)) && (this.pos.x < (x1 - x2) * (this.pos.z - z2) / (z1 - z2) + x2)) inside = !inside;
-        const ex = x2 - x1, ez = z2 - z1, L = ex * ex + ez * ez || 1;
-        const u = Math.max(0, Math.min(1, ((this.pos.x - x1) * ex + (this.pos.z - z1) * ez) / L));
-        const cx = x1 + ex * u, cz = z1 + ez * u, d = Math.hypot(this.pos.x - cx, this.pos.z - cz);
-        if (d < bestD) { bestD = d; bx = cx; bz = cz; }
-      }
-      if (!inside && bestD >= R) continue;
-      let nx = this.pos.x - bx, nz = this.pos.z - bz; const d = Math.hypot(nx, nz) || 1; nx /= d; nz /= d;
-      if (inside) { nx = -nx; nz = -nz; }
-      const pen = inside ? R + bestD : R - bestD;
-      this.pos.x += nx * pen; this.pos.z += nz * pen;
-      const vn = this.vel.x * nx + this.vel.z * nz;
-      if (vn < 0) { this.vel.x -= nx * vn * 1.3; this.vel.z -= nz * vn * 1.3; this.vel.multiplyScalar(0.85); this.hit = Math.max(this.hit, -vn); this.drifting = false; }
-    }
+    const R = 1.5 * (this.typePhysics?.width ?? 1);
+    for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) if (collideBuilding(this, b, R) > 0) this.drifting = false;
   }
 
   keepInBounds() {
