@@ -138,7 +138,7 @@ fc.add({ reset: () => { Object.assign(tuning, TUNING_DEFAULTS); save(); gui.cont
 fc.add({ copy: () => navigator.clipboard?.writeText(JSON.stringify(tuning, null, 1)) }, 'copy').name('Copy settings');
 const pick = (o, ranges) => Object.fromEntries(Object.keys(ranges).map(k => [k, o[k]]));
 const saveB = () => { try { localStorage.setItem('yr-tuning-bike-1', JSON.stringify(pick(bikeTuning, BIKE_RANGES))); localStorage.setItem('yr-tuning-jet-1', JSON.stringify(pick(jetTuning, JET_RANGES))); } catch {} };
-const fb = gui.addFolder('Dirt bike'); for (const [k, r] of Object.entries(BIKE_RANGES)) fb.add(bikeTuning, k, ...r).onChange(saveB);
+const fb = gui.addFolder('Bike'); for (const [k, r] of Object.entries(BIKE_RANGES)) fb.add(bikeTuning, k, ...r).onChange(saveB);
 const fj = gui.addFolder('Jet'); for (const [k, r] of Object.entries(JET_RANGES)) fj.add(jetTuning, k, ...r).onChange(saveB);
 fb.close(); fj.close();
 gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuning, JET); saveB(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'resetV').name('Reset bike + jet');
