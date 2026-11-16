@@ -34,7 +34,9 @@ export function buildSportBikeModel() {
       // Twin-sided alloy swingarm, rear hub to frame pivot.
       rod(group,metal,[s*.13,-.18,-.73],[s*.13,-.09,-.22],.045);
       rod(group,black,[s*.12,.13,-.30],[s*.13,-.12,-.63],.027);
-      box(group,metal,.12,.025,.06,s*.23,-.14,-.30); // rearsets
+      // rear-set pegs on short brackets, outside the fairing where the rider's boots stand
+      rod(group,metal,[s*.22,-.12,-.30],[s*.34,-.13,-.27],.018);
+      box(group,metal,.12,.025,.06,s*.38,-.14,-.27);
       if (detail) {
         rod(group,black,[s*.21,.52,.58],[s*.40,.60,.63],.018);
         box(group,black,.12,.065,.065,s*.42,.60,.63);
@@ -67,9 +69,10 @@ export function buildSportBikeModel() {
   function upperFork(group, detail) {
     for (const s of [-1,1]) {
       rod(group,gold,[s*.095,.10,-.07],[s*.095,.47,-.23],.025);
-      rod(group,black,[s*.09,.42,-.22],[s*.28,.40,-.26],.021);
-      rod(group,gloves,[s*.23,.40,-.26],[s*.32,.40,-.29],.027);
-      if (detail) rod(group,metal,[s*.25,.405,-.31],[s*.34,.405,-.34],.009);
+      // Clip-on bars leave the fairing sides and sit above them, where the rider's gloved hands wrap the grips.
+      rod(group,black,[s*.09,.42,-.22],[s*.33,.52,-.24],.021);
+      rod(group,gloves,[s*.31,.52,-.24],[s*.43,.52,-.24],.03);
+      if (detail) rod(group,metal,[s*.36,.56,-.30],[s*.40,.56,-.34],.009);
     }
     box(group,metal,.24,.035,.10,0,.39,-.20);
   }
@@ -98,30 +101,36 @@ export function buildSportBikeModel() {
   const rider = new THREE.Group(); rider.position.set(0,.40,-.34); body.add(rider);
   function riderParts(detail) {
     const group = new THREE.Group();
-    // Low racing tuck: hips over the seat, chest over the tank, elbows bent to the clip-ons.
-    hull(group,jacket,[[.40,.19,.20,.37,.17],[.17,.19,.05,.27,.18],[-.07,.14,-.04,.15,.14]]);
-    box(group,black,.28,.12,.19,0,.0,-.01);
-    for (const s of [-1,1]) {
-      rod(group,jacket,[s*.12,.04,.00],[s*.235,-.16,.21],.079,6);
-      rod(group,black,[s*.235,-.16,.21],[s*.20,-.47,.00],.056,6);
-      box(group,black,.115,.10,.21,s*.20,-.51,.035,.10);
-      rod(group,jacket,[s*.19,.28,.33],[s*.29,.12,.36],.057,6);
-      rod(group,jacket,[s*.29,.12,.36],[s*.29,.005,.78],.047,6);
-      box(group,gloves,.10,.08,.115,s*.29,.005,.78);
-      if (detail) {
-        mesh(group,new THREE.IcosahedronGeometry(.062,0),black,s*.29,.12,.36);
-        box(group,trim,.025,.08,.13,s*.295,-.16,.20,.32); // knee sliders
-      }
+    // Authored in the body's frame (R / H convert to the rider group's origin). Bike.syncMesh pitches the rider by +.12
+    // rad at rest, so the parts are turned back by that much: at rest the pose below is exactly what is drawn.
+    const R = (x, y, z) => [x, y - .40, z + .34], H = sections => sections.map(([z, w, b, t, tw]) => [z + .34, w, b - .40, t - .40, tw]);
+    const ball = (m, r, x, y, z) => mesh(group, new THREE.IcosahedronGeometry(r, detail ? 1 : 0), m, ...R(x, y, z));
+    const limb = (m, a, b, r) => rod(group, m, R(...a), R(...b), r, 7);
+    // Low racing tuck: chest flat on the tank behind the screen, hips on the seat, back sloping up to the shoulders.
+    hull(group, jacket, H([[.12,.19,.60,.80,.20],[-.12,.18,.56,.78,.18],[-.34,.16,.50,.70,.16],[-.52,.14,.43,.60,.15]]));
+    box(group, black, .30, .13, .22, ...R(0, .46, -.46));
+    for (const s of [-1, 1]) {
+      // legs stay outside the tank and fairing: thighs hug the tank sides, knees against it, boots on the pegs
+      ball(black, .085, s * .13, .47, -.46);
+      limb(black, [s * .13, .47, -.46], [s * .22, .50, -.30], .08);
+      limb(black, [s * .22, .50, -.30], [s * .32, .50, .00], .077);
+      ball(black, .08, s * .32, .50, .00);
+      limb(black, [s * .32, .50, .00], [s * .37, -.01, -.31], .062);
+      box(group, black, .11, .09, .27, ...R(s * .38, -.065, -.19));          // boot, ball of the foot on the peg
+      // shoulder, upper arm down and out, forearm forward to the glove on the grip
+      ball(jacket, .09, s * .20, .72, .03);
+      limb(jacket, [s * .20, .72, .03], [s * .35, .58, .27], .068);
+      ball(jacket, .068, s * .35, .58, .27);
+      limb(jacket, [s * .35, .58, .27], [s * .37, .55, .47], .056);
+      box(group, gloves, .10, .085, .13, ...R(s * .37, .545, .49));
+      if (detail) box(group, trim, .025, .08, .13, ...R(s * .405, .50, .01)); // knee slider
     }
     // Helmet, dark wraparound visor and chin bar remain separate paint roles at both LODs.
-    const head=mesh(group,new THREE.IcosahedronGeometry(.175,detail?1:0),helmet,0,.395,.53); head.scale.set(1,1.05,1.15);
-    hull(group,glass,[[.728,.09,.36,.44,.105],[.675,.15,.34,.46,.15],[.61,.16,.35,.46,.16]]);
-    box(group,helmet,.20,.075,.12,0,.315,.655,.16);
-    if (detail) {
-      rod(group,black,[-.12,.37,.25],[.12,.37,.25],.035); // aerodynamic back hump
-      box(group,black,.085,.025,.015,0,.326,.724);
-      box(group,trim,.07,.025,.18,0,.566,.50,.08);
-    }
+    const head = ball(helmet, .175, 0, .80, .20); head.scale.set(1, 1.05, 1.15);
+    hull(group, glass, H([[.388,.09,.76,.84,.105],[.335,.15,.74,.86,.15],[.27,.16,.75,.86,.16]]));
+    box(group, helmet, .20, .075, .12, ...R(0, .715, .315), .16);
+    if (detail) box(group, trim, .07, .025, .18, ...R(0, .966, .16), .08);
+    group.rotation.x = -.12;
     return group;
   }
   lod(rider,riderParts(true),riderParts(false),38);
