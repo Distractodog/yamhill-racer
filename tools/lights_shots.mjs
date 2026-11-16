@@ -74,7 +74,7 @@ try {
   report.strobe = await page.evaluate(() => ({ onFrames: lightsEvidence.strobeOn, offFrames: lightsEvidence.strobeOff }));
   if (!report.strobe.onFrames || !report.strobe.offFrames) throw new Error('Jet strobe did not alternate');
   await shot('car', 'behind');
-  // Garage types (a new model: lenses rebuilt on it) and the boats' head / tail / nav lights (port red, starboard green).
+  // Garage types: lenses rebuild on each new model.
   for (const [kind, type] of [['car', 'truck'], ['car', 'sports'], ['bike', 'sport']]) {
     await page.evaluate(({ kind, type }) => game.vehicles.setType(kind, type), { kind, type });
     await shot(kind, 'front'); await shot(kind, 'behind', true);
@@ -87,16 +87,6 @@ try {
     g.atmosphere.setPreset('midday', false); await wait(600); g.atmosphere.setPreset('night', false); await wait(600);
     return { before, after: count() };
   });
-  await holdCar(page, { x: 3694, z: 1350, kind: 'car' });
-  for (const kind of ['jetski', 'boat']) {
-    await page.evaluate(kind => { const g = game; g.vehicles.switchTo(kind); g.vehicles.current.reset(3694, 1350); lightsEvidence.view = 'behind'; }, kind);
-    await new Promise(r => setTimeout(r, 1200));
-    for (const view of ['behind', 'front']) {
-      await page.evaluate(view => { lightsEvidence.view = view; }, view); await new Promise(r => setTimeout(r, 400));
-      const name = `${kind}-${view}.png`; await page.screenshot({ path: join(out, name) });
-      report.shots.push({ file: name, kind, lenses: await page.evaluate(() => game.vehicles.current.mesh.getObjectByName('vehicle-lenses').children.filter(o => o.visible).map(o => o.name)) });
-    }
-  }
   await holdCar(page, { x: 19451, z: -11032, yaw: -1.573, kind: 'car' });
   await page.evaluate(() => { lightsEvidence.view = null; game.setCam(0); });
   await page.waitForFunction(() => game.world.loadedAt(19451, -11032) && game.world.pendingTiles() === 0);

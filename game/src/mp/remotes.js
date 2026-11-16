@@ -10,8 +10,7 @@
 // animState, interpolated like the pose) and its tuning from the skin (net.js animTuning) is handed to Car / Bike / Jet syncMesh, Glider update, the tyre marks / dust /
 // smoke / splashes of effects.js + drivingfx.js, and for the 4 nearest a quiet CarAudio engine. A state without those
 // fields (an older client) is animated from its motion alone. The car / bike are drawn as the skin's type (Sports car,
-// SUV, Sport bike…); a jet ski / speedboat takes its bob, trim and lean from the pose and turns its bars / wheel and
-// leans its rider from the state. Lights (lights.js) are glowing lenses only, on while it's dark where you are.
+// SUV, Sport bike…). Lights (lights.js) are glowing lenses only, on while it's dark where you are.
 // Speed: each model's plain painted parts are merged per moving part (a car is 5 draw calls), built once per vehicle
 // kind and only rebuilt when that player's colours change; far away a plain block stands in for it.
 import * as THREE from 'three';
@@ -22,7 +21,6 @@ import { setGliderColors } from '../glidercolors.js';
 import { Car, TUNING_DEFAULTS } from '../car.js';
 import { Bike, BIKE } from '../bike.js';
 import { Jet } from '../jet.js';
-import { poseBoatParts } from '../boat.js';
 import { VEHICLE_TYPES, typeInfo } from '../vehicletypes.js';
 import { createVehicleLightLenses } from '../lights.js';
 import { Effects } from '../effects.js';
@@ -34,20 +32,15 @@ export const MAX_EXTRAP = 300;       // ms we carry on past the newest state
 export const SNAP = 50;              // m: a correction bigger than this snaps instead of blending
 export const STALE = 3000;           // ms without a state → hidden
 export const TAG_FADE = 300, TAG_HIDE = 400;     // m: name tag fades out, then hides
-export const FAR = { car: 250, bike: 250, jet: 650, jetski: 250, boat: 300 };   // m: past this a low-poly block stands in
+export const FAR = { car: 250, bike: 250, jet: 650 };   // m: past this a low-poly block stands in
 export const FX_RANGE = 160;         // m: tyre marks, dust, smoke and splashes only this close
 export const VOICES = 4, VOICE_RANGE = 180;      // engines heard: the 4 nearest, up to 180 m
-const TAG_Y = { car: 1.5, bike: 2.0, jet: 3.6, jetski: 1.9, boat: 2.4 }, GLIDER_TAG_Y = 1.1;
-const KINDS = ['car', 'bike', 'jet', 'jetski', 'boat'], BOATS = new Set(['jetski', 'boat']);
-// a boat's pose (bob, trim, lean) is all in the state's position + rotation; this turns the bars / wheel and leans the rider
-function syncBoat() {
-  const m = this.mesh; m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
-  poseBoatParts(m.userData, this.steer, this.lean);
-}
-const SYNC = { car: Car.prototype.syncMesh, bike: Bike.prototype.syncMesh, jet: Jet.prototype.syncMesh, jetski: syncBoat, boat: syncBoat };
-const RADIUS = { car: 0.38, bike: 0.34, jet: 0.35, jetski: 1, boat: 1 };     // rolling radius the physics spins the wheels with
-const REST = { car: 0.09, bike: 0.1, jet: 0.2, jetski: 0, boat: 0 };         // spring compression standing still (older clients)
-const WB = { car: 2.78, bike: 1.45, jet: 4.4, jetski: 2, boat: 4 };          // wheelbase, for a steer guessed from the turn
+const TAG_Y = { car: 1.5, bike: 2.0, jet: 3.6 }, GLIDER_TAG_Y = 1.1;
+const KINDS = ['car', 'bike', 'jet'];
+const SYNC = { car: Car.prototype.syncMesh, bike: Bike.prototype.syncMesh, jet: Jet.prototype.syncMesh };
+const RADIUS = { car: 0.38, bike: 0.34, jet: 0.35 };     // rolling radius the physics spins the wheels with
+const REST = { car: 0.09, bike: 0.1, jet: 0.2 };         // spring compression standing still (older clients)
+const WB = { car: 2.78, bike: 1.45, jet: 4.4 };          // wheelbase, for a steer guessed from the turn
 const fin = v => typeof v === 'number' && Number.isFinite(v);
 const finArr = (a, n) => Array.isArray(a) && a.length === n && a.every(fin);
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -70,7 +63,7 @@ export function parseAnim(msg) {
 }
 
 // The tuning a remote's syncMesh reads (`t`) from its skin's tune (net.js animTuning), range-checked, else defaults
-const TUNE_KEYS = { car: { rl: ['restLength', 0.2, 0.9], sl: ['steerLock', 0.2, 0.9] }, bike: { tr: ['travel', 0.1, 0.6] }, jet: {}, jetski: {}, boat: {} };
+const TUNE_KEYS = { car: { rl: ['restLength', 0.2, 0.9], sl: ['steerLock', 0.2, 0.9] }, bike: { tr: ['travel', 0.1, 0.6] }, jet: {} };
 export function parseTune(tune, kind) {
   const t = { restLength: TUNING_DEFAULTS.restLength, steerLock: kind === 'bike' ? BIKE.steerLock : TUNING_DEFAULTS.steerLock, travel: BIKE.travel };
   for (const [k, [name, lo, hi]] of Object.entries(TUNE_KEYS[kind] || {})) if (fin(tune?.[k])) t[name] = clamp(tune[k], lo, hi);
@@ -362,8 +355,6 @@ function standGeometry(kind) {
       car: mergeGeometries([box(1.9, 0.45, 4.3, 0, -0.05, 0), box(0.6, 0.45, 1.2, 0, 0.35, -0.3), box(1.6, 0.1, 0.5, 0, 0.8, -2.0)]),
       bike: mergeGeometries([box(0.35, 0.9, 1.9, 0, -0.1, 0), box(0.4, 0.8, 0.4, 0, 0.75, -0.15)]),
       jet: mergeGeometries([box(1.4, 1.4, 14, 0, 0, 0.3), box(9.6, 0.15, 2.8, 0, 0, -1.2), box(4.8, 0.12, 1.4, 0, 0.1, -5.3), box(0.15, 2.4, 1.6, 0, 1.6, -4.9)]),
-      jetski: mergeGeometries([box(1.1, 0.6, 3.1, 0, 0.1, 0), box(0.45, 0.8, 0.45, 0, 0.95, -0.15)]),
-      boat: mergeGeometries([box(2.2, 0.9, 6.2, 0, 0.25, 0), box(1.8, 0.45, 0.3, 0, 1.0, 0.75)]),
     };
   }
   return standGeo[kind];
@@ -455,7 +446,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
   function bodyColor(r, kind) { return sanitizeCosmetics(colorsFor(r, kind), kind).body; }
   function applySkin(r, skin) {
     if (!skin || typeof skin !== 'object') return;
-    const kind = KINDS.includes(skin.vehicle) ? skin.vehicle : null;
+    const kind = KINDS.includes(skin.vehicle) ? skin.vehicle : ['jetski', 'boat'].includes(skin.vehicle) ? 'car' : null;
     // tuning (spring length, steering lock, travel) only retunes the puppet; paint rebuilds the model
     if (kind) { r.tune[kind] = parseTune(skin.tune, kind); if (r.bodies[kind]) r.bodies[kind].pz.t = r.tune[kind]; }
     // the type (car: race / sports / hatch / suv / truck, bike: dirt / sport), checked against vehicletypes.js
@@ -556,7 +547,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     if (kind === 'jet') {
       const wreck = pz.mode === 'crashed';
       if (wreck !== b.wreck) { b.wreck = wreck; wreckLook(pz.mesh, wreck); }
-    } else if (!BOATS.has(kind)) {
+    } else {
       pz.glide.active = s.glide;
       if (s.glide || b.gp) { const gp = ensureGlider(r, b); gp.active = s.glide; Glider.prototype.update.call(gp, dt, false); }
     }
@@ -722,7 +713,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     const pz = b.pz, ud = b.model.userData;
     return { steer: r3(pz.steer), throttle: r3(pz.input.throttle), drifting: pz.drifting, lean: r3(pz.lean),
       comp: pz.wheels.map(w => w.contact ? r3(w.comp) : -1), spin: pz.wheels.map(w => r3(w.spin)),
-      frontYaw: r3(ud.wheels[0]?.holder.rotation.y ?? 0), roll: r3(ud.bodyPivot?.rotation.z ?? ud.lean?.rotation.z ?? (BOATS.has(b.kind) ? ud.rider.rotation.z : 0)),
+      frontYaw: r3(ud.wheels[0]?.holder.rotation.y ?? 0), roll: r3(ud.bodyPivot?.rotation.z ?? ud.lean?.rotation.z ?? 0),
       pitch: r3(ud.bodyPivot?.rotation.x ?? ud.rider?.rotation.x ?? 0), bars: ud.bars ? r3(ud.bars.rotation.y) : null,
       wheel: ud.wheel ? r3(ud.wheel.rotation.z) : null,
       gear: b.kind === 'jet' ? r3(pz.gear) : null, flame: b.kind === 'jet' ? (ud.flame.visible ? r3(ud.flame.scale.z) : 0) : null,

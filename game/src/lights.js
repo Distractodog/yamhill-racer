@@ -108,7 +108,7 @@ export function createVehicleLights(scene = null) {
         from.y += .12;
         to.copy(from).add(_aim);
       }
-      beam = on && mesh.visible && vehicle.kind !== 'jet' && lenses.anchors.head?.length > 0;     // (a boat on its way to a launch spot is hidden)
+      beam = on && mesh.visible && vehicle.kind !== 'jet' && lenses.anchors.head?.length > 0;
       const want = beam ? HEADLIGHT : 0;
       spot.intensity += (want - spot.intensity) * Math.min(1, dt * HEADLIGHT_FADE);
       if (Math.abs(want - spot.intensity) < .5) spot.intensity = want;
