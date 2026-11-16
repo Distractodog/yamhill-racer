@@ -46,6 +46,7 @@ sends `Cache-Control: no-store` so edits always load.
 | `node tools/checkpoint_respawn_test.mjs --node` (omit `--node` for browser) | browser only | Checkpoint R reset, wrong-way hint, jet/free-roam preservation and stale-load cancellation. |
 | `python tools/footprints_test.py` / `python tools/fetch_buildings_test.py` | no | Supplementary footprint merge and clipping/provenance checks; requires numpy, shapely, pillow. |
 | `node tools/vehicle_types_test.mjs` | no | Car/bike type acceleration and top speed, campus/gravel routes, finite states and zero flips; model, paint, tuning and storage checks. |
+| `node tools/wheel_clip_test.mjs` | no | All car/bike types and remote puppets: drawn tyre bounds below arch limits at 0–1000 km/h, braking and ramp landings; drawing preserves physics state. Run through the heavy gate. |
 | `node tools/vehicle_types_shots.mjs --out <dir>` | yes | Every type in Garage and driving, reload persistence, page errors and frame samples; review PNGs. |
 | `node tools/vehicles_test.mjs <dir>` | yes | V picker, bike race, jet ring race, crash + respawn; writes screenshots to `<dir>`. |
 | `node tools/welcome_test.mjs <dir>` | yes | Welcome card shows, blocks game keys, closes with button/Enter/Esc/Space, "don't show again". |
