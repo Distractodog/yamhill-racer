@@ -26,7 +26,7 @@ try {
   await page.keyboard.press('Escape');
   await openMenu(page); await shot('open');
   assert.deepEqual(await page.$$eval('#menu-panel > *', items => items.map(el => el.id)),
-    ['mp-button', 'garage-button', 'atmosphere-button', 'settings-button', 'help-button', 'suggest-button']);
+    ['mp-button', 'vehicles-button', 'garage-button', 'atmosphere-button', 'settings-button', 'help-button', 'suggest-button']);
   await page.keyboard.press('KeyW');
   assert.equal(await page.evaluate(() => game.keys.size), 0);
   await page.focus('#suggest-button'); await page.keyboard.press('Tab');
@@ -38,6 +38,7 @@ try {
   await openMenu(page); await page.mouse.click(600, 500); await closed();
   for (const [item, panel, close] of [
     ['mp-button', '#mp-panel', '#mp-close'],
+    ['vehicles-button', '#veh-menu', '#veh-menu .vp-close'],
     ['garage-button', '#cosmetic-garage', '.garage-close'],
     ['atmosphere-button', '#atmosphere-content', '#settings-close'],
     ['settings-button', '#tuning-content', '#settings-close'],

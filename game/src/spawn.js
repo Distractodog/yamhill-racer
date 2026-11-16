@@ -6,7 +6,7 @@ export function createSpawn() {
     if (!choosing && !loading) return;
     if (choosing && !loading && allowed.has(e.code)) return;
     // H pauses driving while home streams in, but the V picker must still work.
-    if (!choosing && loading && /^(KeyV|(Digit|Numpad)[123]|ArrowUp|ArrowDown|Enter|Escape)$/.test(e.code)) return;
+    if (!choosing && loading && (api?.vehicles?.open || /^(KeyV|(Digit|Numpad)[123]|ArrowUp|ArrowDown|Enter|Escape)$/.test(e.code))) return;
     e.preventDefault(); e.stopImmediatePropagation();
   }, true);
   async function move(x, z) {
@@ -41,6 +41,7 @@ export function createSpawn() {
   }
   return {
     get blocked() { return choosing || loading; },
+    get pickerAllowed() { return !choosing; },
     get point() { return spawn && [...spawn]; },
     start(deps) {
       api = deps;

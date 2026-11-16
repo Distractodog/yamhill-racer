@@ -86,6 +86,7 @@
   <button id="menu-button" class="menu-button" type="button" aria-controls="menu-panel" aria-expanded="false" disabled><svg class="menu-icon" aria-hidden="true" focusable="false" width="14" height="10" viewBox="0 0 14 10"><rect width="14" height="2"/><rect y="4" width="14" height="2"/><rect y="8" width="14" height="2"/></svg><span class="menu-label">Menu</span></button>
   <div id="menu-panel" role="group" aria-label="Game options" hidden>
   <button id="mp-button" class="menu-button" aria-controls="mp-panel" aria-expanded="false" disabled>Play multiplayer</button>
+  <button id="vehicles-button" class="menu-button" aria-controls="veh-menu" aria-haspopup="dialog" disabled>Vehicles</button>
   <button id="garage-button" class="menu-button" disabled>Garage</button>
   <button id="atmosphere-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Atmosphere</button>
   <button id="settings-button" class="menu-button" aria-controls="settings-panel" aria-expanded="false" disabled>Settings</button>
@@ -102,7 +103,7 @@
       on a dirt bike, or in a jet.</p>
     <dl>
       <dt>W A S D / arrows</dt><dd>Drive and steer · Space handbrake</dd>
-      <dt>V</dt><dd>Vehicle picker: 1 car, 2 dirt bike, 3 jet</dd>
+      <dt>V</dt><dd>Vehicles: car, bike or aircraft and their types (1 / 2 / 3 switch at once)</dd>
       <dt>J</dt><dd>Races: pick one and press Enter, wait for 3-2-1-GO, then go through every checkpoint</dd>
       <dt>M</dt><dd>Map: zoom from the valley down to streets; click to place a pin</dd>
       <dt>G</dt><dd>Glider (car or dirt bike): open it in the air, or above <span data-kmh="90">90 km/h</span> (bike <span data-kmh="70">70 km/h</span>)</dd>
@@ -148,7 +149,7 @@
     <dt><kbd>↑ ↓ ← →</kbd></dt><dd>Tilt forward / back / left / right to fly that way; ← / → at speed bank into a turn</dd></dl>
     <p>Hold W to spool the rotor up and lift off. Let go of the arrows and it levels itself and slows to a hover. To land, hold S over flat ground: it sinks gently near the ground. Coming down too hard or too fast, landing on a steep slope, or the rotor hitting the ground crashes it.</p>
     <h3>Every vehicle</h3>
-    <dl><dt><kbd>V</kbd></dt><dd>Vehicle picker: 1 car, 2 dirt bike, 3 jet; or ↑ / ↓ then Enter</dd>
+    <dl><dt><kbd>V</kbd></dt><dd>Vehicles: 1 car, 2 bike, 3 aircraft; or ← / → for the vehicle, ↓ for its types, then Enter (or click)</dd>
     <dt><kbd>J</kbd></dt><dd>Race list: ↑ / ↓ to choose, Enter to start</dd><dt><kbd>R</kbd></dt><dd>Reset to a safe spot</dd>
     <dt><kbd>L</kbd></dt><dd>Toggle vehicle lights (automatic at dusk/night)</dd>
     <dt><kbd>F</kbd></dt><dd>Flip upright / level the jet</dd><dt><kbd>H</kbd></dt><dd>Return to your spawn</dd>

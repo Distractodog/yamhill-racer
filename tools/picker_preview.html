@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- The V picker on its own, no game / map / network needed (three.js from node_modules, a flat stand-in world):
+     open tools/picker_preview.html?car=sports&jet=heli&drive=jet&paint=jet:2a7fff&keys=ArrowDown,ArrowRight
+     car / bike / jet = saved type · drive = vehicle you're in · paint = kind:rrggbb (body colour) · keys = pressed
+     after it opens (comma list of key codes). The title reads "ready …" once every picture is drawn and it is open. -->
+<html lang="en"><head><meta charset="utf-8"><title>V picker preview</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:linear-gradient(#9cc3df 0 46%,#6f8f58 46% 100%);font-family:system-ui,sans-serif}</style>
+<script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { createVehicles } from '../game/src/vehicles.js';
+import { createCosmetics } from '../game/src/cosmetics.js';
+import { TUNING_DEFAULTS } from '../game/src/car.js';
+import { createVehicleThumbs } from '../game/src/vehiclethumbs.js';
+import { createVehiclePicker } from '../game/src/vehiclepicker.js';
+
+const q = new URLSearchParams(location.search);
+try {
+  localStorage.clear();
+  localStorage.setItem('yr-vtype-1', JSON.stringify({ car: q.get('car') || 'race', bike: q.get('bike') || 'dirt', jet: q.get('jet') || 'fighter' }));
+} catch {}
+const flat = () => ({ extent: [-1e5, -1e5, 1e5, 1e5], spawn: [0, 0], heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0,
+  surfaceAt: () => 3, normalAt: (x, z, out = new THREE.Vector3()) => out.set(0, 1, 0), waterLevelAt: () => -Infinity,
+  loadedAt: () => true, mapContains: () => true, treesNear() {}, buildingsNear: () => [] });
+const vehicles = createVehicles({ scene: new THREE.Scene(), world: flat(), tuning: { ...TUNING_DEFAULTS } });
+const cosmetics = createCosmetics(vehicles);
+for (const p of (q.get('paint') || '').split(',').filter(Boolean)) { const [kind, hex] = p.split(':'); cosmetics.set(kind, { body: '#' + hex }); }
+if (q.get('drive')) vehicles.switchTo(q.get('drive'));
+const thumbs = createVehicleThumbs({ cosmetics });
+const picker = createVehiclePicker({ vehicles, thumbs });
+window.preview = { vehicles, cosmetics, thumbs, picker };
+const t0 = performance.now();
+thumbs.start(['car', 'bike', 'jet'].map(k => [k, vehicles.getType(k)]));
+await new Promise(r => { const wait = () => thumbs.pending ? setTimeout(wait, 30) : r(); wait(); });
+const drawMs = Math.round(performance.now() - t0);
+const o0 = performance.now(); picker.show(); const openMs = (performance.now() - o0).toFixed(1);
+for (const code of (q.get('keys') || '').split(',').filter(Boolean)) {
+  dispatchEvent(new KeyboardEvent('keydown', { code, key: code.replace(/^Key/, '').toLowerCase(), bubbles: true, cancelable: true }));
+  await new Promise(r => requestAnimationFrame(r));
+}
+await new Promise(r => setTimeout(r, 100));
+document.title = `ready ${JSON.stringify(picker.selected)} open=${picker.open} driving=${vehicles.current.kind}/${vehicles.getType(vehicles.current.kind)} pictures ${drawMs} ms, open ${openMs} ms${thumbs.failed ? ' NO WEBGL' : ''}`;
+</script>
+</body></html>
