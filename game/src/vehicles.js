@@ -4,7 +4,7 @@
 import { Car } from './car.js';
 import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
-import { Boat, JETSKI, SPEEDBOAT, findBank } from './boat.js';
+import { Boat, JETSKI, SPEEDBOAT, findBank, dryBankArea } from './boat.js';
 import { activeProxy } from './vehicle.js';
 import { createVehicleTypeSelector } from './vehicletypeselector.js';
 
@@ -57,9 +57,16 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     // streamed out meanwhile, the boat (hidden) holds there until it's loaded, then this switch runs again.
     let land = null;
     if (place && fromBoat && !toBoat) {
-      const back = cur.cameFrom, atBack = back && Math.hypot(p.x - back[0], p.z - back[1]) < 1;   // a hold there just ended
-      land = (atBack ? back : findBank(world, p.x, p.z)) || back || null;
-      if (land && !world.loadedAt(land[0], land[1])) {
+      // Cover every wheel in any heading, plus at least 3 m to water (and 1 m of settling margin).
+      const clear = Math.max(6, ...next.wheels.map(w => Math.hypot(w.mount?.x ?? w.x ?? 0, w.mount?.z ?? w.z) + 4));
+      const bank = (x, z) => findBank(world, x, z, { clear });
+      const dry = spot => dryBankArea(world, spot[0], spot[1], clear);
+      const back = cur.cameFrom, atBack = back && dry(back) && Math.hypot(p.x - back[0], p.z - back[1]) < 1;
+      // Revalidate the complete footprint, including after a streaming hold; a dry centre alone is insufficient.
+      land = (atBack ? back : bank(p.x, p.z)) ||
+        (back && (!world.loadedAt(back[0], back[1]) ? back : dry(back) ? back : bank(back[0], back[1])));
+      if (!land) { cur.say('No dry bank loaded nearby yet', 3); return false; }
+      if (!world.loadedAt(land[0], land[1])) {
         const boat = cur;
         boat.holdAt({ x: land[0], z: land[1], y: land[3] }, () => { if (cur === boat) switchTo(kind); }, { away: true });
         return true;
@@ -70,8 +77,11 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     scene.remove(cur.mesh);
     next.safe = cur.safe.slice();
     next._lastLoaded = cur._lastLoaded;
-    if (land) next.reset(land[0], land[1], land[2]);
-    else if (place) {
+    if (land) {
+      next.reset(land[0], land[1], land[2]);
+      next._lastLoaded = [land[0], land[1]];
+      next.safe = [[land[0], land[1], land[2]]];
+    } else if (place) {
       if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
       else next.reset(p.x, p.z, yaw);
     }

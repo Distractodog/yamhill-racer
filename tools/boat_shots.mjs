@@ -1,5 +1,5 @@
 // Jet ski + speedboat screenshots in a real browser (director-run; needs Chrome and the game server):
-//   node tools/boat_shots.mjs [out dir] [--game http://127.0.0.1:8173/]
+//   node tools/boat_shots.mjs [out dir | --out dir] [--game http://127.0.0.1:8173/]
 // Starts tools/serve.py on 8173 if nothing is listening there. Start-up via tools/lib/startgame.mjs (campus spawn).
 // Shots: the V picker with both boats in it; per boat (jet ski, speedboat): picked on land at campus (it should start
 // on the nearest pond / river), at full speed on the South Yamhill at Sheridan (chase camera, spray + wake), in a hard
@@ -15,7 +15,7 @@ import path from 'node:path';
 import { GAME_URL, startGame, holdCar, watchErrors, CAMPUS } from './lib/startgame.mjs';
 
 const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : d; };
-const GAME = opt('--game', GAME_URL), OUT = args[0] || 'boat-shots';
+const GAME = opt('--game', GAME_URL), outOption = opt('--out', null), OUT = outOption || args[0] || 'boat-shots';
 const RIVER = { x: 3700, z: 1344, yaw: -Math.PI / 2 };          // South Yamhill just east of Bridge Street, heading west
 fs.mkdirSync(OUT, { recursive: true });
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -167,7 +167,18 @@ await shot('launch-01-at-sheridan');
 // ---- leaving the boat: V → car puts the car on the nearest bank, facing away from the water
 await page.keyboard.press('KeyV'); await wait(200); await page.keyboard.press('Digit1'); await wait(1500);
 ls = await state(); console.log(' ', JSON.stringify(ls));
-const dry = await page.evaluate(() => { const c = game.vehicles.current, w = game.world.waterLevelAt(c.pos.x, c.pos.z); return !(w > game.world.terrainAt(c.pos.x, c.pos.z)); });
+const dry = await page.evaluate(() => {
+  const c = game.vehicles.current, W = game.world;
+  if (c.kind !== 'car') return false;
+  return c.wheels.every(wh => {
+    const p = wh.mount.clone().applyQuaternion(c.quat).add(c.pos);
+    for (let dx = -3; dx <= 3; dx += 0.5) for (let dz = -3; dz <= 3; dz += 0.5) {
+      if (dx * dx + dz * dz > 9) continue;
+      if (!W.loadedAt(p.x + dx, p.z + dz) || Number.isFinite(W.waterLevelAt(p.x + dx, p.z + dz))) return false;
+    }
+    return true;
+  });
+});
 check(ls.kind === 'car' && dry, 'jet ski → car: the car is on the bank, not in the river');
 await shot('launch-02-car-on-bank');
 

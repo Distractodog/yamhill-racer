@@ -13,7 +13,7 @@ const errors=[],results=[],wait=ms=>new Promise(r=>setTimeout(r,ms));
 try {
   const page=await browser.newPage();await page.setViewport({width:1280,height:800});
   page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR',e.message);});
-  page.on('console',m=>{if(m.type()==='error'&&!m.text().includes('favicon'))errors.push(m.text());});
+  page.on('console',m=>{if(m.type()==='error'&&!/\/favicon\.ico(?:[?#]|$)/.test(m.location()?.url || '')&&!m.text().includes('favicon'))errors.push(m.text());});
   await page.evaluateOnNewDocument(()=>{
     localStorage.setItem('yr-welcome-hidden-1','1');
     Object.defineProperty(navigator,'getGamepads',{value:()=>[]});
@@ -34,7 +34,9 @@ try {
   for(const [kind,types]of Object.entries(VEHICLE_TYPES))for(const type of types) {
     await page.evaluate(({kind,start})=>{game.garage.close();game.vehicles.switchTo(kind);game.vehicles.current.reset(...start);game.garage.show();},{kind,start});
     await page.click(`#cosmetic-garage [data-kind="${kind}"]`);
-    await page.select('#cosmetic-garage [name="vehicleType"]',type.id);await wait(300);
+    const typeSelect = '[role="dialog"][aria-labelledby="garage-title"] select[name="vehicleType"]';
+    await page.waitForSelector(typeSelect,{visible:true});
+    await page.select(typeSelect,type.id);await wait(300);
     const chosen=await page.evaluate(kind=>game.vehicles.getType(kind),kind);assert.equal(chosen,type.id);
     await page.screenshot({path:path.join(out,`${type.id}-garage.png`)});
     await page.evaluate(()=>game.garage.close());
