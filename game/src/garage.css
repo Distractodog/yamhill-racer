@@ -10,7 +10,7 @@
 #cosmetic-garage button:focus-visible,#cosmetic-garage input:focus-visible,#cosmetic-garage select:focus-visible{outline:3px solid #e2eaa6;outline-offset:3px}
 #cosmetic-garage button:disabled{opacity:.46;cursor:default}
 #cosmetic-garage .garage-close{font-size:18px;background:transparent}
-#cosmetic-garage .garage-tabs{display:flex;gap:8px;padding:0 28px 18px;border-bottom:1px solid #ffffff15}
+#cosmetic-garage .garage-tabs{display:flex;flex-wrap:wrap;gap:8px;padding:0 28px 18px;border-bottom:1px solid #ffffff15}
 #cosmetic-garage [aria-pressed=true]{background:#c6e79b;color:#17241a;border-color:#c6e79b}
 #cosmetic-garage button[aria-pressed=true]:hover:not(:disabled){background:#d2eeae;color:#17241a;border-color:#e0f4c1}
 #cosmetic-garage .garage-layout{display:grid;grid-template-columns:1.05fr 1fr;min-height:480px}

@@ -7,6 +7,7 @@ import { Effects } from './effects.js';
 import { DrivingFX } from './drivingfx.js';
 import { createCosmetics } from './cosmetics.js';
 import { createGarage } from './garage.js';
+import { createVehicleLights } from './lights.js';
 import { createAtmosphere } from './atmosphere.js';
 import { CarAudio } from './audio.js';
 import { createDirections } from './directions.js';
@@ -101,13 +102,14 @@ const effects = new Effects(scene);
 const drivingFX = new DrivingFX(scene);
 const atmosphere = createAtmosphere({ scene, sun, sunDirection: SUN_DIR, world });
 settings.bindAtmosphere(atmosphere, atmosphere.presets);
+const vehicleLights = createVehicleLights(scene);
 const audio = new CarAudio();
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 const challenges = await createChallenges({ scene, world, car, minimap, vehicles });
 import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
-const remotes = await createRemotes({ scene, camera, minimap, world, audio });   // other players' vehicles, tags and map dots (multiplayer)
+const remotes = await createRemotes({ scene, camera, minimap, world, audio, night: () => atmosphere.night });   // other players' vehicles, tags and map dots (multiplayer)
 document.getElementById('loading').remove();
 const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });
 const gliderColors = createGliderColors({ car: glider, bike: bikeGlider });
@@ -163,7 +165,7 @@ settings.ready(clearKeys, () => {
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
 const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, gui, beforeOpen: () => garage.close() });
-const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, vehicles.jet],
+const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, vehicles.jet, vehicles.jetski, vehicles.boat],
   predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
 addEventListener('keydown', e => {
   if (e.gameUI) return;
@@ -174,6 +176,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyF') flipUpright();
   if (e.code === 'KeyH' && !e.repeat) goHome();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
+  if ((e.code === 'KeyL' || e.key?.toLowerCase() === 'l') && !e.repeat) vehicleLights.toggle(atmosphere.night);
   if (e.code === 'KeyU' && !e.repeat) toggleUnits();
   if (e.code === 'KeyG' && !e.repeat) { if (vehicles.current.glide) vehicles.current.glide.toggle(); else vehicles.current.say?.('The jet has its own wings', 1.5); }
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -318,7 +321,8 @@ function updateCamera(dt) {
   // follow the hill's overall slope (sampled 8 m ahead and behind), not the car's bounce over each ground
   // triangle – copying every little pitch and bob is what made the view shake at speed
   const rp = car.renderPos, hx = Math.sin(camYaw), hz = Math.cos(camYaw);
-  const slope = Math.atan2(world.terrainAt(rp.x + hx * 8, rp.z + hz * 8) - world.terrainAt(rp.x - hx * 8, rp.z - hz * 8), 16);
+  // (boats: cam.flat – the water is level; the river bed and banks under it would tilt the view)
+  const slope = vc.flat ? 0 : Math.atan2(world.terrainAt(rp.x + hx * 8, rp.z + hz * 8) - world.terrainAt(rp.x - hx * 8, rp.z - hz * 8), 16);
   const airborne = !car.grounded && car.airTime > 0.2;
   const pathPitch = Math.atan2(car.vel.y, hs + 1);                   // gliding: look along the glide path
   camPitch += ((gl ? pathPitch * 0.8 : airborne ? camPitch : slope * 0.6) - camPitch) * Math.min(1, dt * 3);
@@ -418,6 +422,7 @@ function frame(now) {
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
   car.syncMesh(dt);
+  vehicleLights.update(dt, vehicles.current, atmosphere.night, input);
   glider.update(dt, vehicles.current === vehicles.car); bikeGlider.update(dt, vehicles.current === vehicles.bike);
   car.mesh.updateMatrixWorld(true);
   effects.update(garage.open || sessionSpawn.blocked ? 0 : dt, car);
@@ -470,6 +475,6 @@ window.game.vehicles = vehicles;
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim });
 window.game.sessionSpawn = sessionSpawn;
 
-Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX });
+Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX, vehicleLights });
 Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

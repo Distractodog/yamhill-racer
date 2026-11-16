@@ -1,11 +1,13 @@
 import * as THREE from 'three';
+import { VEHICLE_TYPES, typeInfo } from './vehicletypes.js';
 import { LIVERIES, sanitizeCosmetics, disposeCosmeticPreview } from './cosmetics.js';
 
 let activeKeyboard = null;
 // Registered during module evaluation, before settings/vehicle/race capture handlers.
 if (typeof addEventListener === 'function') addEventListener('keydown', e => activeKeyboard?.(e), true);
 const PRESET_KEY = 'yr-garage-presets-1';
-const NAMES = { car: 'Car', bike: 'Dirt bike', jet: 'Jet' };
+const NAMES = { car: 'Car', bike: 'Bike', jet: 'Jet', jetski: 'Jet ski', boat: 'Speedboat' };
+const RIDERS = ['bike', 'jetski', 'boat'], NO_WHEELS = ['jet', 'jetski', 'boat'];   // which kinds show rider / wheel colours
 export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen = () => {}, onClose = () => {}, canOpen = () => true, rewards = null }) {
   const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./garage.css', import.meta.url).href; document.head.append(link);
   let button = document.getElementById('garage-button');
@@ -15,7 +17,7 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
   dialog.innerHTML = `<div class="garage-shell"><header><div><h2 id="garage-title">Garage</h2></div><button type="button" class="garage-close" aria-label="Close garage">✕</button></header>
     <nav class="garage-tabs" aria-label="Customize vehicle">${Object.entries(NAMES).map(([k,n])=>`<button type="button" data-kind="${k}" aria-pressed="false">${n}</button>`).join('')}</nav>
     <div class="garage-layout"><div class="garage-preview"><div class="garage-canvas"></div><p class="garage-preview-help">Drag to turn · scroll to zoom</p><div class="garage-condition"></div><button type="button" class="garage-wash">Wash & repair</button></div>
-    <form class="garage-controls"><h3>Paint & finish</h3><div class="garage-colors">${[['body','Body'],['trim','Trim'],['wheels','Wheels'],['helmet','Helmet'],['jacket','Jacket & pants'],['gloves','Gloves']].map(([key,label])=>`<label data-role="${key}"><span>${label}</span><input type="color" name="${key}" aria-label="${label} color"></label>`).join('')}</div>
+    <form class="garage-controls"><label class="garage-type">Type<select name="vehicleType" aria-label="Vehicle type"></select></label><p class="garage-type-help"></p><h3>Paint & finish</h3><div class="garage-colors">${[['body','Body'],['trim','Trim'],['wheels','Wheels'],['helmet','Helmet'],['jacket','Jacket & pants'],['gloves','Gloves']].map(([key,label])=>`<label data-role="${key}"><span>${label}</span><input type="color" name="${key}" aria-label="${label} color"></label>`).join('')}</div>
     <div class="garage-pair"><label>Wheel style<select name="wheelStyle"><option value="factory">Factory spokes</option><option value="sport">Sport hubs</option><option value="rally">Rally discs</option></select></label><label>Race number<input name="number" inputmode="numeric" maxlength="2" pattern="[0-9]{1,2}" aria-label="Race number"></label></div>
     <h3>Livery</h3><div class="garage-liveries"></div>
     <div class="garage-glider" hidden><h3>Glider colors</h3><div class="garage-colors">${[['wing','Wing + tail'],['stripe','Center stripe'],['accent','Accent panels']].map(([key,label])=>`<label><span>${label}</span><input type="color" data-glider-color="${key}" aria-label="Glider ${label.toLowerCase()}"></label>`).join('')}</div><div class="garage-actions"><button type="button" class="glider-solid">One color</button><button type="button" class="glider-reset">Reset glider colors</button></div></div>
@@ -69,14 +71,19 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
   }
   function refresh() {
     refreshGlider();
+    const typeSelect = dialog.querySelector('[name="vehicleType"]'), types = VEHICLE_TYPES[kind];
+    typeSelect.closest('label').hidden = !types;
+    typeSelect.replaceChildren(...(types || []).map(t => Object.assign(document.createElement('option'), { value: t.id, textContent: t.name })));
+    typeSelect.value = vehicles.getType?.(kind) || types?.[0].id || '';
+    dialog.querySelector('.garage-type-help').textContent = typeInfo(kind, typeSelect.value)?.description || '';
     const focusedLivery = dialog.contains(document.activeElement) ? document.activeElement?.dataset?.livery : null;
     const config=cosmetics.get(kind);
     dialog.querySelectorAll('[data-kind]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.kind===kind)));
     for(const [name,value] of Object.entries(config)){const field=dialog.querySelector(`[name="${name}"]`);if(field)field.value=value;}
-    for(const role of ['jacket','gloves'])dialog.querySelector(`[data-role="${role}"]`).hidden=kind!=='bike';
-    dialog.querySelector('[data-role="helmet"]').hidden=kind==='jet';
-    dialog.querySelector('[name="wheelStyle"]').closest('label').hidden=kind==='jet';
-    dialog.querySelector('[data-role="wheels"]').hidden=kind==='jet';
+    for(const role of ['jacket','gloves'])dialog.querySelector(`[data-role="${role}"]`).hidden=!RIDERS.includes(kind);
+    dialog.querySelector('[data-role="helmet"]').hidden=kind==='jet'||(kind==='car'&&(vehicles.getType?.(kind)||'race')!=='race');
+    dialog.querySelector('[name="wheelStyle"]').closest('label').hidden=NO_WHEELS.includes(kind);
+    dialog.querySelector('[data-role="wheels"]').hidden=NO_WHEELS.includes(kind);
     const list=dialog.querySelector('.garage-liveries');list.replaceChildren();
     for(const livery of LIVERIES){
       const b=document.createElement('button');b.type='button';b.dataset.livery=livery.id;
@@ -107,7 +114,7 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
   button.addEventListener('click',()=>open?close():show());button.setAttribute('aria-controls','cosmetic-garage');button.setAttribute('aria-expanded','false');
   dialog.querySelector('form').addEventListener('submit',e=>e.preventDefault());
   dialog.querySelectorAll('[data-kind]').forEach(b=>b.addEventListener('click',()=>{kind=b.dataset.kind;rotation=.65;zoom=1;refresh();}));
-  dialog.querySelectorAll('input[name],select[name]').forEach(field=>field.addEventListener('input',()=>{if(field.name==='number'&&!/^\d{1,2}$/.test(field.value))return;const saved=cosmetics.set(kind,{[field.name]:field.value});message(saved?'Saved to this browser.':'Browser storage is unavailable; changes last until you reload.');}));
+  dialog.querySelectorAll('input[name],select[name]').forEach(field=>field.addEventListener('input',()=>{if(field.name==='vehicleType'){const saved=vehicles.setType(kind,field.value);refresh();message(saved?'Type saved to this browser.':'Browser storage is unavailable; changes last until you reload.');return;}if(field.name==='number'&&!/^\d{1,2}$/.test(field.value))return;const saved=cosmetics.set(kind,{[field.name]:field.value});message(saved?'Saved to this browser.':'Browser storage is unavailable; changes last until you reload.');}));
   dialog.querySelectorAll('[data-glider-color]').forEach(field => field.addEventListener('input', () => {
     gliderMessage(gliderColors.set(kind, { [field.dataset.gliderColor]: field.value }));
   }));

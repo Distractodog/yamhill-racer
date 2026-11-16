@@ -15,8 +15,9 @@ const P = new THREE.Vector3(), Q = new THREE.Quaternion(), V = new THREE.Vector3
 assert.equal(parseState({ p: [0, 0, NaN], q: [0, 0, 0, 1] }, 0), null, 'NaN position rejected');
 assert.equal(parseState({ p: [0, 0, 0], q: [0, 0, 0, 0] }, 0), null, 'zero quaternion rejected');
 assert.equal(parseState({ p: [0, 0], q: [0, 0, 0, 1] }, 0), null, 'short position rejected');
-const ps = parseState({ p: [1, 2, 3], q: [0, 0, 0, 2], vel: ['x'], v: 'boat' }, 5);
+const ps = parseState({ p: [1, 2, 3], q: [0, 0, 0, 2], vel: ['x'], v: 'tank' }, 5);
 assert.deepEqual([ps.v, ps.vel, ps.q.w, ps.glide], ['car', [0, 0, 0], 1, false], 'defaults: car, zero vel, normalised q');
+for (const v of ['jetski', 'boat']) assert.equal(parseState({ p: [0, 0, 0], q: [0, 0, 0, 1], v }, 0).v, v, `${v} is a known kind`);
 {
   const buf = [];
   assert.ok(pushState(buf, st(100, 0, 0))); assert.ok(pushState(buf, st(166, 1, 0)));
@@ -187,6 +188,54 @@ send('a', 0, 0); assert.equal(R.count, 1); mp.inGame = false; frame(); assert.eq
 mp.inGame = true; R.dispose(); assert.equal(mp.listeners(), 0, 'dispose unsubscribes'); assert.equal(markerFn, null); assert.equal(group.parent, null);
 // no mp at all (single player): inert but safe
 const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.update(1 / 60); solo.receive({ t: 'state', from: 'x', p: [0, 0, 0], q: [0, 0, 0, 1] }); assert.equal(solo.count, 1); solo.dispose();
+
+// ---------------------------------------------------------------- new kinds and types, lights
+// The skin's {vehicle, type, colors}: a Big truck / Sport bike is drawn as that model, a jet ski / speedboat as itself
+// (bars / wheel and rider from the state, pose from the state), all with their lights as lenses that glow at night.
+{
+  const m3 = stubMp(), scene3 = new THREE.Scene();
+  let dark = 0;
+  const R3 = makeRemotes({ scene: scene3, camera, mp: m3, fx: false, night: () => dark });
+  camera.position.set(0, 3, -25); camera.lookAt(0, 0, 0);
+  const people = [['t', 'car', 'truck', 0], ['s', 'bike', 'sport', 6], ['j', 'jetski', undefined, 12], ['o', 'boat', undefined, 20], ['x', 'car', 'bogus', -8]];
+  m3.emit('roster', { t: 'roster', players: people.map(([id, vehicle, type]) => ({ id, name: id, skin: { vehicle, type, colors: { body: '#3366cc' } } })) });
+  const by = id => R3.list().find(r => r.id === id);
+  const st = (id, v, x, extra = {}) => m3.emit('state', { t: 'state', from: id, srvT: m3.now(), p: [x, 0, 0], q: (extra.q || yawQ(0)).toArray(), vel: [0, 0, 8], v, ts: m3.now(), ...extra.a });
+  const go = (n, extra = {}) => { for (let i = 0; i < n; i++) { if (i % 4 === 0) for (const [id, v, , x] of people) st(id, v, x, extra[id] || {}); m3.advance(1000 / 60); R3.update(1 / 60); } };
+  go(16);
+  assert.deepEqual(people.map(([id]) => [by(id).kind, by(id).type, by(id).model]),
+    [['car', 'truck', 'car-truck'], ['bike', 'sport', 'bike-sport'], ['jetski', null, 'jetski'], ['boat', null, 'speedboat'], ['car', 'race', by('x').model]],
+    'kind + type → that model (an unknown type falls back to the Race car)');
+  assert.notEqual(by('x').model, 'car-truck');
+  // boats: the pose comes from the state (bob + trim + lean in p / q); bars / wheel turn and the rider leans from st / ln
+  const lean = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.3);
+  // (a boat's state carries w for its three spray points, like animState sends)
+  go(16, { j: { q: lean, a: { st: 0.8, ln: 0.3, w: [0, 0, -1] } }, o: { a: { st: -0.6, ln: 0.1, w: [0, 0, 0] } } });
+  const jm = R3.model('j'), om = R3.model('o');
+  near(jm.quaternion.angleTo(lean), 0, 0.02); assert.ok(by('j').anim.bars < -0.3, 'jet ski bars turned'); assert.ok(by('j').anim.roll > 0.08, 'rider leans');
+  assert.ok(by('o').anim.wheel < -0.8, 'speedboat wheel turned');
+  // an older client (no animation fields): the static model, posed, no crash
+  go(8, { j: { a: {} } }); assert.equal(by('j').visible, true);
+  // lights: off by day, lenses at night (no light sources), brake lights with the brake, the type's own anchors
+  const lightsOf = id => by(id).anim.lights, isLight = root => { let n = 0; root.traverse(o => { if (o.isLight) n++; }); return n; };
+  assert.deepEqual(people.map(([id]) => lightsOf(id).length), [0, 0, 0, 0, 0], 'day: no lenses lit');
+  dark = 1; go(8, { t: { a: { br: 1, w: [9, 9, 9, 9] } }, x: { a: { w: [9, 9, 9, 9] } } });
+  assert.deepEqual(lightsOf('t').sort(), ['head', 'head', 'tail', 'tail'], 'truck: two head + two tail');
+  assert.deepEqual(lightsOf('s').sort(), ['head', 'tail'], 'sport bike: one each');
+  for (const id of ['j', 'o']) assert.ok(['head', 'tail', 'left', 'right', 'nav-tail'].every(k => lightsOf(id).includes(k)), `${id}: head, tail and nav lights`);
+  const tailI = id => { let v = 0; R3.model(id).traverse(o => { if (o.name === 'vehicle-light-tail') v = Math.max(v, o.material.emissiveIntensity); }); return v; };
+  assert.ok(tailI('t') > tailI('x'), 'braking truck: brighter tail lights');
+  const port = R3.model('o').getObjectByName('vehicle-light-left'); assert.equal(port.material.emissive.getHexString(), 'ff1828', 'port = red');
+  assert.equal(isLight(scene3), 0, 'remotes add no light sources');
+  const truckHead = R3.model('t').getObjectByName('vehicle-light-head');
+  assert.ok(truckHead.parent.parent === R3.model('t').userData.lightMount, 'lenses ride on the type model\'s body');
+  // type change in the skin rebuilds the model; disposal clears the lenses
+  m3.emit('skin', { t: 'skin', from: 't', skin: { vehicle: 'car', type: 'hatch', colors: { body: '#3366cc' } } }); go(8);
+  assert.equal(by('t').model, 'car-hatch');
+  dark = 0; go(4); assert.equal(lightsOf('t').length, 0, 'lights off again by day');
+  R3.dispose(); assert.equal(scene3.children.length, 0);
+  console.log('PASS new kinds/types: truck, sport bike, jet ski, speedboat drawn from the skin; boat pose + bars / wheel / rider; older client; lenses at night with brake lights; no light sources; type change rebuilds');
+}
 
 // ---------------------------------------------------------------- 16 remotes: per-frame cost
 {

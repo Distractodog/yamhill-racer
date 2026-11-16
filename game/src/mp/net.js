@@ -26,7 +26,7 @@ export function defaultRelay(win = globalThis.window) {
 //   st steer · th throttle (the jet: its lever) · br brake · hb handbrake · dr drifting · sl slip · la / lo sideways /
 //   forward acceleration (body roll / pitch) · sf surface · w per-wheel spring compression in cm (-1 = in the air) ·
 //   ws per-wheel surface (only when one differs from sf) · ow skimming water · wd water depth ·
-//   bike: ln lean · pr pitch rate · wl wheelie · jet: md mode g|a|c · gr gear out 0..1 · jc [pitch, roll, yaw] stick
+//   bike: ln lean · pr pitch rate · wl wheelie · jet ski / speedboat: ln lean (the rider) · jet: md mode g|a|c · gr gear out 0..1 · jc [pitch, roll, yaw] stick
 const r1 = x => Math.round(x * 10) / 10, r2 = x => Math.round(x * 100) / 100;
 export function animState(v) {
   const a = {}; if (!v) return a;
@@ -45,6 +45,7 @@ export function animState(v) {
   if (v.onWater) a.ow = 1;
   put('wd', v.waterDepth);
   if (kind === 'bike') { put('ln', v.lean); put('pr', v.pitchRate, r1); if (v.wheelie) a.wl = 1; }
+  if (kind === 'jetski' || kind === 'boat') put('ln', v.lean);
   if (kind === 'jet') {
     a.md = v.mode === 'air' ? 'a' : v.mode === 'crashed' ? 'c' : 'g';
     put('gr', v.gear);
@@ -181,7 +182,8 @@ export class Net {
   _skin(sample = this._source()) {
     const kind = sample?.kind || sample?.vehicle?.kind || 'car';
     const tune = animTuning(sample?.vehicle);
-    return { vehicle: kind, colors: sample?.colors || {}, glider: sample?.glider || {}, ...(Object.keys(tune).length ? { tune } : {}) };
+    const type = sample?.type || sample?.vehicle?.type || (kind === 'car' ? 'race' : kind === 'bike' ? 'dirt' : undefined);
+    return { vehicle: kind, ...(type ? { type } : {}), colors: sample?.colors || {}, glider: sample?.glider || {}, ...(Object.keys(tune).length ? { tune } : {}) };
   }
   _tick() {
     if (!this.inGame) return;

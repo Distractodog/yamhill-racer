@@ -1,0 +1,79 @@
+// Type defaults layer over the existing Settings sliders as ratios. Factory types use the original
+// tuning object directly; changing a slider remains live and never writes type defaults into storage.
+import * as THREE from 'three';
+import { TUNING_DEFAULTS } from './car.js';
+import { BIKE, buildBikeModel } from './bike.js';
+import { buildCarModel } from './carmodel.js';
+import { buildTypeCarModel, buildSportBikeModel } from './vehicletypemodels.js';
+
+export const VEHICLE_TYPE_KEY = 'yr-vtype-1';
+export const VEHICLE_TYPES = {
+  car: [
+    { id: 'race', name: 'Race car', description: 'Original open-wheel racer.', tuning: {} },
+    { id: 'sports', name: 'Sports car', description: 'Low, wide and fast. Asphalt grip; limited off-road traction.',
+      tuning: { accel: 40, topSpeed: 1100, cornerGrip: 36, gripAlign: 19, restLength: .30, springK: 68000, damping: 5900 },
+      physics: { mass: 1000, width: 1.1, length: 1, radius: .38, lean: .65, grip: [.52,.45,.60,1.12,.58,.9,1.1,1], drive: [.65,.55,.70,1,.68,1,1,1] } },
+    { id: 'hatch', name: 'Hatchback', description: 'Light and nimble, with a modest top speed.',
+      tuning: { accel: 25, topSpeed: 480, steerRate: 9, turnResponse: 22, restLength: .40, springK: 50000, damping: 4900 },
+      physics: { mass: 720, width: .88, length: .84, radius: .34, lean: 1.15 } },
+    { id: 'suv', name: 'SUV', description: 'Tall, soft suspension and sure footing on dirt and gravel.',
+      tuning: { accel: 22, topSpeed: 650, cornerGrip: 27, turnResponse: 13, restLength: .62, springK: 70000, damping: 7500, downforce: .0015 },
+      physics: { mass: 1500, width: 1.12, length: 1.05, radius: .46, lean: 2, grip: [1.22,1.2,1.22,.96,1.25,1,1,1] } },
+    { id: 'truck', name: 'Big truck', description: 'Lifted, heavy and wide. Long suspension travel and the best off-road grip.',
+      tuning: { accel: 16, topSpeed: 420, cornerGrip: 25, steerRate: 5, turnResponse: 10, restLength: .85, springK: 85000, damping: 10500, downforce: .0008 },
+      physics: { mass: 2300, width: 1.34, length: 1.25, radius: .60, lean: 1.7, grip: [1.45,1.4,1.45,.92,1.45,1,1,1] } },
+  ],
+  bike: [
+    { id: 'dirt', name: 'Dirt bike', description: 'Original dirt bike. Shift for wheelies.', tuning: {} },
+    { id: 'sport', name: 'Sport bike', description: 'Fast on asphalt; fairings, tucked rider and poor off-road grip. No Shift wheelies.',
+      tuning: { accel: 36, topSpeed: 520, cornerGrip: 31, gripAlign: 16, powerSlide: .6, travel: .24, springK: 18500, damping: 1550 },
+      physics: { noWheelie: true, grip: [.38,.30,.45,1.16,.42,1,1.1,1], drive: [.45,.35,.55,1,.5,1,1,1] } },
+  ],
+};
+export const typeInfo = (kind, id) => VEHICLE_TYPES[kind]?.find(t => t.id === id) || VEHICLE_TYPES[kind]?.[0];
+export function sanitizeVehicleTypes(value) {
+  return Object.fromEntries(Object.keys(VEHICLE_TYPES).map(kind => [kind, typeInfo(kind, value?.[kind]).id]));
+}
+export function loadVehicleTypes(storage) {
+  try { return sanitizeVehicleTypes(JSON.parse(storage?.getItem(VEHICLE_TYPE_KEY) || '{}')); }
+  catch { return sanitizeVehicleTypes(null); }
+}
+export function buildVehicleTypeModel(kind, id) {
+  const type = typeInfo(kind, id)?.id;
+  if (kind === 'car') return type === 'race' ? buildCarModel() : buildTypeCarModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
+  if (kind === 'bike') return type === 'dirt' ? buildBikeModel() : buildSportBikeModel();
+  throw new Error(`No vehicle types for ${kind}`);
+}
+export function applyVehicleType(vehicle, id) {
+  const spec = typeInfo(vehicle.kind, id);
+  if (!spec) return null;
+  if (!vehicle._typeBaseTuning) {
+    vehicle._typeBaseTuning = vehicle.t;
+    vehicle._typeMounts = vehicle.wheels.map(w => w.mount?.clone());
+  }
+  const defaults = vehicle.kind === 'car' ? TUNING_DEFAULTS : BIKE;
+  const base = vehicle._typeBaseTuning;
+  vehicle.type = spec.id;
+  vehicle.name = spec.name;
+  vehicle.typePhysics = spec.physics || null;
+  vehicle.t = Object.keys(spec.tuning).length ? Object.create(base) : base;
+  for (const [key, value] of Object.entries(spec.tuning)) Object.defineProperty(vehicle.t, key, {
+    enumerable: true, get: () => base[key] * value / defaults[key],
+  });
+  if (vehicle.kind === 'car') {
+    const p = spec.physics;
+    vehicle.typeHalf = p ? new THREE.Vector3(.9 * p.width, .38, 2.15 * p.length) : null;
+    vehicle.half = p ? { x: 1.15 * p.width, front: 2.4 * p.length, back: -2.4 * p.length } : undefined;
+    vehicle.wheels.forEach((w, i) => {
+      w.mount.copy(vehicle._typeMounts[i]);
+      if (p) { w.mount.x *= p.width; w.mount.z *= p.length; }
+    });
+  }
+  // Keep the vehicle instance (challenges/camera/glider refer to it), replacing only its owned model.
+  const old = vehicle.mesh, model = buildVehicleTypeModel(vehicle.kind, spec.id);
+  vehicle.glide?.cancel();
+  if (vehicle.glide?.mesh) model.add(vehicle.glide.mesh);
+  model.position.copy(old.position); model.quaternion.copy(old.quaternion);
+  old.parent?.add(model); old.removeFromParent(); vehicle.mesh = model;
+  return old;
+}

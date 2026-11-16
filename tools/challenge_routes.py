@@ -64,9 +64,12 @@ def link(a, b, kind):
     L = math.dist(pts[a], pts[b]); adj[a].append((b, L, kind)); adj[b].append((a, L, kind))
 
 ends, juncs = [], []
+water_levels = {}                                # (tx, tz) -> {pond / river pool id: water level}, tiles with water
 for f in sorted(glob.glob(os.path.join(ROOT, 'game', 'assets', 'tiles', '*'))):
     if not os.path.isdir(f): continue
     t = tilefmt.read_json(f)                     # packed (tile.json.gz) or plain tile.json
+    lv = {**t.get('ponds', {}), **(t.get('rivers') or {})}
+    if lv: water_levels[tuple(map(int, os.path.basename(f).split('_')))] = {int(k): v for k, v in lv.items()}
     for p in t['paths']:
         if p['kind'] not in ROAD or len(p['pts']) < 2: continue
         prev = None
@@ -94,6 +97,53 @@ for n, r in juncs:                                        # strip ends that open
     for i in etree.query_ball_point(pts[n], r + 3): link(n, E[i], kinds[n])
 print('nodes', len(pts), 'strip ends', len(E), 'junctions', len(juncs))
 
+# ---------------------------------------------------------------- water: keep races out of deep ponds / river pools
+# The car and bike can't drive through water deeper than about a tyre (game/src/water.js: wheels in → slow, body in →
+# no grip, sink, back to the bank), so every metre of a strip under more than DEEP m of water costs WET (≈ forbidden;
+# still finite so a route always exists). Same rule as data.js waterLevelAt: pond / river pool id at the nearest
+# height-grid vertex, water if the terrain is below that id's level; depth = level − max(terrain, strip height).
+DEEP, WET = 0.3, 1000.0
+_WJ = json.load(open(os.path.join(ROOT, 'game', 'assets', 'world.json')))
+_HN, _HS, _HM, _T = _WJ['hn'] + 2 * _WJ['hm'], _WJ['hstep'], _WJ['hm'], _WJ['tile']
+_ids, _hgt = {}, {}
+def deep_at(S, y):
+    """True where points S (n×2) with road height y (−inf = bare ground) are under more than DEEP m of water."""
+    deep = np.zeros(len(S), bool)
+    tx = np.floor((S[:, 0] + _T / 2) / _T).astype(int); tz = np.floor((S[:, 1] + _T / 2) / _T).astype(int)
+    for key in set(zip(tx.tolist(), tz.tolist())) & set(water_levels):
+        m = (tx == key[0]) & (tz == key[1]); d = os.path.join(ROOT, 'game', 'assets', 'tiles', f'{key[0]}_{key[1]}')
+        if key not in _ids:
+            _ids[key] = np.frombuffer(tilefmt.read_bytes(d, 'ponds.bin'), '<u2').reshape(_HN, _HN)
+            _hgt[key] = np.frombuffer(tilefmt.read_bytes(d, 'height.bin'), np.float32).reshape(_HN, _HN)
+        ids, H = _ids[key], _hgt[key]
+        gx0, gz0 = key[0] * _T - _T / 2 - _HM * _HS, key[1] * _T - _T / 2 - _HM * _HS
+        j = np.clip(np.round((S[m, 0] - gx0) / _HS).astype(int), 0, _HN - 1)
+        i = np.clip(np.round((S[m, 1] - gz0) / _HS).astype(int), 0, _HN - 1)
+        lv = np.array([water_levels[key].get(int(k), -np.inf) for k in ids[i, j]])
+        fx = np.clip((S[m, 0] - gx0) / _HS, 0, _HN - 1.001); fz = np.clip((S[m, 1] - gz0) / _HS, 0, _HN - 1.001)
+        j0, i0 = fx.astype(int), fz.astype(int); fx -= j0; fz -= i0              # terrain as data.js terrainAt
+        a, b, c, e = H[i0, j0], H[i0, j0 + 1], H[i0 + 1, j0], H[i0 + 1, j0 + 1]
+        terr = np.where(fx + fz <= 1, a + (b - a) * fx + (c - a) * fz, e + (c - e) * (1 - fx) + (b - e) * (1 - fz))
+        deep[m] = (terr < lv) & (lv - np.maximum(terr, y[m]) > DEEP)
+    return deep
+def wet_lengths(A, B, ya, yb):
+    """Metres of each segment A[i]→B[i] (road heights ya → yb) under more than DEEP m of water, sampled every ≤2 m."""
+    L = np.hypot(*(B - A).T); n = np.maximum(1, np.ceil(L / 2).astype(int))
+    seg = np.repeat(np.arange(len(A)), n + 1)
+    f = np.concatenate([np.linspace(0, 1, k + 1) for k in n]) if len(A) else np.zeros(0)
+    deep = deep_at(A[seg] + (B - A)[seg] * f[:, None], ya[seg] + (yb - ya)[seg] * f)
+    # each sample stands for the length around it (half the step at the ends)
+    w = (L / n)[seg] * np.where((f == 0) | (f == 1), 0.5, 1.0)
+    return np.bincount(seg, weights=w * deep, minlength=len(A))
+
+_ea = np.array([(a, b) for a, lst in adj.items() for b, _, _ in lst if a < b])
+_Y = np.array(ys)
+_wet = wet_lengths(P[_ea[:, 0]], P[_ea[:, 1]], _Y[_ea[:, 0]], _Y[_ea[:, 1]])
+wet_edge = {(int(a), int(b)): float(w) for (a, b), w in zip(_ea, _wet) if w > 0}
+_ids.clear(); _hgt.clear()                                # the corridor checks below only touch a few tiles
+print('strip metres under more than', DEEP, 'm of water:', round(sum(wet_edge.values())), 'on', len(wet_edge), 'links')
+def wet_m(a, b): return wet_edge.get((a, b) if a < b else (b, a), 0.0)
+
 def nearest(x, z, cost):
     best = None
     for d, i in zip(*tree.query((x, z), k=40)):
@@ -107,7 +157,7 @@ def route(a, b, cost):
         if n == b: break
         if d > dist[n]: continue
         for m, L, k in adj[n]:
-            nd = d + L * cost[k]
+            nd = d + L * cost[k] + WET * wet_m(n, m)
             if nd < dist.get(m, 1e18): dist[m] = nd; prev[m] = n; heapq.heappush(q, (nd, m))
     if b not in prev: raise SystemExit(f'no route {pts[a]} -> {pts[b]}')
     out = [b]
@@ -244,6 +294,13 @@ for c in CHALLENGES:
             # Ease back to the normal corridor over the outer 20 m, avoiding a wall step.
             blend = min(1.0, max(0.0, (cap['radius'] - d) / 20.0))
             hw = min(hw, hw + (cap['half'] - hw) * blend)
+        if hw > fw[j] / 2:                   # opened out past the strip: stay 1.5 m short of deep water on either side
+            nx, nz = math.cos(_hd[j]), -math.sin(_hd[j])        # (the walls are symmetric, so the nearer side wins)
+            o = np.arange(float(fw[j]) / 2, hw + 1.5 + 1e-6, 0.5)
+            for s in (1, -1):
+                S = np.stack([F[j][0] + s * nx * o, F[j][1] + s * nz * o], 1)
+                hit = np.flatnonzero(deep_at(S, np.full(len(o), -np.inf)))
+                if len(hit): hw = max(float(fw[j]) / 2, min(hw, float(o[hit[0]]) - 1.5))
         return hw
     track = [[round(float(F[j][0]), 2), round(float(F[j][1]), 2), round(half_width(j), 2)]
              for j in list(range(0, len(F), 2)) + [len(F) - 1]]
@@ -253,6 +310,8 @@ for c in CHALLENGES:
                        route=[[round(x, 1), round(z, 1)] for x, z in simple]))
     surf = {}
     for a, b in zip(nodes, nodes[1:]): surf[kinds[b]] = surf.get(kinds[b], 0) + math.dist(pts[a], pts[b])
+    wet = sum(wet_m(a, b) for a, b in zip(nodes, nodes[1:]))
+    if wet: surf[f'under >{DEEP} m of water'] = round(wet, 1)
     print(f"{c['name']}: {length:.0f} m, {len(gates) - 1} gates after the start, {len(ramps)} ramps at",
           [(r['s'], f"dip {r['dip']} m over {r['span']} m") if 'dip' in r else r['s'] for r in ramps], 'surfaces',
           {k: round(v) for k, v in surf.items()})

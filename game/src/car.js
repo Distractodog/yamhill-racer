@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
 import { buildingRoofAt, buildingRoofFloor } from './roofs.js';
+import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const TUNING_DEFAULTS = {
   accel: 30,              // m/s² from standstill (was 17 before 2026-11-11)
@@ -38,11 +39,20 @@ export const TUNING_DEFAULTS = {
 const GRIP = [0.86, 0.8, 0.93, 1.0, 0.9, 0.45, 0.97, 0.98];      // per surface class
 const TOP_DRAG = 5.6;        // m/s² of drag at top speed (measured flat out on asphalt; see CLAUDE.md gotchas)
 const DRAG = [0.25, 0.35, 0.1, 0.0, 0.12, 5.0, 0.0, 0.0];        // extra rolling drag, m/s²
-const MASS = 900, WHEELBASE = 2.78;
-const HALF = new THREE.Vector3(0.9, 0.38, 2.15);              // inertia only
+const DEFAULT_MASS = 900, WHEELBASE = 2.78;
+const DEFAULT_HALF = new THREE.Vector3(0.9, 0.38, 2.15);              // inertia only
 // hard collision box for the body: sits above the floor so only the tyres touch normal ground
 const BOX_C = new THREE.Vector3(0, 0.2, -0.1), BOX_H = new THREE.Vector3(0.8, 0.3, 1.85);
-const RADIUS = 0.38;
+const DEFAULT_RADIUS = 0.38;
+// water (water.js): the body floats on four columns under the floor's corners
+const FLOAT = 1.5, FLOAT_H = 0.6;     // buoyancy × weight with the body fully in (floats ~2/3 in); column height, m
+const FLOAT_DAMP = 10;                 // 1/s: heave / pitch / roll damping in the water (no bobbing)
+const FLOOD_RATE = 0.3;                // 1/s: how fast it fills; a full car sinks nose-first
+const ROOF = 0.6;                      // m above the centre: under this the car is fully under
+const WADE = 3.7;                      // 1/s: wading drag with the tyres fully in (× speed; less when skimming)
+const SKIM_DRAG = 0.35;                // 1/s: the water grabbing at skimming tyres (as before: caps a skim's speed)
+const BODY_L = 1.2, BODY_Q = 0.04;     // the same for the body in the water
+const _Y = new THREE.Vector3(0, 1, 0);
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _n = new THREE.Vector3(), _c = new THREE.Vector3(),
   _r = new THREE.Vector3(), _F = new THREE.Vector3(), _T = new THREE.Vector3(), _up = new THREE.Vector3(),
@@ -63,6 +73,7 @@ export class Car extends Vehicle {
     this.surface = 0; this.grounded = false; this.airTime = 0; this.contacts = 0;
     this.latAcc = 0; this.lonAcc = 0; this.hit = 0; this.landing = 0;
     this.safe = []; this.stuck = 0; this.straightT = 0; this.wasGrounded = false;
+    this.flood = 0; this.underT = 0; this.bogT = 0; this.bankT = 0; this.waterSub = 0; this.skimming = false;
     this._prevVel = new THREE.Vector3();
     this.prevPos = new THREE.Vector3(); this.prevQuat = new THREE.Quaternion();
     this.renderPos = new THREE.Vector3(); this.renderQuat = new THREE.Quaternion();
@@ -79,11 +90,25 @@ export class Car extends Vehicle {
   reset(x, z, yaw) {
     this.glide?.cancel();
     const h = this.world.heightAt(x, z);
-    this.pos.set(x, h + 0.75, z);
+    this.pos.set(x, h + (this.typePhysics ? this.t.restLength + this.typePhysics.radius : 0.75), z);
     this.quat.setFromAxisAngle(_v.set(0, 1, 0), yaw);
     this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.steer = 0; this.drifting = false;
     this.savePrev?.(); this.renderPos?.copy(this.pos); this.renderQuat?.copy(this.quat);
     for (const w of this.wheels) { w.comp = w.prevComp = 0; }
+    this.flood = 0; this.underT = 0; this.bogT = 0; this.waterSub = 0; this.skimming = false;
+  }
+
+  // sunk or bogged in water: back on the nearest bank, facing away from the water (the safe trail if there is none)
+  toBank() {
+    const b = nearestBank(this.world, this.pos.x, this.pos.z);
+    if (b) this.reset(b[0], b[1], b[2]); else this.resetToSafe();
+    this.bankT = 2.5;
+  }
+
+  hudInfo() {
+    if (this.bankT > 0) return 'Sunk – back on the bank · ';
+    if (this.underT > 0 || (this.waterSub > 0.3 && this.flood > 0.5)) return 'SINKING · ';
+    return this.skimming ? 'SKIMMING · ' : '';
   }
 
   resetToSafe() {
@@ -92,8 +117,11 @@ export class Car extends Vehicle {
   }
 
   step(dt, input) {
+    this.bankT -= dt;
     if (this.glide?.active) { this.glide.step(dt, input); return; }     // flying: glider.js
     const t = this.t, W = this.world;
+    const MASS = this.typePhysics?.mass ?? DEFAULT_MASS, RADIUS = this.typePhysics?.radius ?? DEFAULT_RADIUS;
+    const HALF = this.typeHalf || DEFAULT_HALF;
     this._prevVel.copy(this.vel);
     _up.set(0, 1, 0).applyQuaternion(this.quat);
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
@@ -103,24 +131,22 @@ export class Car extends Vehicle {
     // ---------------------------------------------------------------- suspension
     _F.set(0, -t.gravity * MASS, 0); _T.set(0, 0, 0); _nAvg.set(0, 0, 0);
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
-    const skimming = hSpeed * 3.6 > t.skimSpeed;
-    let contacts = 0, near = 0;
+    const skimV = t.skimSpeed / 3.6, share = t.gravity * MASS / 4;
+    let contacts = 0, near = 0, bed = 0, wade = 0, skim = 0, skimming = 0;
     const counts = [0, 0, 0, 0, 0, 0, 0, 0];
     const reach = t.restLength + RADIUS;
     for (const wh of this.wheels) {
       _w.copy(wh.mount).applyQuaternion(this.quat).add(this.pos);
-      let gh = W.heightAt(_w.x, _w.z, _w.y);
+      const gh = W.heightAt(_w.x, _w.z, _w.y);                // the tyres always ride on the bed, even under water
       const wl = W.waterLevelAt(_w.x, _w.z);
       const wet = wl > gh;
-      if (wet && skimming) gh = wl;                       // fast enough: the water surface holds you up
       W.normalAt(_w.x, _w.z, _n, _w.y);
-      if (wet && skimming) _n.set(0, 1, 0);
       const denom = _up.dot(_n);
       const dist = denom > 0.25 ? ((_w.y - gh) * _n.y) / denom : 99;
-      wh.prevComp = wh.comp;
+      wh.prevComp = wh.comp; wh.bed = false; wh.plane = 0;
       if (dist < reach + 0.7) near++;
       if (dist < reach) {
-        wh.contact = true; contacts++;
+        wh.contact = true; contacts++; bed++; wh.bed = true;
         wh.comp = Math.min(reach - dist, t.restLength);
         const sc = W.surfaceAt(_w.x, _w.z, _w.y);
         wh.surf = wet ? 5 : (sc === 5 ? 0 : sc); counts[wh.surf]++;          // dry pond bank counts as grass
@@ -132,29 +158,63 @@ export class Car extends Vehicle {
         addTorque(_T, _r, _up, Fz);
         _nAvg.add(_n);
       } else { wh.contact = false; wh.comp = 0; }
+      if (wet) {
+        // tyre in the water (water.js): planing lift that stiffens with speed², and wading drag (below)
+        if (!wh.bed) _r.copy(_w).addScaledVector(_up, -reach).sub(this.pos);    // hanging tyre's lowest point
+        const depth = Math.min(wl - this.pos.y - _r.y, 2 * RADIUS);
+        if (depth > 0) {
+          const hold = planeHold(depth, hSpeed, skimV);
+          _v.copy(this.ang).cross(_r).add(this.vel);                              // the tyre's own velocity
+          const Fz = Math.max(0, share * (hold - planeDamp(hSpeed, skimV, t.gravity) * _v.y / t.gravity));
+          _F.y += Fz; addTorque(_T, _r, _Y, Fz);
+          wh.plane = planeGrip(hold);
+          wade += depth / (2 * RADIUS) / 4; skim += 0.25;
+          if (!wh.contact && wh.plane > 0) {                                      // skimming on this tyre
+            wh.contact = true; contacts++; wh.surf = 5; counts[5]++; skimming++;
+            wh.contactPoint.copy(_r).add(this.pos); wh.contactPoint.y = wl;
+            _nAvg.add(_Y);
+          }
+        }
+      }
     }
     this.contacts = contacts;
     this.grounded = contacts > 0;
     const firm = contacts >= 2;
     if (contacts) { let b = 0; for (let i = 1; i < 8; i++) if (counts[i] > counts[b]) b = i; this.surface = b; }
-    const grip = GRIP[this.surface];
+    const grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1);
     if (contacts) _nAvg.normalize(); else _nAvg.set(0, 1, 0);
-    if (firm) _F.addScaledVector(_nAvg, -t.downforce * speed * speed * MASS);
+    if (bed >= 2) _F.addScaledVector(_nAvg, -t.downforce * speed * speed * MASS);
 
-    // ---------------------------------------------------------------- water: float a bit, heavy drag
+    // ---------------------------------------------------------------- water: the body floats, floods nose-first
     const wlC = W.waterLevelAt(this.pos.x, this.pos.z);
     this.waterDepth = Math.max(0, wlC - (this.pos.y - 0.35));
-    if (this.waterDepth > 0) {
-      const sub = Math.min(1, this.waterDepth / 0.9);
-      _F.y += t.gravity * MASS * sub * 0.7;                                     // buoyancy
-      _F.x -= this.vel.x * MASS * 1.4 * sub; _F.z -= this.vel.z * MASS * 1.4 * sub; // water resistance
-      _F.y -= this.vel.y * MASS * 2.5 * sub;
+    let sub = 0;                                            // how much of the body is under water, 0..1
+    const bw = this.typePhysics?.width ?? 1, bl = this.typePhysics?.length ?? 1;
+    for (let i = 0; i < 4; i++) {
+      const front = i & 2;
+      _r.set((i & 1 ? BOX_H.x : -BOX_H.x) * bw, BOX_C.y - BOX_H.y, (BOX_C.z + (front ? BOX_H.z : -BOX_H.z)) * bl).applyQuaternion(this.quat);
+      const f = Math.min(1, (W.waterLevelAt(this.pos.x + _r.x, this.pos.z + _r.z) - this.pos.y - _r.y) / FLOAT_H);
+      if (!(f > 0)) continue;
+      sub += f / 4;
+      _v.copy(this.ang).cross(_r).add(this.vel);
+      const Fz = share * f * (FLOAT * (1 - this.flood * (front ? 0.62 : 0.4)) - FLOAT_DAMP * _v.y / t.gravity);
+      _F.y += Fz; addTorque(_T, _r, _Y, Fz);
     }
+    const inWater = sub > 0 || wade > 0;
+    if (inWater) {
+      const c = MASS * (WADE * wade * skimRelief(hSpeed, skimV) + SKIM_DRAG * skim + (BODY_L + BODY_Q * hSpeed) * sub);
+      _F.x -= this.vel.x * c; _F.z -= this.vel.z * c;
+    }
+    this.flood = Math.min(1, Math.max(0, this.flood + dt * floodRate(sub, FLOOD_RATE)));
+    this.waterSub = sub; this.skimming = skimming >= 2;
     this.onWater = contacts > 0 && counts[5] >= 2;
-    if (this.onWater) _F.addScaledVector(this.vel, -MASS * 0.35);          // skimming: water grabs at the tyres
+    // how much the tyres drive: on the bed (less as the body floats), or planing on the water
+    let drive = 0;
+    const bg = bedGrip(sub);
+    for (const wh of this.wheels) if (wh.contact) drive += Math.max(wh.bed ? bg : 0, wh.plane);
 
     // ---------------------------------------------------------------- air control
-    if (!this.grounded && this.airTime > 0.12) {
+    if (!this.grounded && this.airTime > 0.12 && !inWater) {
       _T.addScaledVector(_lt, (input.throttle - input.brake) * t.airControl * MASS * 0.35);
       _T.addScaledVector(_up, -input.steer * t.airControl * MASS * 0.8);
       _v.crossVectors(_up, _n.set(0, 1, 0));
@@ -177,8 +237,8 @@ export class Car extends Vehicle {
     this.steer += Math.sign(target - this.steer) * Math.min(Math.abs(target - this.steer), rate * dt);
 
     // ---------------------------------------------------------------- arcade driving (on the ground)
-    if (contacts) {
-      const k = contacts / 4, n = _nAvg;
+    if (drive > 0) {
+      const k = drive / 4, n = _nAvg;
       _hp.copy(_fw).addScaledVector(n, -_fw.dot(n)).normalize();             // heading on the ground
       _vp.copy(this.vel).addScaledVector(n, -this.vel.dot(n));                // velocity on the ground
       const vPlane = _vp.length(), vf = _vp.dot(_hp), reversing = vf < -0.5;
@@ -238,7 +298,7 @@ export class Car extends Vehicle {
       const vmax = t.topSpeed / 3.6 / Math.sqrt(Math.max(0.05, 1 - TOP_DRAG / t.accel));
       let a = 0;
       if (input.throttle > 0) {
-        a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * Math.max(0, 1 - (vf / vmax) ** 2);
+        a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2);
         if (this.drifting) a += t.driftBoost * this.slip;
       }
       if (input.brake > 0) {
@@ -265,23 +325,26 @@ export class Car extends Vehicle {
     }
 
     // ground snap: grounded last step, wheels just lifted, not a big launch -> pull back down
-    if (!firm && this.wasGrounded && near >= 2 && this.vel.y < 7) this.vel.y -= t.snap * dt;
+    if (!firm && this.wasGrounded && near >= 2 && this.vel.y < 7 && !inWater) this.vel.y -= t.snap * dt;
     if (!this.wasGrounded && firm && this.airTime > 0.3) this.landing = Math.min(1, -this._prevVel.y / 15);
     this.wasGrounded = firm;
-    this.airTime = this.grounded ? 0 : this.airTime + dt;
+    this.airTime = this.grounded || inWater ? 0 : this.airTime + dt;
 
     // air drag, scaled with topSpeed so a higher setting is reachable (same drag at the same fraction of top speed)
     this.vel.addScaledVector(this.vel, -0.0009 * (270 / t.topSpeed) ** 2 * speed * dt);
     this.ang.multiplyScalar(this.grounded ? 1 - 2.5 * dt : 1 - 0.2 * dt);
+    if (sub > 0) this.ang.multiplyScalar(1 - Math.min(0.5, 2 * sub * dt));     // water damps rocking
 
     this.pos.addScaledVector(this.vel, dt);
     const am = this.ang.length();
     if (am > 1e-6) { _q.setFromAxisAngle(_v.copy(this.ang).divideScalar(am), am * dt); this.quat.premultiply(_q).normalize(); }
 
-    if ((_up.y < 0.3 && speed < 4) || (this.waterDepth > 0.45 && speed < 2.5)) this.stuck += dt; else this.stuck = 0;
-    if (this.waterDepth > 0.45) {                          // bogged down in a pond: back to dry land after 3 s
-      if (this.stuck > 3) { this.stuck = 0; this.resetToSafe(); return; }
-    } else if (this.stuck > 1.0) { this.stuck = 0; this.reset(this.pos.x, this.pos.z, Math.atan2(_fw.x, _fw.z)); return; }
+    if (_up.y < 0.3 && speed < 4 && sub < 0.3) this.stuck += dt; else this.stuck = 0;
+    if (this.stuck > 1.0) { this.stuck = 0; this.reset(this.pos.x, this.pos.z, Math.atan2(_fw.x, _fw.z)); return; }
+    // sunk (roof under for 3 s), or bogged (wheels on the bed, body deep in, not moving): back to the nearest bank
+    this.underT = wlC > this.pos.y + ROOF ? this.underT + dt : 0;
+    this.bogT = sub > 0.3 && bed >= 2 && hSpeed < 3 ? this.bogT + dt : 0;
+    if (this.underT > UNDER_SECS || this.bogT > BOG_SECS) { this.toBank(); return; }
 
     this.hit = 0;
     this.collideGround();
@@ -296,7 +359,7 @@ export class Car extends Vehicle {
     const fwdSpeed = this.vel.dot(_fw);
     for (const wh of this.wheels) wh.spin += fwdSpeed * dt / RADIUS * (input.handbrake && !wh.front ? 0 : 1);
 
-    if (firm && _up.y > 0.8 && speed > 3 && !this.drifting && !this.onWater && !this.waterDepth) {
+    if (firm && _up.y > 0.8 && speed > 3 && !this.drifting && !this.onWater && !this.waterDepth && !inWater) {
       const last = this.safe[this.safe.length - 1];
       if (!last || Math.hypot(last[0] - this.pos.x, last[1] - this.pos.z) > 6) {
         this.safe.push([this.pos.x, this.pos.z, Math.atan2(_fw.x, _fw.z)]); if (this.safe.length > 200) this.safe.shift();
@@ -306,9 +369,10 @@ export class Car extends Vehicle {
 
   collideGround() {
     const W = this.world;
+    const width = this.typePhysics?.width ?? 1, length = this.typePhysics?.length ?? 1;
     let worst = 0;
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-      _w.set(BOX_C.x + sx * BOX_H.x, BOX_C.y + sy * BOX_H.y, BOX_C.z + sz * BOX_H.z).applyQuaternion(this.quat).add(this.pos);
+      _w.set((BOX_C.x + sx * BOX_H.x) * width, BOX_C.y + sy * BOX_H.y, (BOX_C.z + sz * BOX_H.z) * length).applyQuaternion(this.quat).add(this.pos);
       const pen = W.heightAt(_w.x, _w.z, _w.y) - _w.y;
       if (pen > worst) { worst = pen; _r.copy(_w).sub(this.pos); }
     }
@@ -327,9 +391,9 @@ export class Car extends Vehicle {
   }
 
   collideTrees() {
-    const R = 1.15;
+    const R = 1.15 * (this.typePhysics?.width ?? 1);
     for (const zo of [-1.4, 0, 1.4]) {
-      _w.set(0, 0, zo).applyQuaternion(this.quat).add(this.pos);
+      _w.set(0, 0, zo * (this.typePhysics?.length ?? 1)).applyQuaternion(this.quat).add(this.pos);
       if (_w.y - this.world.heightAt(_w.x, _w.z, _w.y) > 14) continue;
       this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr) => {
         const dx = _w.x - tx, dz = _w.z - tz, d = Math.hypot(dx, dz), min = R + tr;
@@ -349,7 +413,7 @@ export class Car extends Vehicle {
   }
 
   collideBuildings() {
-    const R = 1.5, roofSupport = this.world.canReachRoof?.();
+    const R = 1.5 * (this.typePhysics?.width ?? 1), roofSupport = this.world.canReachRoof?.();
     for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) {
       if (!b.pts || this.pos.y > b.top + 1) continue;
       const roof = roofSupport && this.pos.y > buildingRoofFloor(b, this.world) ? buildingRoofAt(b, this.pos.x, this.pos.z, this.world) : Infinity;
@@ -385,12 +449,15 @@ export class Car extends Vehicle {
     } else this._lastLoaded = [this.pos.x, this.pos.z];
   }
 
+  wheelReach() { return this.t.restLength + (this.typePhysics?.radius ?? DEFAULT_RADIUS); }
+
   syncMesh(dt) {
     const m = this.mesh, ud = m.userData;
+    const RADIUS = this.typePhysics?.radius ?? DEFAULT_RADIUS, lean = this.typePhysics?.lean ?? 1;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
     // body lean: roll toward the outside of the turn, squat / dive with throttle and brake
-    const roll = THREE.MathUtils.clamp(this.latAcc * 0.0045, -0.09, 0.09);
-    const pitch = THREE.MathUtils.clamp(-this.lonAcc * 0.0028, -0.06, 0.06);
+    const roll = THREE.MathUtils.clamp(this.latAcc * 0.0045 * lean, -0.09 * lean, 0.09 * lean);
+    const pitch = THREE.MathUtils.clamp(-this.lonAcc * 0.0028 * lean, -0.06 * lean, 0.06 * lean);
     ud.bodyPivot.rotation.z += (roll - ud.bodyPivot.rotation.z) * Math.min(1, dt * 10);
     ud.bodyPivot.rotation.x += (pitch - ud.bodyPivot.rotation.x) * Math.min(1, dt * 10);
     this.wheels.forEach((wh, i) => {

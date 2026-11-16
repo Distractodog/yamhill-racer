@@ -126,7 +126,7 @@ const bStates = fromB(), perSecond = bStates.length - stateBefore;
 assert.ok(perSecond >= 14 && perSecond <= 16, `B's state reaches A at ~15 Hz (${perSecond})`);
 assert.equal(bStates.at(-1).p[0], 77); assert.ok(Number.isFinite(bStates.at(-1).srvT));
 assert.ok(!B.of('state').some(m => m.from === B.mp.me.id), 'state is not echoed to its sender');
-assert.deepEqual(A.mp.players.get(B.mp.me.id).skin, { vehicle: 'car', colors: { body: '#123456' }, glider: {} });
+assert.deepEqual(A.mp.players.get(B.mp.me.id).skin, { vehicle: 'car', type: 'race', colors: { body: '#123456' }, glider: {} });
 B.colors.body = '#abcdef'; step(200, A, B, C);       // repaint: skin to the others + a fresh roster for everyone
 assert.equal(A.last('skin').skin.colors.body, '#abcdef'); assert.equal(A.last('skin').from, B.mp.me.id);
 assert.ok(!B.of('skin').length, 'skin is not echoed to its sender');
