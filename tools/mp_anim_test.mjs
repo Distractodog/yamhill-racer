@@ -89,7 +89,8 @@ function stubMp(id = 'me') {
     emit(type, msg) { for (const f of ls.get(type) || []) f(msg); }, send() {} };
 }
 const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.3, 2200);
-const world = { heightAt: () => 0 };
+// the road half a metre under the vehicles' centres (about where it is): syncMesh keeps bodies above it (bodyclearance.js)
+const world = { heightAt: () => -0.5 };
 const mp = stubMp(), R = makeRemotes({ scene, camera, mp, world });
 mp.emit('roster', { t: 'roster', players: [{ id: 'g', name: 'Gus', skin: { vehicle: 'car', colors: {} } }] });
 
@@ -99,7 +100,7 @@ function local(kind) {
   // wheel arches are resolved at build time, as Car / Bike do for their own meshes
   const mesh = primeWheelArch(kind === 'car' ? buildCarModel() : kind === 'bike' ? buildBikeModel() : buildJetModel());
   const pos = new V3(), quat = new THREE.Quaternion();
-  return { kind, mesh, t: kind === 'car' ? TUNING_DEFAULTS : BIKE, pos, quat, renderPos: pos, renderQuat: quat, vel: new V3(),
+  return { kind, mesh, t: kind === 'car' ? TUNING_DEFAULTS : BIKE, pos, quat, renderPos: pos, renderQuat: quat, vel: new V3(), world,
     wheels: mesh.userData.wheels.map(g => ({ front: g.front, comp: 0, contact: true, surf: 3, contactPoint: new V3(), spin: 0 })),
     steer: 0, latAcc: 0, lonAcc: 0, slip: 0, drifting: false, surface: 3, onWater: false, waterDepth: 0, lean: 0, pitchRate: 0, wheelie: false,
     throttle: 0, gear: 1, mode: 'ground', input: { throttle: 0, brake: 0, handbrake: false, jet: { pitch: 0, roll: 0, yaw: 0 } } };
@@ -220,7 +221,7 @@ play('car', 1.2, setCar(-1, 1, 0, true, true, 0.6, 18, 0, [0.09, 0.09, 0.09, 0.0
 const marks = fx.effects.markI - marks0;
 assert.ok(marks >= 6, `drift lays tyre marks (${marks} quads)`);
 const markY = fx.effects.markPos[(fx.effects.markI - 1) * 18 + 1];
-near(markY, 0.04, 1e-6, 'marks sit on the ground');
+near(markY, world.heightAt() + 0.04, 1e-6, 'marks sit on the ground');
 const smoke = alive(fx.effects.pLife); assert.ok(smoke > 20, `drift smoke (${smoke} particles)`);
 L.car.surface = 4; L.car.wheels.forEach(w => { w.surf = 4; });
 for (let i = 0; i < 90; i++) { fx.effects.advance(1 / 60); fx.driving.advance(1 / 60); }    // let the smoke fade

@@ -547,6 +547,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
   function animateBody(r, b, s, mode, dt) {
     const pz = b.pz, kind = b.kind, moving = mode !== 'hold' && mode !== 'early';
     pz.renderPos.copy(P); pz.renderQuat.copy(Q); pz.vel.copy(moving ? V : W.set(0, 0, 0));
+    pz.world = world;                                           // syncMesh keeps the drawn body above this ground
     animate(pz, animAt(r.track.buf, now() - DELAY, b.anim), r, V, F, dt, moving);
     (pz.mesh.userData.syncMesh || SYNC[kind]).call(pz, dt);     // a type with its own animation (helicopter rotors)
     if (kind === 'jet') {

@@ -18,6 +18,7 @@
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
+import { keepBodyAboveGround } from './bodyclearance.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const BIKE = {
@@ -393,13 +394,65 @@ export class Bike extends Vehicle {
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
     ud.lean.rotation.z = this.lean;
     ud.bars.rotation.y = -this.steer * 0.45;
+    ud.rider.rotation.x = this.sunk ? -0.35 : clamp(-this.pitchRate * 0.05 + (this.wheelie ? -0.15 : 0.12), -0.35, 0.35);
+    // the drawn lean stops short of putting a fairing or the rider's knee into the road (bodyclearance.js)
+    const W = this.world, ref = this.renderPos.y + 1;
+    keepBodyAboveGround(m, ud.lean, W?.heightAt ? (x, z) => W.heightAt(x, z, ref) : null,
+      Math.abs(this.vel?.dot(_v.set(0, 1, 0).applyQuaternion(this.renderQuat)) ?? 0) > 4);     // exactly while landing
+    // Tyres on the road where the bike is drawn: the springs' compression is from the start of the step (landings, crests
+    // at speed) and a leaned tyre's edge dips below its contact. The lowest point of each tyre, as drawn, is held on the
+    // road under it: the wheel rides up toward its arch, and what the arch can't take lifts the whole bike. Drawing only.
+    const ground = W?.heightAt;
+    if (ground) m.updateMatrixWorld(true);
+    let rise = 0;
     this.wheels.forEach((wh, i) => {
       const w = ud.wheels[i];
-      w.holder.position.y = drawnWheelY(m, i, -(this.t.travel - (wh.contact ? wh.comp : 0)));
+      let y = -(this.t.travel - (wh.contact ? wh.comp : 0)), upY = 1;
+      if (ground) {
+        const B = w.holder.parent.matrixWorld.elements, hx = w.holder.position.x, hz = w.holder.position.z;
+        const px = B[0] * hx + B[4] * y + B[8] * hz + B[12], py = B[1] * hx + B[5] * y + B[9] * hz + B[13];
+        const pz = B[2] * hx + B[6] * y + B[10] * hz + B[14];
+        const axY = B[1] / Math.hypot(B[0], B[1], B[2]);                       // the tyre's axle (holder x) …
+        upY = Math.max(0.3, B[5] / Math.hypot(B[4], B[5], B[6]));             // … and its travel (holder y), upward
+        const c = Math.sqrt(Math.max(0, 1 - axY * axY)), P = tyreProfile(w);
+        let low = Infinity;
+        for (let k = 0; k < P.length; k += 2) low = Math.min(low, P[k] * axY - P[k + 1] * c);
+        const under = W.heightAt(px, pz, ref) - (py + low);
+        if (under > 0) y += under / upY;
+      }
+      const drawn = drawnWheelY(m, i, y);
+      w.holder.position.y = drawn;
+      rise = Math.max(rise, (y - drawn) * upY);
       w.spin.rotation.x = wh.spin;
     });
-    ud.rider.rotation.x = this.sunk ? -0.35 : clamp(-this.pitchRate * 0.05 + (this.wheelie ? -0.15 : 0.12), -0.35, 0.35);
+    m.position.y += rise;
   }
+}
+
+// a wheel (every mesh that spins: tyre, rim, hub — merged or not, as remote puppets bake them) as [offset along the
+// axle, radius] pairs: leaned, its lowest point is the smallest offset·axle.y − radius·√(1 − axle.y²) of them (round
+// sport tyres dip less than a flat cylinder's edge)
+const _profile = new WeakMap(), _pm = new THREE.Matrix4(), _pp = new THREE.Vector3();
+function tyreProfile(w) {
+  let P = _profile.get(w);
+  if (!P) {
+    const seen = new Set();
+    P = [];
+    w.spin.traverse(o => {
+      if (!o.isMesh) return;
+      _pm.identity();
+      for (let q = o; q && q !== w.spin; q = q.parent) { q.updateMatrix(); _pm.premultiply(q.matrix); }
+      const pos = o.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        _pp.fromBufferAttribute(pos, i).applyMatrix4(_pm);
+        const a = _pp.x, r = Math.hypot(_pp.y, _pp.z), key = `${a.toFixed(3)},${r.toFixed(3)}`;
+        if (!seen.has(key)) { seen.add(key); P.push(a, r); }
+      }
+    });
+    if (!P.length) P.push(0, w.r);
+    _profile.set(w, P);
+  }
+  return P;
 }
 
 // ---------------------------------------------------------------- model

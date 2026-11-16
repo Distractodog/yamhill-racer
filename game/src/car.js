@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
+import { keepBodyAboveGround } from './bodyclearance.js';
 import { collideBuilding } from './roofs.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
@@ -58,7 +59,8 @@ const _Y = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _n = new THREE.Vector3(), _c = new THREE.Vector3(),
   _r = new THREE.Vector3(), _F = new THREE.Vector3(), _T = new THREE.Vector3(), _up = new THREE.Vector3(),
   _fw = new THREE.Vector3(), _lt = new THREE.Vector3(), _q = new THREE.Quaternion(), _nAvg = new THREE.Vector3(),
-  _vp = new THREE.Vector3(), _hp = new THREE.Vector3();
+  _vp = new THREE.Vector3(), _hp = new THREE.Vector3(), _bu = new THREE.Vector3();
+const DIST = [0, 0, 0, 0];             // syncMesh: each wheel mount's height over the road, as drawn
 
 export class Car extends Vehicle {
   constructor(world, tuning) {
@@ -436,14 +438,36 @@ export class Car extends Vehicle {
     const m = this.mesh, ud = m.userData;
     const RADIUS = this.typePhysics?.radius ?? DEFAULT_RADIUS, lean = this.typePhysics?.lean ?? 1;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
+    // Drawn on the road where the car is drawn (without a world: from the springs). Each wheel mount's height over the
+    // road, vertically (a remote puppet's mount from its model): the springs' compression is from the start of the
+    // step, and past full travel (downforce outgrows the springs from ~450 km/h; hard landings) the chassis sinks below
+    // the tyres' reach onto its ground box. Then the whole car is drawn that much higher, tyres on the road. Physics is
+    // untouched.
+    const W = this.world?.heightAt ? this.world : null, ref = this.renderPos.y + 1;
+    _bu.set(0, 1, 0).applyQuaternion(this.renderQuat);
+    const onRoad = W && _bu.y > 0.3;
+    let rise = 0;
+    if (onRoad) this.wheels.forEach((wh, i) => {
+      const g = ud.wheels[i];
+      _w.copy(wh.mount ?? _c.set(g.holder.position.x, g.restY + 0.3, g.holder.position.z));
+      _w.applyQuaternion(this.renderQuat).add(this.renderPos);
+      DIST[i] = (_w.y - W.heightAt(_w.x, _w.z, _w.y)) / _bu.y;
+      rise = Math.max(rise, Math.min(RADIUS, RADIUS - DIST[i]));
+    });
+    m.position.addScaledVector(_bu, rise);
     // body lean: roll toward the outside of the turn, squat / dive with throttle and brake
     const roll = THREE.MathUtils.clamp(this.latAcc * 0.0045 * lean, -0.09 * lean, 0.09 * lean);
     const pitch = THREE.MathUtils.clamp(-this.lonAcc * 0.0028 * lean, -0.06 * lean, 0.06 * lean);
     ud.bodyPivot.rotation.z += (roll - ud.bodyPivot.rotation.z) * Math.min(1, dt * 10);
     ud.bodyPivot.rotation.x += (pitch - ud.bodyPivot.rotation.x) * Math.min(1, dt * 10);
+    // ...but never into the road, nor an arch onto a tyre on it (bodyclearance.js)
+    // (exactly, while landing or tumbling: moving fast along its own up, or far from upright)
+    keepBodyAboveGround(m, ud.bodyPivot, W ? (x, z) => W.heightAt(x, z, ref) : null, Math.abs(this.vel?.dot(_bu) ?? 0) > 4 || _bu.y < 0.9);
     this.wheels.forEach((wh, i) => {
       const g = ud.wheels[i];
-      const drop = wh.contact ? (this.t.restLength - wh.comp) : this.t.restLength;
+      // (a remote puppet keeps the springs as sent: only the rise above is from the road)
+      const drop = onRoad && wh.mount ? Math.min(this.t.restLength, Math.max(0, DIST[i] + rise - RADIUS))
+        : wh.contact ? (this.t.restLength - wh.comp) : this.t.restLength;
       g.holder.rotation.y = wh.front ? -this.steer * this.t.steerLock * 0.9 : 0;
       g.holder.position.y = drawnWheelY(m, i, g.restY + 0.3 - drop - (RADIUS - g.r));
       g.spin.rotation.x = wh.spin;
