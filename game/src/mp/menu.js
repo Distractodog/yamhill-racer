@@ -81,7 +81,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
   function render() {
     button.textContent = mp.inGame ? 'Multiplayer' : 'Play multiplayer';
     const menuButton = document.getElementById('menu-button');
-    if (menuButton) menuButton.textContent = mp.inGame ? '☰ Menu · MP' : '☰ Menu';
+    if (menuButton) menuButton.querySelector('.menu-label').textContent = mp.inGame ? 'Menu · MP' : 'Menu';
     $('title').textContent = button.textContent; $('connect').hidden = mp.inGame; $('game').hidden = !mp.inGame;
     $('code').textContent = mp.me.code; $('room').textContent = mp.roomCode || '';
     // guests see the host's choice checked but can't change it (inert, not disabled: a disabled radio's dot is near invisible)

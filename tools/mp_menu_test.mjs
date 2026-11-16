@@ -26,7 +26,7 @@ try {
   const own = await current(guest), guestSaved = await saved(guest);
   await openMenu(host); await host.click('#mp-button'); await host.click('#mp-host');
   await host.waitForFunction(() => game.multiplayer.mp.inGame);
-  assert.equal(await host.$eval('#menu-button', el => el.textContent), '☰ Menu · MP');
+  assert.equal(await host.$eval('#menu-button', el => el.textContent), 'Menu · MP');
   const code = await host.evaluate(() => game.multiplayer.mp.me.code);
   await openMenu(guest); await guest.click('#mp-button'); await guest.type('#mp-join-code', code);
   // Typing letter keys in a dialog must never reach the game input set.
