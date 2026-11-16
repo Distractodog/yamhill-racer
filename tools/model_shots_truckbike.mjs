@@ -16,7 +16,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 try {
   const page=await browser.newPage();await page.setViewport({width:1440,height:900});
   watchErrors(page,'truckbike',report.pageErrors);
-  page.on('console',m=>{if(m.type()==='error'&&!m.location().url?.endsWith('/favicon.ico'))report.consoleErrors.push(m.text());});
+  page.on('console',m=>{if(m.type()==='error'&&!m.location().url?.endsWith('/favicon.ico')&&!/cloudflareinsights/.test(m.text()+m.location().url))report.consoleErrors.push(m.text());});
   await startGame(page);
   await page.evaluate(async()=>{
     const T=await import('three');

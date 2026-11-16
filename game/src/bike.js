@@ -17,7 +17,7 @@
 //     air (scrub); hands off it slowly lines up with its flight path. Landing far off line is a bail.
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
-import { drawnWheelY } from './wheeltravel.js';
+import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const BIKE = {
@@ -69,7 +69,7 @@ export class Bike extends Vehicle {
     this.flood = 0; this.underT = 0; this.bogT = 0; this.waterSub = 0; this.sunk = false; this.skimming = false;
     this.wheels = [LF, LR].map(z => ({ z, front: z > 0, comp: 0, prevComp: 0, contact: false, surf: 0,
       contactPoint: new THREE.Vector3(), spin: 0 }));
-    this.mesh = buildBikeModel();
+    this.mesh = primeWheelArch(buildBikeModel());
     this.cam = { dist: 3.9, high: 1.45, distPerSpeed: 0.02, nose: [0, 1.25, -0.05], roll: 0.18 };   // roll: camera leans with the bike
     this.half = { x: 0.45, front: 1.0, back: -1.05 };             // footprint for the challenge walls
   }

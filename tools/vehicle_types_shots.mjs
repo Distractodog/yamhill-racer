@@ -13,7 +13,7 @@ const errors=[],results=[],wait=ms=>new Promise(r=>setTimeout(r,ms));
 try {
   const page=await browser.newPage();await page.setViewport({width:1280,height:800});
   page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR',e.message);});
-  page.on('console',m=>{if(m.type()==='error'&&!/\/favicon\.ico(?:[?#]|$)/.test(m.location()?.url || '')&&!m.text().includes('favicon'))errors.push(m.text());});
+  page.on('console',m=>{if(m.type()==='error'&&!/\/favicon\.ico(?:[?#]|$)/.test(m.location()?.url || '')&&!m.text().includes('favicon')&&!/cloudflareinsights/.test(m.text()+(m.location()?.url||'')))errors.push(m.text());});
   await page.evaluateOnNewDocument(()=>{
     localStorage.setItem('yr-welcome-hidden-1','1');
     Object.defineProperty(navigator,'getGamepads',{value:()=>[]});

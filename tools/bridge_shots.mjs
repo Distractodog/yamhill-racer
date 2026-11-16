@@ -47,7 +47,7 @@ try {
   await page.setViewport({ width: 1280, height: 760 });
   page.on('pageerror', e => { report.pageErrors.push(e.message); console.error('PAGE ERROR', e.message); });
   page.on('console', msg => {
-    if (msg.type() === 'error') {
+    if (msg.type() === 'error' && !/cloudflareinsights/.test(msg.text() + (msg.location()?.url || ''))) {
       report.consoleErrors.push(msg.text()); console.error('BROWSER ERROR', msg.text());
     }
   });

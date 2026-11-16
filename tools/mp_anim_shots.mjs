@@ -47,7 +47,7 @@ async function open(label) {
   const page = await ctx.newPage();
   await page.setViewport({ width: VW, height: VH });
   watchErrors(page, label, errors);
-  page.on('console', m => { if (m.type() === 'error' && !/favicon/.test(m.location()?.url || '')) console.log(`console error (${label})`, m.text()); });
+  page.on('console', m => { if (m.type() === 'error' && !/favicon|cloudflareinsights/.test((m.location()?.url || '') + m.text())) console.log(`console error (${label})`, m.text()); });
   await startGame(page, { url: GAME, relay: RELAY });
   return page;
 }

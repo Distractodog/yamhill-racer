@@ -22,7 +22,7 @@ try {
     const context = await browser.createBrowserContext(), page = await context.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     watchErrors(page, i ? 'guest' : 'host', errors);
-    page.on('console', m => { if (m.type() === 'error' && !m.location().url?.endsWith('/favicon.ico')) errors.push(m.text()); });
+    page.on('console', m => { if (m.type() === 'error' && !m.location().url?.endsWith('/favicon.ico') && !/cloudflareinsights/.test(m.text() + m.location().url)) errors.push(m.text()); });
     await startGame(page, { url, relay });
     await page.waitForFunction(() => window.game?.multiplayer?.collisions, { timeout: 120000 });
     pages.push(page);

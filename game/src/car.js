@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
-import { drawnWheelY } from './wheeltravel.js';
+import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
 import { buildingRoofAt, buildingRoofFloor } from './roofs.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
@@ -70,7 +70,7 @@ export class Car extends Vehicle {
     this.wheels = WHEEL_POS.map(([x, y, z, front]) => ({
       mount: new THREE.Vector3(x, y + 0.3, z), front, comp: 0, prevComp: 0, contact: false, surf: 0,
       contactPoint: new THREE.Vector3(), spin: 0 }));
-    this.mesh = buildCarModel();
+    this.mesh = primeWheelArch(buildCarModel());
     this.surface = 0; this.grounded = false; this.airTime = 0; this.contacts = 0;
     this.latAcc = 0; this.lonAcc = 0; this.hit = 0; this.landing = 0;
     this.safe = []; this.stuck = 0; this.straightT = 0; this.wasGrounded = false;

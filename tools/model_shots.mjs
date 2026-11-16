@@ -29,7 +29,7 @@ try {
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760 });
   page.setDefaultTimeout(120000);
   watchErrors(page, 'game', report.pageErrors);
-  page.on('console', m => { if (m.type() === 'error' && !(m.location()?.url || '').includes('favicon')) report.consoleErrors.push(m.text()); });
+  page.on('console', m => { if (m.type() === 'error' && !(m.location()?.url || '').includes('favicon') && !/cloudflareinsights/.test(m.text() + (m.location()?.url || ''))) report.consoleErrors.push(m.text()); });
   await startGame(page, { url: process.env.GAME_URL || GAME_URL, hold: { ...SPOT, kind: 'car' } });
   await page.evaluate(() => {
     game.challenges.quit?.();

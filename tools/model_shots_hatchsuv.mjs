@@ -19,7 +19,7 @@ const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH
 try {
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760 }); page.setDefaultTimeout(120000);
   watchErrors(page, 'game', report.errors);
-  page.on('console', m => { if (m.type() === 'error' && !(m.location()?.url || '').includes('favicon')) report.errors.push(m.text()); });
+  page.on('console', m => { if (m.type() === 'error' && !(m.location()?.url || '').includes('favicon') && !/cloudflareinsights/.test(m.text() + (m.location()?.url || ''))) report.errors.push(m.text()); });
   await startGame(page, { url: GAME_URL, hold: { ...SPOT, kind: 'car' } });
   // Camera hook: while shotCam is set, the camera sits at an offset in the car's frame (+x left, +z forward) or at a
   // fixed world point, looking at the car (or at one wheel). Physics can be frozen so parked shots are still.

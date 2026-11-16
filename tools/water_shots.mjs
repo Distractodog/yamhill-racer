@@ -63,7 +63,7 @@ const errors = [], missing = [];
 const page = await browser.newPage();
 await page.setViewport({ width: 1280, height: 800 });
 watchErrors(page, 'water', errors);
-page.on('console', m => { if (m.type() === 'error') { errors.push('console: ' + m.text()); console.log('CONSOLE ERROR', m.text()); } });
+page.on('console', m => { if (m.type() === 'error' && !/cloudflareinsights/.test(m.text() + (m.location()?.url || ''))) { errors.push('console: ' + m.text()); console.log('CONSOLE ERROR', m.text()); } });
 await startGame(page, { url: opt.url || GAME_URL });
 await page.evaluate(() => {
   game.challenges.quit?.();

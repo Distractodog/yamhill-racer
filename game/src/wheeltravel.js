@@ -76,6 +76,14 @@ export function wheelArch(model, index) {
   return Number.isFinite(value) ? value : wheelData(model, index).arch;
 }
 
+// Resolve every wheel's ceiling now, from the freshly built model in its parked pose. The fallback is measured once and
+// cached, so a model measured later (compressed, dived or rolled) would answer differently from the same model measured
+// at rest: build sites call this so local vehicles and remote puppets (mp/remotes.js) draw identical wheels.
+export function primeWheelArch(model) {
+  model.userData.wheels?.forEach((_, i) => wheelArch(model, i));
+  return model;
+}
+
 export function drawnWheelY(model, index, requestedY) {
   const w = model.userData.wheels[index], data = wheelData(model, index);
   // Convert the body-frame ceiling into hub travel in the holder parent's frame. For bikes

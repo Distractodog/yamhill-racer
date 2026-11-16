@@ -5,6 +5,7 @@ import { TUNING_DEFAULTS } from './car.js';
 import { BIKE, buildBikeModel } from './bike.js';
 import { buildCarModel } from './carmodel.js';
 import { buildTypeCarModel, buildSportBikeModel } from './vehicletypemodels.js';
+import { primeWheelArch } from './wheeltravel.js';
 import { buildHatchModel } from './models/hatch.js';
 import { buildSuvModel } from './models/suv.js';
 
@@ -75,7 +76,7 @@ export function applyVehicleType(vehicle, id) {
     });
   }
   // Keep the vehicle instance (challenges/camera/glider refer to it), replacing only its owned model.
-  const old = vehicle.mesh, model = buildVehicleTypeModel(vehicle.kind, spec.id);
+  const old = vehicle.mesh, model = primeWheelArch(buildVehicleTypeModel(vehicle.kind, spec.id));
   vehicle.glide?.cancel();
   if (vehicle.glide?.mesh) model.add(vehicle.glide.mesh);
   model.position.copy(old.position); model.quaternion.copy(old.quaternion);
