@@ -3,7 +3,7 @@
 //   node tools/mapmip_test.mjs
 import assert from 'node:assert/strict';
 import { drawMapImage, prepareMapImage, mapImageRevision, mapImageReady, warmMapImage, levelTiles, pickMapLevel, LEVEL_FACTORS } from '../game/src/mapimage.js';
-import { createSettle, snapshotPlace, SETTLE_MS, easeZoom, ZOOM_EASE_MS, wheelEases, drawRatio, createQuiet, QUIET_MS } from '../game/src/mapview.js';
+import { createSettle, snapshotPlace, SETTLE_MS, easeZoom, ZOOM_EASE_MS, wheelEases, drawRatio, createQuiet, QUIET_MS, draw3D, BEHIND_MAP_MS } from '../game/src/mapview.js';
 import { createMapDetail } from '../game/src/minimapdetail.js';
 const tick = () => new Promise(r => setTimeout(r, 0));
 
@@ -213,6 +213,19 @@ globalThis.createImageBitmap = (...a) => { bitmapCalls.push(a); return new Promi
   assert(!q.busy(0), 'no input yet: quiet'); q.touch(100);
   assert(q.busy(100) && q.busy(100 + QUIET_MS - 1) && !q.busy(100 + QUIET_MS), `busy for ${QUIET_MS} ms after the last input`);
   q.reset(); assert(!q.busy(101));
+  // the 3D view behind the open full map: frozen in single player and on the spawn map, ~4 fps mid-game in multiplayer
+  const frames = o => {             // redraws in one second at 60 fps
+    let last = -Infinity, n = 0;
+    for (let i = 0; i < 60; i++) { const now = i * 1000 / 60; if (draw3D({ drawn: true, last, now, ...o })) { n++; last = now; } }
+    return n;
+  };
+  assert.equal(frames({ open: false, multiplayer: false, spawn: false, busy: false }), 60, 'map closed: every frame');
+  assert.equal(frames({ open: true, multiplayer: false, spawn: false, busy: false }), 0, 'single player, M open: paused');
+  assert.equal(frames({ open: true, multiplayer: true, spawn: true, busy: false }), 0, 'spawn map (multiplayer too): paused');
+  assert.equal(frames({ open: true, multiplayer: true, spawn: false, busy: true }), 0, 'multiplayer while zooming / dragging: paused');
+  const mp = frames({ open: true, multiplayer: true, spawn: false, busy: false });
+  assert(mp >= 3 && mp <= 4 && BEHIND_MAP_MS === 250, `multiplayer, M open: ${mp} redraws a second`);
+  assert(draw3D({ open: true, drawn: false, multiplayer: false, spawn: true, busy: true, now: 0, last: 0 }), 'nothing drawn yet: one frame');
 }
 
 // ---- minimapdetail.js draw(…, { load: false }): only images already shown, nothing requested or evicted
@@ -236,4 +249,4 @@ globalThis.createImageBitmap = (...a) => { bitmapCalls.push(a); return new Promi
 }
 // map_lag_test.mjs sends the gesture runner to the page as source text: it must stand alone
 { const { mapGestures } = await import('./lib/maplag.mjs'); assert.equal(typeof new Function(`return (${mapGestures})`)(), 'function'); }
-console.log('PASS: map levels (tiles cover once, level pick, zoomed out never the original, only tiles in view), patches in one worker job with the ½ copy under them, load:false asks nothing, big views stay cached, worker failure → one at a time, failed job → main thread; levels ready promise, moving: no original / no first patch upload, warm-up coarsest first; settle / moved drawing maths, eased zoom, wheel kinds, moving pixel ratio, quiet timer; imagery load:false');
+console.log('PASS: map levels (tiles cover once, level pick, zoomed out never the original, only tiles in view), patches in one worker job with the ½ copy under them, load:false asks nothing, big views stay cached, worker failure → one at a time, failed job → main thread; levels ready promise, moving: no original / no first patch upload, warm-up coarsest first; settle / moved drawing maths, eased zoom, wheel kinds, moving pixel ratio, quiet timer, 3D behind the map (paused, multiplayer ~4 fps); imagery load:false');
