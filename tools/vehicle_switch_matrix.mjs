@@ -36,7 +36,10 @@ async function choose(page, route, type) {
     await page.keyboard.press('KeyV');
     await page.waitForSelector('#veh-menu', { visible: true, timeout: 2000 });
     if (route === 'key') await page.keyboard.press('Digit3');
-    else await page.click('#veh-menu [data-k="jet"]');
+    else if (route === 'chip') {
+      await page.hover('#veh-menu .vp-card[data-kind="jet"]');
+      await page.click(`#veh-menu .vp-chip[data-kind="jet"][data-type="${type}"]`);
+    } else await page.click('#veh-menu .vp-card[data-kind="jet"]');
   }
 }
 async function run(page, state, from, route, type = 'fighter') {
@@ -107,14 +110,15 @@ try {
   // Saved types and paint are loaded before startup, in separate browser storage contexts.
   for (const type of types) {
     const page = await fresh(type);
-    for (const from of ['car', 'bike', 'heli']) for (const route of ['key', 'click', 'garage']) await run(page, 'saved-black', from, route, type);
+    for (const from of ['car', 'bike', 'heli']) for (const route of ['key', 'click', 'chip', 'garage']) await run(page, 'saved-black', from, route, type);
     await page.browserContext().close();
   }
   const page = await fresh();
   for (const state of ['reset', 'crash', 'crash-reset', 'hold', 'home', 'home-loading', 'race', 'finished', 'quit', 'roof', 'water', 'buildings', 'menu-open', 'menu-closed'])
-    for (const from of ['car', 'bike', 'heli']) for (const route of ['key', 'click', 'garage']) {
+    for (const from of ['car', 'bike', 'heli']) for (const route of ['key', 'click', 'chip', 'garage']) {
       // Garage intentionally stays closed during spawn loading and races. V remains available.
       if (route === 'garage' && ['home-loading', 'race', 'finished'].includes(state)) continue;
+      if (route === 'chip' && ['race', 'finished'].includes(state)) continue; // type chips stay locked in a race
       await run(page, state, from, route);
     }
   const guest = await fresh('fighter', 'Guest');
@@ -122,7 +126,7 @@ try {
   await guest.evaluate(async code => { const { mp } = await import('./src/mp/net.js'); await mp.join(code); }, code);
   await guest.waitForFunction(() => document.getElementById('tuning-controls').inert);
   for (const [p, role] of [[page, 'host'], [guest, 'guest-host-settings']])
-    for (const route of ['key', 'click', 'garage']) await run(p, role, 'bike', route);
+    for (const route of ['key', 'click', 'chip', 'garage']) await run(p, role, 'bike', route);
   // Small frame sample catches stalls without adding a benchmark run.
   const frames = await page.evaluate(() => new Promise(resolve => {
     const samples = []; let last;

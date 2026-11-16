@@ -205,6 +205,10 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
     },
     // paint a model that isn't driven yet (warmup.js), so its livery pieces exist when its shaders are compiled
     prepare(kind, model) { if (wear[kind]) applyBinding(bindingFor(model, kind), effective(kind), wear[kind]); },
+    // the paint a kind's type would wear (the player's colours, that type's factory colours where they picked none), and
+    // a clean model of that type painted with it: the V picker's thumbnails (vehiclethumbs.js)
+    colorsFor: (kind, type) => configs[kind] && withTypeColors(configs[kind], kind, type, custom[kind]),
+    paintType(kind, type, model) { if (configs[kind]) applyBinding(bindingFor(model, kind), api.colorsFor(kind, type), { dirt: 0, scuff: 0, wet: 0 }); },
     update(dt, vehicle = vehicles.current) {
       if (!vehicle || !wear[vehicle.kind] || !Number.isFinite(dt)) return;
       const kind = vehicle.kind, state = wear[kind], speed = vehicle.vel.length();

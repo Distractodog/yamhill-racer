@@ -18,6 +18,8 @@ import { Glider, BIKE_GLIDER } from './glider.js';
 import { createGliderColors } from './glidercolors.js';
 import { mp } from './mp/net.js';
 import { createVehicles } from './vehicles.js';
+import { createVehiclePicker } from './vehiclepicker.js';
+import { createVehicleThumbs } from './vehiclethumbs.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
 import { createSpawn } from './spawn.js';
@@ -129,6 +131,16 @@ const garage = createGarage({ cosmetics, vehicles, gliderColors, rewards: challe
 });
 
 const garageButton = document.getElementById('garage-button');
+// V picker (vehiclepicker.js) and its pictures, drawn offscreen in idle time once the warm-up is done (frame())
+const vehicleThumbs = createVehicleThumbs({ cosmetics });
+createVehiclePicker({ vehicles, thumbs: vehicleThumbs,
+  onOpen: () => { settings.close(); garage.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false); clearKeys(); },
+  racing: () => challenges.state !== 'idle',      // types locked like the Garage's (a vehicle switch still ends the race)
+  canOpen: () => sessionSpawn.pickerAllowed,
+});
+const vehiclesButton = document.getElementById('vehicles-button');
+vehiclesButton?.addEventListener('click', () => vehicles.show(vehiclesButton));
+if (vehiclesButton) vehiclesButton.disabled = false;
 
 const gui = new GUI({ title: 'Vehicle tuning', container: document.getElementById('tuning-controls') });
 const fc = gui.addFolder('Car');
@@ -210,7 +222,7 @@ function activePad() {
 }
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
-  const k = c => !settings.open && !garage.open && held(c);
+  const k = c => !settings.open && !garage.open && !vehicles.open && held(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
@@ -223,7 +235,7 @@ function readInput() {
   J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
   J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
   const gp = activePad();
-  if (gp && !settings.open && !garage.open) {
+  if (gp && !settings.open && !garage.open && !vehicles.open) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
     if (gp.buttons[6]?.value > 0.05) input.brake = gp.buttons[6].value;
@@ -430,19 +442,21 @@ function frame(now) {
   readInput();
   challenges.holdInput(input);
   respawnHold.update(dt);
-  acc += sessionSpawn.blocked || garage.open || respawnHold.blocked ? 0 : dt;
+  // the V picker pauses the game like the Garage (race clock too), except in multiplayer where the others play on
+  const picking = vehicles.open && !mp.inGame, frozen = garage.open || picking;
+  acc += sessionSpawn.blocked || frozen || respawnHold.blocked ? 0 : dt;
   while (acc >= STEP && !respawnHold.blocked) { car.savePrev(); car.step(STEP, input); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
-  challenges.update(dt);
+  challenges.update(picking ? 0 : dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
   car.syncMesh(dt);
   vehicleLights.update(dt, vehicles.current, atmosphere.night, input);
   glider.update(dt, vehicles.current === vehicles.car); bikeGlider.update(dt, vehicles.current === vehicles.bike);
   car.mesh.updateMatrixWorld(true);
-  effects.update(garage.open || sessionSpawn.blocked ? 0 : dt, car);
-  drivingFX.update(garage.open || sessionSpawn.blocked ? 0 : dt, car);
+  effects.update(frozen || sessionSpawn.blocked ? 0 : dt, car);
+  drivingFX.update(frozen || sessionSpawn.blocked ? 0 : dt, car);
   cosmetics.setWetness(atmosphere.wetness);
-  cosmetics.update(garage.open || sessionSpawn.blocked ? 0 : dt, vehicles.current);
+  cosmetics.update(frozen || sessionSpawn.blocked ? 0 : dt, vehicles.current);
   atmosphere.update(dt, camera);
   garage.update(dt);
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
@@ -459,6 +473,7 @@ function frame(now) {
   rimRing?.update(car.renderPos);
   remotes.update(dt);
   warmup.step();
+  if (warmup.done && !vehicleThumbs.started) vehicleThumbs.start(['car', 'bike', 'jet'].map(k => [k, vehicles.getType(k)]));
   renderer.render(scene, camera);
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
@@ -487,9 +502,9 @@ window.game.glider = glider; window.game.bikeGlider = bikeGlider;
 window.game.vehicles = vehicles;
 // Every fresh load starts in the car; V still switches vehicles during play.
 
-sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim });
+sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim, vehicles });
 window.game.sessionSpawn = sessionSpawn;
 
-Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup });
+Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
 Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;
