@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- Only the map (minimap.js), no 3D world: full map zoom / pan timings without the game around it, for
+     argus browse (headless Chrome, no server needed besides argus's own). Results go to the console as warnings.
+       argus browse 'tools/map_lag_bench.html?phases=zoom in,zoom out&scale=.5' --wait-ms 10000
+       argus browse 'tools/map_lag_bench.html?shot=40' --wait-ms 6000      (a still view: fit = 1, 'car' = 40, more = +)
+     ?src=<dir> loads minimap.js from another copy of game/src (default ../game/src/). The car sits in Sheridan. -->
+<meta charset="utf-8">
+<title>map lag bench</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #3b4a3a; overflow: hidden; }
+  #minimap { position: fixed; top: 14px; right: 14px; width: 210px; height: 210px; border-radius: 14px; overflow: hidden; }
+  #minimap.hidden { display: none; }
+  #minimap canvas, #fullmap canvas { display: block; width: 100%; height: 100%; }
+  #minimap button { position: absolute; top: 6px; right: 6px; }
+  #fullmap { position: fixed; inset: 0; display: none; padding: 3vh 3vw; box-sizing: border-box; background: #0009; }
+  #fullmap.open { display: block; }
+  #fullmap .fm-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 12px; }
+</style>
+<script type="module">
+  const q = new URLSearchParams(location.search);
+  const src = q.get('src') || '../game/src/';
+  const { createMinimap } = await import(src + 'minimap.js');
+  const { mapGestures } = await import('./lib/maplag.mjs');
+  const t0 = performance.now();
+  const minimap = await createMinimap('../game/assets/');
+  window.__mapBench = { minimap };
+  const car = { x: 3800, z: 1400 };
+  let last = performance.now();
+  const loop = now => { requestAnimationFrame(loop); minimap.update(car.x, car.z, .6, 0, Math.min(.1, (now - last) / 1000)); last = now; };
+  requestAnimationFrame(loop);
+  minimap.toggle(true);
+  console.warn(`bench: map ready in ${(performance.now() - t0).toFixed(0)} ms`);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  if (q.has('shot')) {
+    const z = Number(q.get('shot')), click = k => document.querySelector(`#fullmap [data-z="${k}"]`).click();
+    if (z > 1) { click('car'); while (minimap.zoom * 1.3 < z) click('in'); }
+    await sleep(500);
+    while (minimap.detailStats.pending) await sleep(100);
+    console.warn(`bench: still view at zoom ${minimap.zoom.toFixed(1)}, detail ${JSON.stringify(minimap.detailStats)}`);
+  } else {
+    await sleep(800);
+    const phases = q.get('phases')?.split(',').map(s => s.trim()).filter(Boolean) || null;
+    const res = await mapGestures({ scale: Number(q.get('scale') || 1), phases });
+    for (const r of res) console.warn('bench: ' + JSON.stringify(r, (k, v) => typeof v === 'number' ? Math.round(v * 100) / 100 : v));
+    console.warn('bench: done');
+  }
+</script>

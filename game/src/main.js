@@ -475,7 +475,8 @@ function frame(now) {
   remotes.update(dt);
   warmup.step();
   if (warmup.done && !vehicleThumbs.started) vehicleThumbs.start(['car', 'bike', 'jet'].map(k => [k, vehicles.getType(k)]));
-  renderer.render(scene, camera);
+  // while the full map (M) is being zoomed / dragged it gets the frame: the 3D view, dimmed behind it, holds still
+  if (!minimap.moving) renderer.render(scene, camera);
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }

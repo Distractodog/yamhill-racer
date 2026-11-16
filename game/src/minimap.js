@@ -1,6 +1,7 @@
 import { drawMapImage, prepareMapImage, mapImageRevision } from './mapimage.js';
 import { createMapDetail, mapDetailLevel } from './mapdetail.js';
 import { createMapDetail as createMapImagery } from './minimapdetail.js';
+import { createSettle, snapshotPlace } from './mapview.js';
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
 // The full map zooms (scroll / pinch / + −, around the pointer) and pans (drag). A click drops a pin
 // (click it again, 📍 or P to clear); pin.js guides you to it.
@@ -30,8 +31,13 @@ export async function createMinimap(base = './assets/') {
   const imagery = createMapImagery(meta, base);
   const [ex0, ez0] = meta.extent, mpp = meta.mpp;
   const detail = createMapDetail(base);
+  // the still full map is cached in two layers: the picture (mapBase: overview + street imagery) and over it the
+  // roads, buildings and names (mapVec, transparent; drawing them is the slow part). While the view moves only the
+  // picture is drawn, and mapVec as it was, moved and scaled (mapview.js); both are redrawn once it is still.
   const mapBase = document.createElement('canvas'), mapCtx = mapBase.getContext('2d');
-  let mapBaseKey = '';
+  const mapVec = document.createElement('canvas'), vecCtx = mapVec.getContext('2d');
+  let mapBaseKey = '', mapVecKey = '', vecView = null, moving = false;
+  const settle = createSettle();
   const toPx = (x, z) => [(x - ex0) / mpp, (z - ez0) / mpp];   // world metres → map image pixels
   const rim = meta.rim || null;
   // canvas position of the scenery circle, given the image's top-left and px-per-image-pixel
@@ -94,8 +100,8 @@ export async function createMinimap(base = './assets/') {
   const toggle = v => {
     if (spawnPicker && v !== true) return;
     open = v ?? !open; full.classList.toggle('open', open); corner.classList.toggle('hidden', open);
-    if (!open) detail.update([0,0,0,0],0);
-    if (open) { zoom = 1; vx = img.width / 2; vy = img.height / 2; }       // always opens on the whole map
+    if (!open) { detail.update([0,0,0,0],0); moving = false; }
+    if (open) { zoom = 1; vx = img.width / 2; vy = img.height / 2; settle.reset(); }       // always opens on the whole map
   };
   for (const panel of [corner, full]) panel.querySelector('.mm-route button').addEventListener('click', e => { e.stopPropagation(); directionClear?.(); });
   corner.addEventListener('click', () => toggle(true));
@@ -305,19 +311,35 @@ export async function createMinimap(base = './assets/') {
       if (zoomOut.disabled !== (zoom <= 1)) zoomOut.disabled = zoom <= 1;
       const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
       const ppm=s/mpp,bounds=[ex0+(vx-W/2/s)*mpp,ez0+(vy-H/2/s)*mpp,ex0+(vx+W/2/s)*mpp,ez0+(vy+H/2/s)*mpp];
-      detail.update(bounds,ppm/d);
-      const baseKey=[W,H,vx,vy,zoom,d,detail.revision,imagery.revision,mapImageRevision(img)].join(':');
-      if(baseKey!==mapBaseKey){
-        mapBase.width=W;mapBase.height=H;mapBaseKey=baseKey;
-        mapCtx.fillStyle='#141816';mapCtx.fillRect(0,0,W,H);mapCtx.save();
-        if(rim){const[rx,ry,rr]=rimAt(ox,oy,s);mapCtx.beginPath();mapCtx.arc(rx,ry,rr,0,Math.PI*2);mapCtx.clip();}
-        mapCtx.imageSmoothingQuality='high';drawMapImage(mapCtx,img,ox,oy,s);
-        imagery.draw(mapCtx,ox,oy,s);
-        detail.draw(mapCtx,{bounds,ppm,d,map:fmap});
-        if(mapDetailLevel(ppm/d)<3)for(const l of LABELS){const[lx,ly]=fmap(l.x,l.z);if(lx>-120&&ly>-30&&lx<W+120&&ly<H+30)label(mapCtx,l.name,lx,ly,(zoom>25?12:15)*d);}
-        mapCtx.restore();
+      const clipRim=ctx=>{if(rim){const[rx,ry,rr]=rimAt(ox,oy,s);ctx.beginPath();ctx.arc(rx,ry,rr,0,Math.PI*2);ctx.clip();}};
+      const labels=ctx=>{if(mapDetailLevel(ppm/d)<3)for(const l of LABELS){const[lx,ly]=fmap(l.x,l.z);if(lx>-120&&ly>-30&&lx<W+120&&ly<H+30)label(ctx,l.name,lx,ly,(zoom>25?12:15)*d);}};
+      moving=!settle.step([W,H,vx,vy,zoom,d].join(':'),performance.now());
+      if(!moving){
+        detail.update(bounds,ppm/d);
+        const baseKey=[W,H,vx,vy,zoom,d,imagery.revision,mapImageRevision(img)].join(':');
+        if(baseKey!==mapBaseKey){
+          mapBase.width=W;mapBase.height=H;mapBaseKey=baseKey;
+          mapCtx.fillStyle='#141816';mapCtx.fillRect(0,0,W,H);mapCtx.save();clipRim(mapCtx);
+          mapCtx.imageSmoothingQuality='high';drawMapImage(mapCtx,img,ox,oy,s);
+          imagery.draw(mapCtx,ox,oy,s);
+          mapCtx.restore();
+        }
+        const vecKey=[W,H,vx,vy,zoom,d,detail.revision].join(':');
+        if(vecKey!==mapVecKey){
+          mapVec.width=W;mapVec.height=H;mapVecKey=vecKey;vecView={ox,oy,s,w:W,h:H};
+          vecCtx.save();clipRim(vecCtx);
+          detail.draw(vecCtx,{bounds,ppm,d,map:fmap});labels(vecCtx);
+          vecCtx.restore();
+        }
+        fctx.drawImage(mapBase,0,0);fctx.drawImage(mapVec,0,0);
+      }else{                                   // moving: nothing slow, nothing new requested
+        fctx.fillStyle='#141816';fctx.fillRect(0,0,W,H);fctx.save();clipRim(fctx);
+        fctx.imageSmoothingQuality='high';drawMapImage(fctx,img,ox,oy,s,{load:false});
+        imagery.draw(fctx,ox,oy,s,{load:false});
+        const at=snapshotPlace(vecView,ox,oy,s);
+        if(at)fctx.drawImage(mapVec,...at);else labels(fctx);
+        fctx.restore();
       }
-      fctx.drawImage(mapBase,0,0);
       const stats=detail.stats,level=mapDetailLevel(ppm/d),status=statusEl;
       const statusText=level===0?'County overview':stats.pending?'Loading street detail…':stats.failed||stats.manifestError?'Some detail unavailable · overview remains visible':level===1?'Neighborhood map':level===2?'Streets & buildings':'Street-level detail';
       if(status.textContent!==statusText)status.textContent=statusText;
@@ -353,7 +375,8 @@ export async function createMinimap(base = './assets/') {
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') zoomCmd('out');
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
-  return { update, toggle, get detailStats() { return detail.stats; }, get zoom() { return zoom; },
+  // moving: the full map is open and its view changed in the last 150 ms (main.js leaves the 3D view behind it alone)
+  return { update, toggle, get detailStats() { return detail.stats; }, get zoom() { return zoom; }, get moving() { return open && moving; },
     setDirectionHandlers(begin, choose, clear) { directionBegin=begin; directionChoose=choose; directionClear=clear; },
     setDirectionsStatus(text) {
       for (const panel of [corner, full]) {
