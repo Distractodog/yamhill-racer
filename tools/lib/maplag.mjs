@@ -8,13 +8,19 @@
 // Per frame: the time between frames, map main-thread ms (minimap.update + the event handlers run since the last
 // frame), the whole frame's main-thread ms (every requestAnimationFrame callback: in the game its 3D render too, plus
 // the handlers), and what ran: drawImage of a big picture (≥ 4096 px), other drawImage, path fills / strokes, text,
-// createImageBitmap calls.
-export async function mapGestures({ scale = 1, phases = null } = {}) {
+// createImageBitmap calls. Per gesture also the main thread's long tasks (PerformanceObserver 'longtask', > 50 ms:
+// count, worst, total ms), frames over 20 ms, and the world's build activity (tiles pending / built) when in the game.
+// spawn: true = the "Where do you want to start?" map, as found (no 'fit' first, the zoom goals are kept small).
+export async function mapGestures({ scale = 1, phases = null, spawn = false } = {}) {
   const host = window.game || window.__mapBench, minimap = host.minimap, canvas = document.querySelector('#fullmap canvas');
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const M = window.__mapLag ||= { frame: null, log: null, handlers: 0 };
+  const M = window.__mapLag ||= { frame: null, log: null, handlers: 0, longtasks: [] };
   if (!M.ready) {
     M.ready = true;
+    try {                                 // long tasks (> 50 ms) anywhere on the main thread
+      new PerformanceObserver(list => { for (const e of list.getEntries()) M.longtasks.push({ start: e.startTime, ms: e.duration }); })
+        .observe({ type: 'longtask', buffered: true });
+    } catch {}
     const update = minimap.update;
     minimap.update = function (...a) { const t = performance.now(); try { return update.apply(this, a); } finally { if (M.frame) M.frame.update += performance.now() - t; } };
     const proto = CanvasRenderingContext2D.prototype, big = s => (s?.width || 0) >= 4096 || (s?.naturalWidth || 0) >= 4096;
@@ -51,11 +57,14 @@ export async function mapGestures({ scale = 1, phases = null } = {}) {
   const wheel = (x, y, deltaY, ctrlKey = false) => send(new WheelEvent('wheel', { clientX: x, clientY: y, deltaY, deltaMode: 0, ctrlKey, bubbles: true, cancelable: true }));
   const pointer = (type, x, y, buttons) => send(new PointerEvent(type, { pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons, clientX: x, clientY: y, bubbles: true, cancelable: true }));
   const fit = () => document.querySelector('#fullmap [data-z="fit"]').click();
+  const begin = () => { M.log = []; M.t0 = performance.now(); };     // the measured part of a gesture starts
   // zoom (not measured) to about z, around canvas point (fx, fy), then let the map settle
+  // (targetZoom: where an eased zoom is going; older code has none and jumps at once)
+  const goal = () => minimap.targetZoom ?? minimap.zoom;
   async function zoomTo(z, fx = .5, fy = .5) {
     fit(); await sleep(50);
     const [x, y] = at(fx, fy);
-    for (let i = 0; i < 60 && minimap.zoom < z * .93; i++) { wheel(x, y, -Math.min(400, Math.log(z / minimap.zoom) / .0018)); await sleep(20); }
+    for (let i = 0; i < 60 && goal() < z * .93; i++) { wheel(x, y, -Math.min(400, Math.log(z / goal()) / .0018)); await sleep(20); }
     await sleep(700);
   }
   async function notches(n, dy, fx, fy, every = 25) { const [x, y] = at(fx, fy); for (let i = 0; i < n; i++) { wheel(x, y, dy); await sleep(every); } }
@@ -75,20 +84,23 @@ export async function mapGestures({ scale = 1, phases = null } = {}) {
     while ((t = performance.now() - t0) < ms) { wheel(x, y, t < ms / 2 ? -6 : 6, true); await sleep(6); }
   }
   const list = [
-    ['zoom in 20 notches', async () => { fit(); await sleep(400); M.log = []; await notches(20, -100, .55, .45); }],
-    ['zoom out 20 notches', async () => { M.log = []; await notches(20, 100, .4, .6); }],
-    ['pan @zoom 1.6', async () => { await zoomTo(1.6); M.log = []; await pan(1000 * scale); }],
-    ['pan @zoom 4', async () => { await zoomTo(4, .55, .45); M.log = []; await pan(1000 * scale); }],
-    ['pan @zoom 30', async () => { await zoomTo(30, .55, .45); M.log = []; await pan(1000 * scale); }],
-    ['pan @zoom 200', async () => { await zoomTo(200, .55, .45); M.log = []; await pan(1000 * scale); }],
-    ['pinch zoom @4', async () => { await zoomTo(4, .55, .45); M.log = []; await pinch(1000 * scale); }],
-    ['pinch zoom @60', async () => { await zoomTo(60, .55, .45); M.log = []; await pinch(1000 * scale); }],
+    ['zoom in 20 notches', async () => { if (!spawn) { fit(); await sleep(400); } begin(); await notches(20, -100, .55, .45); }],
+    ['zoom out 20 notches', async () => { begin(); await notches(20, 100, .4, .6); }],
+    ['pan @zoom 1.6', async () => { await zoomTo(1.6); begin(); await pan(1000 * scale); }],
+    ['pan @zoom 4', async () => { await zoomTo(4, .55, .45); begin(); await pan(1000 * scale); }],
+    ['pan @zoom 30', async () => { await zoomTo(30, .55, .45); begin(); await pan(1000 * scale); }],
+    ['pan @zoom 200', async () => { await zoomTo(200, .55, .45); begin(); await pan(1000 * scale); }],
+    ['pinch zoom @4', async () => { await zoomTo(4, .55, .45); begin(); await pinch(1000 * scale); }],
+    ['pinch zoom @60', async () => { await zoomTo(60, .55, .45); begin(); await pinch(1000 * scale); }],
   ].filter(([name]) => !phases || phases.some(p => name.includes(p)));
   const pct = (a, p) => a.length ? a[Math.min(a.length - 1, Math.floor(p * a.length))] : 0;
+  const world = window.game?.world, building = () => world ? { pending: world.pendingTiles(), built: world.loadedTiles() } : null;
   const out = [];
   for (const [name, run] of list) {
+    const w0 = building();
     await run(); await sleep(60);    // the gesture's last frames
-    const f = M.log.filter(x => x.interval > 0); M.log = null;
+    const t1 = performance.now(), f = M.log.filter(x => x.interval > 0); M.log = null;
+    const lt = M.longtasks.filter(e => e.start + e.ms > M.t0 && e.start < t1), w1 = building();
     const main = f.map(x => x.update + x.handlers).sort((a, b) => a - b), iv = f.map(x => x.interval).sort((a, b) => a - b);
     const whole = f.map(x => (x.others || 0) + x.handlers).sort((a, b) => a - b);
     const sum = k => f.reduce((a, x) => a + (x[k] || 0), 0), per = k => sum(k) / (f.length || 1);
@@ -97,7 +109,9 @@ export async function mapGestures({ scale = 1, phases = null } = {}) {
       median: pct(iv, .5), p95: pct(iv, .95), worst: iv.at(-1) || 0, over16: 100 * iv.filter(x => x > 16.7).length / (iv.length || 1),
       over8main: 100 * main.filter(x => x > 8).length / (main.length || 1),
       bigImageMs: per('bigImage'), bigImageN: sum('bigImageN'), imageMs: per('image'), imageN: per('imageN'), pathMs: per('path'), pathN: per('pathN'),
-      textMs: per('text'), bitmaps: sum('bitmaps'), handlersMs: per('handlers'), zoom: minimap.zoom });
+      textMs: per('text'), bitmaps: sum('bitmaps'), handlersMs: per('handlers'), zoom: minimap.zoom,
+      over20: iv.filter(x => x > 20).length, longTasks: lt.length, longWorst: Math.max(0, ...lt.map(e => e.ms)), longMs: lt.reduce((a, e) => a + e.ms, 0),
+      world: w0 && { pendingBefore: w0.pending, pendingAfter: w1.pending, builtBefore: w0.built, builtAfter: w1.built } });
   }
   return out;
 }

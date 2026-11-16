@@ -2,14 +2,20 @@
 //   python3 tools/serve.py 8173 game                     (this branch; another terminal)
 //   python3 tools/serve.py 8174 <main checkout>/game     (optional: the code before)
 //   node tools/map_lag_test.mjs [--before http://127.0.0.1:8174/] [--scale 5] [--only pan,pinch] [--out dir] [--headful]
+//                               [--dpr 2] [--scenarios spawn,game]
 //     (a heavy run: use the gate)
+// --dpr: the page's device pixel ratio (2 = a Retina Mac; the map canvas then has 4× the pixels). --scenarios (default
+// both): spawn = a fresh load, and the moment the "Where do you want to start?" map shows, the same gestures on it while
+// the game is still starting (world tiles building, shaders warming up, the map picture's levels / street detail
+// arriving); game = the full map (M) with the car on campus, as before.
 // With the car on campus the full map is opened and tools/lib/maplag.mjs runs its gestures: 20 wheel notches in, 20 out,
 // a drag round a circle at zoom 1.6 / 4 / 30 / 200 (--scale × 1 s each, default 5 s), trackpad pinch at zoom 4 and 60.
 // Per gesture: frame interval median / p95 / worst and % over 16.7 ms, map main-thread ms (minimap.update + the
 // wheel / pointer handlers) median / p95 / worst and % over 8 ms, the whole frame's main-thread ms (3D render included),
 // and per frame what ran: drawImage of a ≥ 4096 px picture (the old overview), other drawImage, path fills / strokes
 // (roads, buildings), createImageBitmap calls.
-// Then still views at zoom 1, 40 and 164 ('fit', 'car', 'car' + 3 × '+'): the full map canvas is saved as PNG in --out
+// Per gesture also the main thread's long tasks (> 50 ms) and frames over 20 ms (the target: none during zoom / pan at
+// DPR 2, start-up included). Then still views at zoom 1, 40 and 164 ('fit', 'car', 'car' + 3 × '+'): the full map canvas is saved as PNG in --out
 // (default $TMPDIR/map-lag) for each build, and with --before the pairs are compared pixel by pixel (the car's arrow and
 // pulsing ring masked): mean difference and % of pixels off by more than 32 (any channel). FAIL over 2 %.
 // Headless Chrome is slower than a real browser: compare before/after on the same machine, not to 16.7 ms.
@@ -23,29 +29,54 @@ import { mapGestures } from './lib/maplag.mjs';
 const arg = (k, d = null) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const SCALE = Number(arg('--scale', 5)), OUT = arg('--out', path.join(process.env.TMPDIR || os.tmpdir(), 'map-lag'));
 const ONLY = arg('--only')?.split(',').map(s => s.trim()).filter(Boolean) || null;
+const DPR = Number(arg('--dpr', 1)), SCENARIOS = (arg('--scenarios', 'spawn,game')).split(',').map(s => s.trim());
 const VIEWS = [['z1', 0], ['z40', 0], ['z164', 3]];    // name, '+' clicks after 'car' (z1: 'fit' only)
 fs.mkdirSync(OUT, { recursive: true });
 const launch = () => puppeteer.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: process.argv.includes('--headful') ? false : 'new', args: ['--window-size=1280,760', '--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
 
+const print = (label, runs) => {
+  for (const r of runs) console.log(`${label.padEnd(6)} ${r.name.padEnd(22)} ${String(r.frames).padStart(4)} frames  interval median ${r.median.toFixed(1).padStart(5)} p95 ${r.p95.toFixed(1).padStart(5)} worst ${r.worst.toFixed(0).padStart(4)}  >16.7ms ${r.over16.toFixed(0).padStart(3)}%  >20ms ${String(r.over20 ?? '-').padStart(3)} frames`
+    + `  map ms median ${r.mainMedian.toFixed(1)} p95 ${r.mainP95.toFixed(1)} worst ${r.mainWorst.toFixed(0)} (>8 ms ${r.over8main.toFixed(0)}%)  frame ms p95 ${r.frameP95.toFixed(1)}`
+    + `\n         long tasks ${r.longTasks ?? '-'} (worst ${(r.longWorst ?? 0).toFixed(0)} ms, ${(r.longMs ?? 0).toFixed(0)} ms in all)${r.world ? `  tiles pending ${r.world.pendingBefore}→${r.world.pendingAfter}, built ${r.world.builtBefore}→${r.world.builtAfter}` : ''}`
+    + `\n         per frame: big drawImage ${r.bigImageMs.toFixed(1)} ms (${r.bigImageN} in all), drawImage ${r.imageMs.toFixed(1)} ms ×${r.imageN.toFixed(0)}, paths ${r.pathMs.toFixed(1)} ms ×${r.pathN.toFixed(0)}, text ${r.textMs.toFixed(1)} ms, createImageBitmap ${r.bitmaps} in all`);
+};
+// the spawn map of a fresh load: gestures from the moment it shows (the game still starting behind it)
+async function spawnRuns(page, url, label) {
+  await page.evaluateOnNewDocument(() => {
+    try { localStorage.setItem('yr-welcome-hidden-1', '1'); } catch {}
+    try { Object.defineProperty(navigator, 'getGamepads', { value: () => [] }); } catch {}
+  });
+  const t0 = Date.now();
+  await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+  await page.waitForFunction(() => window.game?.sessionSpawn?.blocked && document.querySelector('#fullmap.open canvas'), { timeout: 120000, polling: 50 });
+  const shown = Date.now() - t0, state = await page.evaluate(() => ({ pending: game.world.pendingTiles(), built: game.world.loadedTiles(), warm: !game.warmup?.done }));
+  console.log(`${label.padEnd(6)} spawn map shown ${shown} ms after navigation; tiles pending ${state.pending}, built ${state.built}, vehicle warm-up ${state.warm ? 'still running' : 'done'}`);
+  const runs = await page.evaluate(`(${mapGestures})(${JSON.stringify({ scale: SCALE, phases: ONLY, spawn: true })})`);
+  for (const r of runs) r.name = 'spawn: ' + r.name;
+  print(label, runs);
+  return { runs, shown };
+}
+
 async function measure(url, label) {
   const browser = await launch(), errors = [];
   try {
-    const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760 });
+    const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 760, deviceScaleFactor: DPR });
     watchErrors(page, label, errors); page.setDefaultTimeout(0);
+    const spawn = SCENARIOS.includes('spawn') ? await spawnRuns(page, url, label) : null;
+    if (!SCENARIOS.includes('game')) return { label, url, runs: spawn.runs, spawnShown: spawn.shown, shots: null, errors };
     await startGame(page, { url });
     await page.evaluate(() => { game.keys.clear(); game.minimap.toggle(true); });
     await new Promise(r => setTimeout(r, 3000));           // the picture's levels / first patches (new code: a worker)
     const runs = await page.evaluate(`(${mapGestures})(${JSON.stringify({ scale: SCALE, phases: ONLY })})`);
-    for (const r of runs) console.log(`${label.padEnd(6)} ${r.name.padEnd(22)} ${String(r.frames).padStart(4)} frames  interval median ${r.median.toFixed(1).padStart(5)} p95 ${r.p95.toFixed(1).padStart(5)} worst ${r.worst.toFixed(0).padStart(4)}  >16.7ms ${r.over16.toFixed(0).padStart(3)}%`
-      + `  map ms median ${r.mainMedian.toFixed(1)} p95 ${r.mainP95.toFixed(1)} worst ${r.mainWorst.toFixed(0)} (>8 ms ${r.over8main.toFixed(0)}%)  frame ms p95 ${r.frameP95.toFixed(1)}`
-      + `\n         per frame: big drawImage ${r.bigImageMs.toFixed(1)} ms (${r.bigImageN} in all), drawImage ${r.imageMs.toFixed(1)} ms ×${r.imageN.toFixed(0)}, paths ${r.pathMs.toFixed(1)} ms ×${r.pathN.toFixed(0)}, text ${r.textMs.toFixed(1)} ms, createImageBitmap ${r.bitmaps} in all`);
+    print(label, runs);
+    runs.unshift(...(spawn?.runs || []));
     const shots = {};
     for (const [name, plus] of VIEWS) {
       shots[name] = await still(page, name, plus);
       fs.writeFileSync(path.join(OUT, `${label}-${name}.png`), Buffer.from(shots[name].png.split(',')[1], 'base64'));
     }
-    return { label, url, runs, shots, errors };
+    return { label, url, runs, spawnShown: spawn?.shown, shots, errors };
   } finally { await browser.close(); }
 }
 // a still view: 'fit' (z1), or 'car' then `plus` × '+'; waits for the detail and the picture to finish, then reads the canvas
@@ -102,19 +133,21 @@ async function compare(before, after) {
 
 function table(before, after) {
   const by = new Map((before?.runs || []).map(r => [r.name, r]));
-  const c = (o, r, k, d = 1) => o ? `${o[k].toFixed(d).padStart(5)} → ${r[k].toFixed(d).padEnd(5)}` : r[k].toFixed(d).padStart(5);
-  console.log(`\n${'gesture'.padEnd(22)} ${'median ms'.padEnd(13)} ${'p95 ms'.padEnd(13)} ${'worst ms'.padEnd(13)} ${'% > 16.7'.padEnd(13)} ${'map p95 ms'.padEnd(13)} ${'map worst'.padEnd(13)} ${'frame p95 ms'.padEnd(13)} big drawImage/frame`);
+  const n = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '-';
+  const c = (o, r, k, d = 1) => o ? `${n(o[k], d).padStart(5)} → ${n(r[k], d).padEnd(5)}` : n(r[k], d).padStart(5);
+  console.log(`\n(DPR ${DPR})\n${'gesture'.padEnd(29)} ${'median ms'.padEnd(13)} ${'p95 ms'.padEnd(13)} ${'worst ms'.padEnd(13)} ${'% > 16.7'.padEnd(13)} ${'frames > 20'.padEnd(13)} ${'long tasks'.padEnd(13)} ${'longest'.padEnd(13)} ${'map p95 ms'.padEnd(13)} ${'frame p95 ms'.padEnd(13)} big drawImage/frame`);
   for (const r of after.runs) {
     const o = by.get(r.name);
-    console.log(`${r.name.padEnd(22)} ${c(o, r, 'median')} ${c(o, r, 'p95')} ${c(o, r, 'worst', 0)} ${c(o, r, 'over16', 0)} ${c(o, r, 'mainP95')} ${c(o, r, 'mainWorst', 0)} ${c(o, r, 'frameP95')} ${c(o, r, 'bigImageMs')}`);
+    console.log(`${r.name.padEnd(29)} ${c(o, r, 'median')} ${c(o, r, 'p95')} ${c(o, r, 'worst', 0)} ${c(o, r, 'over16', 0)} ${c(o, r, 'over20', 0)} ${c(o, r, 'longTasks', 0)} ${c(o, r, 'longWorst', 0)} ${c(o, r, 'mainP95')} ${c(o, r, 'frameP95')} ${c(o, r, 'bigImageMs')}`);
   }
+  if (after.spawnShown != null) console.log(`spawn map shown after ${before?.spawnShown != null ? before.spawnShown + ' → ' : ''}${after.spawnShown} ms`);
 }
 
 const before = arg('--before') ? await measure(arg('--before'), 'before') : null;
 const after = await measure(GAME_URL, before ? 'after' : 'run');
 table(before, after);
 let fail = false;
-if (before) {
+if (before && after.shots && before.shots) {
   const cmp = await compare(before, after);
   console.log('\nstill views, before vs after (the car masked):');
   for (const [name, r] of Object.entries(cmp)) {

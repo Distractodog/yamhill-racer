@@ -19,15 +19,17 @@ export function prepareMapImage(image, blob, { worker = makeWorker() } = {}) {
   const src = { blob, busy: false, failed: false, revision: 0, worker: null, jobs: new Map(), next: 0 };
   sources.set(image, src);
   if (!worker) return;
-  const mip = { levels: [] };       // ready levels, finest first
+  let ready;
+  const mip = { levels: [], ready: new Promise(r => { ready = r; }) };       // ready levels, finest first
   mips.set(image, mip);
   src.worker = worker;
   worker.onmessage = ({ data }) => {
-    if (data.level) { mip.levels.push(data.level); mip.levels.sort((a, b) => b.width - a.width); src.revision++; return; }
+    if (data.level) { mip.levels.push(data.level); mip.levels.sort((a, b) => b.width - a.width); src.revision++; if (mip.levels.length >= LEVEL_FACTORS.length) ready(); return; }
+    if (data.levelsDone) { ready(); return; }
     const job = src.jobs.get(data.id); src.jobs.delete(data.id); job?.(data);
   };
   worker.onerror = () => {          // no worker after all: patches one at a time (levels that came stay)
-    src.worker = null; worker.terminate?.();
+    src.worker = null; worker.terminate?.(); ready();
     for (const job of src.jobs.values()) job({ error: 'worker' });
     src.jobs.clear();
   };
@@ -41,6 +43,23 @@ function makeWorker() {
 // the main thread failed and patches are now cut the old way. Callers that cache what they drew (minimap.js full map)
 // redraw.
 export const mapImageRevision = image => sources.get(image)?.revision ?? 0;
+// resolves once the worker has made all the levels (or gave up, or there is none): minimap.js waits for it, so the
+// spawn map never draws the 9600² original
+export const mapImageReady = image => mips.get(image)?.ready ?? Promise.resolve();
+// A level tile's first draw uploads its pixels to the GPU (~4 MB each); in a zoom / drag frame that is a long frame.
+// warmMapImage draws one level tile not drawn before, 1 px big at (0, 0) of ctx, coarsest levels first (the ones a
+// moving map at pixel ratio 1 uses): minimap.js calls it in still frames, under the picture it then draws over it.
+// Returns false once every tile has been drawn.
+export function warmMapImage(ctx, image) {
+  const levels = mips.get(image)?.levels;
+  if (!levels) return false;
+  for (let i = levels.length - 1; i >= 0; i--) for (const tile of levels[i].tiles) {
+    if (tile.shown) continue;
+    tile.shown = true; ctx.drawImage(tile.bitmap, 0, 0, 1, 1);
+    return true;
+  }
+  return false;
+}
 
 // the tiles a width × height picture is cut into: core squares of `tile` px (x, y, w, h) and the rectangle cut for
 // each (px, py, pw, ph): the core plus `pad` px of its neighbours, so filtering at the seams matches one big picture
@@ -76,6 +95,7 @@ function drawLevel(ctx, level, width, height, ox, oy, scale, l, t, r, b) {
     const cx0 = Math.max(l, tile.x * kx), cy0 = Math.max(t, tile.y * ky);
     const cx1 = Math.min(r, (tile.x + tile.w) * kx), cy1 = Math.min(b, (tile.y + tile.h) * ky);
     if (cx1 <= cx0 || cy1 <= cy0) continue;
+    tile.shown = true;
     ctx.save(); ctx.beginPath(); ctx.rect(ox + cx0 * scale, oy + cy0 * scale, (cx1 - cx0) * scale, (cy1 - cy0) * scale); ctx.clip();
     ctx.drawImage(tile.bitmap, ox + tile.px * kx * scale, oy + tile.py * ky * scale, tile.bitmap.width * kx * scale, tile.bitmap.height * ky * scale);
     ctx.restore();
@@ -106,7 +126,9 @@ function request(src, cache, missing) {
   createImageBitmap(src.blob, sx, sy, sw, sh).then(canvas => { release(cache.get(key)); cache.set(key, { canvas, sx, sy }); keep(cache); src.revision++; },
     failed).finally(done);
 }
-// options.load = false: draw only what is already there (no new patches cut): minimap.js while the full map moves
+// options.load = false: draw only what is already there and has been drawn before (no new patches cut, no first
+// upload of a patch that arrived meanwhile: the level under it instead, nor the 9600² original while the levels are
+// still being made): minimap.js while the full map moves
 export function drawMapImage(ctx, image, ox, oy, scale, { load = true } = {}) {
   if (!(scale > 0) || !Number.isFinite(scale)) return;
   const width = image.naturalWidth || image.width, height = image.naturalHeight || image.height;
@@ -119,7 +141,7 @@ export function drawMapImage(ctx, image, ox, oy, scale, { load = true } = {}) {
   if (scale < .5 || count > MAX_PATCHES) {
     const level = levelFor(mip, width, scale);
     if (level) drawLevel(ctx, level, width, height, ox, oy, scale, left, top, right, bottom);
-    else ctx.drawImage(image, ox, oy, width * scale, height * scale);
+    else if (load || !sources.get(image)?.worker) ctx.drawImage(image, ox, oy, width * scale, height * scale);
     return;
   }
   let cache = caches.get(image);
@@ -129,7 +151,11 @@ export function drawMapImage(ctx, image, ox, oy, scale, { load = true } = {}) {
   for (let ty = y0; ty < y1; ty++) for (let tx = x0; tx < x1; tx++) {
     const key = `${tx},${ty}`, x = tx * TILE, y = ty * TILE;
     let patch = cache.get(key);
-    if (!patch && src && !src.failed) {
+    if (patch && !load && !patch.shown && under) {      // arrived during the gesture: shown once it is still
+      drawLevel(ctx, under, width, height, ox, oy, scale, x, y, Math.min(width, x + TILE), Math.min(height, y + TILE));
+      continue;
+    }
+    if (!patch && (src && !src.failed || !load)) {
       const sx = Math.max(0, x - PAD), sy = Math.max(0, y - PAD);
       if (load) missing.push({ key, sx, sy, sw: Math.min(width, x + TILE + PAD) - sx, sh: Math.min(height, y + TILE + PAD) - sy });
       if (under) drawLevel(ctx, under, width, height, ox, oy, scale, x, y, Math.min(width, x + TILE), Math.min(height, y + TILE));
@@ -142,7 +168,7 @@ export function drawMapImage(ctx, image, ox, oy, scale, { load = true } = {}) {
       canvas.getContext('2d').drawImage(image, sx, sy, ex - sx, ey - sy, 0, 0, ex - sx, ey - sy);
       patch = { canvas, sx, sy };
     }
-    cache.delete(key); cache.set(key, patch); keep(cache);
+    cache.delete(key); cache.set(key, patch); keep(cache); patch.shown = true;
     // Padded source pixels supply filtering at chunk seams. Clip only output,
     // never the source sampling region, and retain fractional destination edges.
     ctx.save(); ctx.beginPath(); ctx.rect(ox + x * scale, oy + y * scale,

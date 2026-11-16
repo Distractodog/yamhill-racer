@@ -1,7 +1,7 @@
-import { drawMapImage, prepareMapImage, mapImageRevision } from './mapimage.js';
+import { drawMapImage, prepareMapImage, mapImageRevision, mapImageReady, warmMapImage } from './mapimage.js';
 import { createMapDetail, mapDetailLevel } from './mapdetail.js';
 import { createMapDetail as createMapImagery } from './minimapdetail.js';
-import { createSettle, snapshotPlace } from './mapview.js';
+import { createSettle, snapshotPlace, createQuiet, easeZoom, wheelEases, drawRatio } from './mapview.js';
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
 // The full map zooms (scroll / pinch / + −, around the pointer) and pans (drag). A click drops a pin
 // (click it again, 📍 or P to clear); pin.js guides you to it.
@@ -20,17 +20,36 @@ const LABELS = [
 
 export const PIN_COLOR = '#ff2fd6';      // magenta: apart from the challenge colours (cyan / orange / yellow)
 
+// The map picture and its ½ ¼ ⅛ levels (made in a worker: mapimage.js) are started early (main.js calls this before the
+// world loads), so the spawn map, the first thing a player sees, opens with them ready instead of drawing the 9600²
+// original while the world is still being built.
+const preloads = new Map();
+export function preloadMinimap(base = './assets/') {
+  if (!preloads.has(base)) preloads.set(base, (async () => {
+    const meta = await fetch(base + 'minimap.json').then(r => r.json());
+    // one download: the <img> and the bytes mapimage.js cuts new patches from off the main thread
+    const blob = await fetch(base + 'minimap.jpg').then(r => r.blob());
+    const img = new Image();
+    img.src = URL.createObjectURL(blob);
+    await img.decode();
+    prepareMapImage(img, blob);
+    return { meta, img };
+  })());
+  return preloads.get(base);
+}
+const LEVELS_WAIT_MS = 10000;      // a worker that never answers does not hold the game up longer than this
+
 export async function createMinimap(base = './assets/') {
-  const meta = await fetch(base + 'minimap.json').then(r => r.json());
-  // one download: the <img> and the bytes mapimage.js cuts new patches from off the main thread
-  const blob = await fetch(base + 'minimap.jpg').then(r => r.blob());
-  const img = new Image();
-  img.src = URL.createObjectURL(blob);
-  await img.decode();
-  prepareMapImage(img, blob);
+  const { meta, img } = await preloadMinimap(base);
+  await Promise.race([mapImageReady(img), new Promise(r => setTimeout(r, LEVELS_WAIT_MS))]);
   const imagery = createMapImagery(meta, base);
   const [ex0, ez0] = meta.extent, mpp = meta.mpp;
-  const detail = createMapDetail(base);
+  // While the full map is zoomed / dragged (and QUIET_MS after) it is "busy": it draws at pixel ratio 1, and the game
+  // holds its world building and warm-up (main.js) and the street detail's parsing (hold) until it is quiet again.
+  const quiet = createQuiet(), waiters = [];
+  let goal = null;                 // eased zoom under way (wheel notch, + −): { z, fx, fy } (anchor as canvas fraction)
+  const busyNow = () => open && (moving || !!goal || pointers.size > 0 || quiet.busy(performance.now()));
+  const detail = createMapDetail(base, { hold: () => busyNow() ? new Promise(r => waiters.push(r)) : null });
   // the still full map is cached in two layers: the picture (mapBase: overview + street imagery) and over it the
   // roads, buildings and names (mapVec, transparent; drawing them is the slow part). While the view moves only the
   // picture is drawn, and mapVec as it was, moved and scaled (mapview.js); both are redrawn once it is still.
@@ -102,6 +121,7 @@ export async function createMinimap(base = './assets/') {
     open = v ?? !open; full.classList.toggle('open', open); corner.classList.toggle('hidden', open);
     if (!open) { detail.update([0,0,0,0],0); moving = false; }
     if (open) { zoom = 1; vx = img.width / 2; vy = img.height / 2; settle.reset(); }       // always opens on the whole map
+    goal = null; quiet.reset();
   };
   for (const panel of [corner, full]) panel.querySelector('.mm-route button').addEventListener('click', e => { e.stopPropagation(); directionClear?.(); });
   corner.addEventListener('click', () => toggle(true));
@@ -126,10 +146,20 @@ export async function createMinimap(base = './assets/') {
     clampView();
   }
   const canvasPt = e => { const r = fc.getBoundingClientRect(); return [(e.clientX - r.left) * fc.width / r.width, (e.clientY - r.top) * fc.height / r.height]; };
+  // pointers are followed in CSS px: the canvas's pixel ratio changes when a drag starts and when it settles
+  const cssPt = e => { const r = fc.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const perCss = () => fc.width / (fc.getBoundingClientRect().width || 1);     // canvas px per CSS px now
+  // ease toward zoom × f around canvas point (cx, cy) (update() steps it each frame); more notches add up
+  function easeTo(f, cx = fc.width / 2, cy = fc.height / 2) {
+    goal = { z: Math.min(MAX_ZOOM, Math.max(1, (goal?.z ?? zoom) * f)), fx: cx / fc.width, fy: cy / fc.height };
+  }
   fc.addEventListener('wheel', e => {
-    e.preventDefault();
+    e.preventDefault(); quiet.touch(performance.now());
     const k = e.ctrlKey ? 0.012 : 0.0018;             // ctrlKey = trackpad pinch (small deltas)
-    zoomAt(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : 1) * k), ...canvasPt(e));
+    const f = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : 1) * k), [cx, cy] = canvasPt(e);
+    if (wheelEases(e)) { easeTo(f, cx, cy); return; }
+    zoomAt(f, cx, cy);                                 // trackpad: at once (a notch still easing keeps its remainder)
+    if (goal) goal = { z: Math.min(MAX_ZOOM, Math.max(1, goal.z * f)), fx: cx / fc.width, fy: cy / fc.height };
   }, { passive: false });
   // pin: { x, z } in world metres, or null. A click (press + release without dragging) drops it; clicking on it removes it
   let pin = null; const pinListeners = [];
@@ -145,20 +175,22 @@ export async function createMinimap(base = './assets/') {
   const pinchState = () => { const [a,b] = [...pointers.values()]; return { x:(a[0]+b[0])/2, y:(a[1]+b[1])/2, distance:Math.hypot(a[0]-b[0],a[1]-b[1]) }; };
   fc.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    const p=canvasPt(e); pointers.set(e.pointerId,p);fc.setPointerCapture(e.pointerId);fc.classList.add('drag');
+    quiet.touch(performance.now());
+    const p=cssPt(e); pointers.set(e.pointerId,p);fc.setPointerCapture(e.pointerId);fc.classList.add('drag');
     if (pointers.size === 1) drag = { id:e.pointerId,p,p0:p,moved:0 };
     else if (pointers.size === 2) { pinch=pinchState(); if(drag)drag.moved=Infinity; }
   });
   fc.addEventListener('pointermove', e => {
     if (!pointers.has(e.pointerId)) return;
-    const p=canvasPt(e);pointers.set(e.pointerId,p);
+    quiet.touch(performance.now());
+    const p=cssPt(e);pointers.set(e.pointerId,p);
     if (pointers.size === 2 && pinch) {
-      const next=pinchState(),s=fitScale()*zoom;
+      const next=pinchState(),k=perCss(),s=fitScale()*zoom/k;
       vx-=(next.x-pinch.x)/s;vy-=(next.y-pinch.y)/s;
-      if(pinch.distance>1)zoomAt(next.distance/pinch.distance,next.x,next.y);pinch=next;clampView();return;
+      if(pinch.distance>1)zoomAt(next.distance/pinch.distance,next.x*k,next.y*k);pinch=next;clampView();return;
     }
     if (!drag || e.pointerId !== drag.id) return;
-    const s = fitScale() * zoom;
+    const s = fitScale() * zoom / perCss();          // CSS px per picture px
     drag.moved = Math.max(drag.moved, Math.hypot(p[0] - drag.p0[0], p[1] - drag.p0[1]));
     vx -= (p[0] - drag.p[0]) / s; vy -= (p[1] - drag.p[1]) / s; drag.p = p; clampView();
   });
@@ -168,10 +200,10 @@ export async function createMinimap(base = './assets/') {
     else {drag=null;fc.classList.remove('drag');}
   }
   fc.addEventListener('pointerup', e => {
-    const click = pointers.size === 1 && drag && drag.id === e.pointerId && drag.moved < 6 * Math.min(devicePixelRatio, 2);
+    const click = pointers.size === 1 && drag && drag.id === e.pointerId && drag.moved < 6;
     endPointer(e);
     if (!click) return;
-    const [cx, cy] = canvasPt(e), s = fitScale() * zoom, d = Math.min(devicePixelRatio, 2);
+    const [cx, cy] = canvasPt(e), s = fitScale() * zoom, d = perCss();
     const ix = vx + (cx - fc.width / 2) / s, iy = vy + (cy - fc.height / 2) / s;
     if (spawnPicker) {
       spawnPicker(ex0 + ix * mpp, ez0 + iy * mpp);
@@ -189,18 +221,19 @@ export async function createMinimap(base = './assets/') {
   fc.addEventListener('lostpointercapture', e => { if (pointers.has(e.pointerId)) endPointer(e); });
   const ZOOM_STEP = 1.6;
   function zoomCmd(z) {
+    if (['in', 'out', 'fit', 'car'].includes(z)) quiet.touch(performance.now());
     if (z === 'directions' && !spawnPicker) directionBegin?.();
-    else if (z === 'in') zoomAt(ZOOM_STEP);
-    else if (z === 'out') zoomAt(1 / ZOOM_STEP);
-    else if (z === 'fit') { zoom = 1; clampView(); }
-    else if (z === 'car') { zoom = Math.max(zoom, 40); [vx, vy] = carPx; clampView(); }
+    else if (z === 'in') easeTo(ZOOM_STEP);
+    else if (z === 'out') easeTo(1 / ZOOM_STEP);
+    else if (z === 'fit') { goal = null; zoom = 1; clampView(); }
+    else if (z === 'car') { goal = null; zoom = Math.max(zoom, 40); [vx, vy] = carPx; clampView(); }
     else if (z === 'close') toggle(false);
     else if (z === 'unpin' && !spawnPicker) setPin(null);
   }
   full.querySelectorAll('.fm-zoom button').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); zoomCmd(b.dataset.z); }));
 
-  function fit(canvas) {          // keep the canvas backing store matched to its CSS size × pixel ratio
-    const r = canvas.getBoundingClientRect(), d = Math.min(devicePixelRatio, 2);
+  function fit(canvas, d = Math.min(devicePixelRatio, 2)) {   // keep the canvas backing store at its CSS size × pixel ratio
+    const r = canvas.getBoundingClientRect();
     const w = Math.round(r.width * d), h = Math.round(r.height * d);
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
     return d;
@@ -276,6 +309,7 @@ export async function createMinimap(base = './assets/') {
   // x, z: car position (m); heading: radians on the map, 0 = north (up), clockwise; speed in m/s
   function update(x, z, heading, speed, dt) {
     const [px, py] = toPx(x, z);
+    if (waiters.length && !busyNow()) while (waiters.length) waiters.shift()();   // street detail parsing held meanwhile
     if (!open) {
       const d = fit(cc), W = cc.width, H = cc.height;
       viewM += (450 + Math.min(speed, 80) * 7 - viewM) * Math.min(1, dt * 1.5);   // zooms out a little at speed
@@ -304,8 +338,16 @@ export async function createMinimap(base = './assets/') {
       extraMarkers?.(cctx, cmap, d, 'corner');
       arrow(cctx, W / 2, H / 2, heading, 9 * d);
     } else {
-      const d = fit(fc), W = fc.width, H = fc.height;
+      const now = performance.now();
+      if (goal) {                              // eased zoom: this frame's share, around its anchor
+        const step = easeZoom(zoom, goal.z, dt * 1000);
+        zoomAt(step.zoom / zoom, goal.fx * fc.width, goal.fy * fc.height);
+        if (step.done) goal = null;
+      }
       carPx = [px, py]; clampView();
+      // still or moving by the view alone (not the canvas size, which follows it): moving frames draw at ratio 1
+      moving=!settle.step([fc.clientWidth,fc.clientHeight,vx,vy,zoom].join(':'),now);
+      const d = fit(fc, drawRatio(Math.min(devicePixelRatio, 2), moving)), W = fc.width, H = fc.height;
       const s = fitScale() * zoom, ox = W / 2 - vx * s, oy = H / 2 - vy * s;
       if (zoomIn.disabled !== (zoom >= MAX_ZOOM)) zoomIn.disabled = zoom >= MAX_ZOOM;
       if (zoomOut.disabled !== (zoom <= 1)) zoomOut.disabled = zoom <= 1;
@@ -313,7 +355,6 @@ export async function createMinimap(base = './assets/') {
       const ppm=s/mpp,bounds=[ex0+(vx-W/2/s)*mpp,ez0+(vy-H/2/s)*mpp,ex0+(vx+W/2/s)*mpp,ez0+(vy+H/2/s)*mpp];
       const clipRim=ctx=>{if(rim){const[rx,ry,rr]=rimAt(ox,oy,s);ctx.beginPath();ctx.arc(rx,ry,rr,0,Math.PI*2);ctx.clip();}};
       const labels=ctx=>{if(mapDetailLevel(ppm/d)<3)for(const l of LABELS){const[lx,ly]=fmap(l.x,l.z);if(lx>-120&&ly>-30&&lx<W+120&&ly<H+30)label(ctx,l.name,lx,ly,(zoom>25?12:15)*d);}};
-      moving=!settle.step([W,H,vx,vy,zoom,d].join(':'),performance.now());
       if(!moving){
         detail.update(bounds,ppm/d);
         const baseKey=[W,H,vx,vy,zoom,d,imagery.revision,mapImageRevision(img)].join(':');
@@ -331,6 +372,7 @@ export async function createMinimap(base = './assets/') {
           detail.draw(vecCtx,{bounds,ppm,d,map:fmap});labels(vecCtx);
           vecCtx.restore();
         }
+        if(!busyNow())warmMapImage(fctx,img);   // a level tile's first upload now, under the picture, not mid-gesture
         fctx.drawImage(mapBase,0,0);fctx.drawImage(mapVec,0,0);
       }else{                                   // moving: nothing slow, nothing new requested
         fctx.fillStyle='#141816';fctx.fillRect(0,0,W,H);fctx.save();clipRim(fctx);
@@ -376,7 +418,10 @@ export async function createMinimap(base = './assets/') {
     if (e.code === 'Digit0' || e.code === 'Numpad0') zoomCmd('fit');
   });
   // moving: the full map is open and its view changed in the last 150 ms (main.js leaves the 3D view behind it alone)
-  return { update, toggle, get detailStats() { return detail.stats; }, get zoom() { return zoom; }, get moving() { return open && moving; },
+  // busy: moving, or input in the last QUIET_MS (main.js holds world building, warm-up and the 3D view meanwhile)
+  // targetZoom: where an eased zoom is going (tools/lib/maplag.mjs)
+  return { update, toggle, get detailStats() { return detail.stats; }, get zoom() { return zoom; }, get targetZoom() { return goal?.z ?? zoom; },
+    get moving() { return open && moving; }, get busy() { return busyNow(); },
     setDirectionHandlers(begin, choose, clear) { directionBegin=begin; directionChoose=choose; directionClear=clear; },
     setDirectionsStatus(text) {
       for (const panel of [corner, full]) {
