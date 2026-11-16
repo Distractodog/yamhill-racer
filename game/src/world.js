@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
-import { readTileData, fetchReader, groundFile } from './tilepack.js';
+import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
+import { createTileQueue, fetchTileParts } from './tilequeue.js';
 import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
@@ -69,26 +70,23 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
-  const loading = new Set();
-  const jobs = [];                  // generators building tile visuals, stepped within the frame budget
-  const stepCost = new Map();       // step kind (what the generator yielded before it) -> recent cost, ms
 
-  async function fetchTile(tx, tz) {
+  // data and ground bitmaps together; if either fails, the bitmaps made are closed (tilequeue.js fetchTileParts)
+  function fetchTile(tx, tz) {
     const dir = `${base}tiles/${tx}_${tz}/`;
-    const [data, img] = await Promise.all([
-      readTileData(fetchReader(dir), W.packed),         // packed (.gz) or plain files: tilepack.js
+    return fetchTileParts(
+      () => readTileRaw(fetchReader(dir), W.packed),          // unzipped here, decoded in buildTile's steps: tilepack.js
       // ground colours as four 1024^2 quarters (cropped off the main thread), so each uploads in its own slice
-      fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => Promise.all([0, 1, 2, 3].map(q =>
-        createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' })))),
-    ]);
-    return { data, img };
+      () => fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => [0, 1, 2, 3].map(q =>
+        createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' }))));
   }
 
-  // builds one tile's data and meshes, yielding between pieces so the frame budget can pause it
-  function* buildTile(tx, tz, data, img) {
-    const td = yield* makeTileDataSteps(W, tx, tz, data);
+  // builds one tile's data and meshes, yielding between pieces so the frame budget can pause it. job.partial holds what
+  // is built so far, so a failure part-way (tilequeue.js) can free it
+  function* buildTile(tx, tz, raw, img, job = {}) {
+    const td = yield* makeTileDataSteps(W, tx, tz, yield* decodeTileSteps(raw));
     const g = new THREE.Group(), out = { td, group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], campusItemLods: [], treeMats: null, tgrid: null };
-    out.textures = []; out.materials = [];
+    out.textures = []; out.materials = []; job.partial = out;
     const quarterMats = [];
     for (const bmp of img) {
       const tex = new THREE.Texture(bmp); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
@@ -290,22 +288,33 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     return out;
   }
 
+  // A dropped tile's materials are disposed, except one that is the last user of its shader program: three.js would
+  // delete that program and compile it again (a stutter) as soon as the next tile using it is drawn, which happens after
+  // every teleport, H or far respawn (all old tiles drop before the new ones arrive). Kept, it costs no GPU memory (its
+  // textures are freed with the tile); at most one is kept per program.
+  const keepers = new Set();
+  const lastUser = m => { const ps = renderer.properties?.get(m)?.programs; return !!ps && [...ps.values()].some(p => p.usedTimes === 1); };
   function dispose(v) {
     v.group.traverse(o => { if (o.isInstancedMesh) o.dispose(); if (o.geometry && !SHARED.has(o.geometry)) o.geometry.dispose(); });
-    v.textures.forEach(t => t.dispose()); v.materials.forEach(m => m.dispose());
+    v.textures.forEach(t => t.dispose()); v.materials.forEach(m => { if (lastUser(m)) keepers.add(m); else m.dispose(); });
     group.remove(v.group);
   }
 
+  // fetch → build in time slices → add to the world; a tile that fails is freed and retried later (tilequeue.js)
+  const queue = createTileQueue({
+    fetch: job => fetchTile(job.tx, job.tz),
+    build: (job, { data, img }) => { job.img = img; return buildTile(job.tx, job.tz, data, img, job); },
+    finish: (job, v) => { world.add(v.td); vis.set(job.k, v); group.add(v.group); lastShadowAt = null; },
+    free: job => {
+      const v = job.partial;
+      if (v) { if (vis.get(job.k) === v) { vis.delete(job.k); world.remove(job.tx, job.tz); } dispose(v); }
+      job.img?.forEach(b => b.close?.());
+    },
+  });
   function startLoad(tx, tz, now = false) {
     const k = world.key(tx, tz);
-    if (loading.has(k) || vis.has(k) || !available.has(k)) return null;
-    loading.add(k);
-    return fetchTile(tx, tz).then(({ data, img }) => {
-      const gen = buildTile(tx, tz, data, img);
-      const finish = v => { world.add(v.td); vis.set(k, v); group.add(v.group); loading.delete(k); lastShadowAt = null; };
-      if (now) { let r; while (!(r = gen.next()).done); finish(r.value); }
-      else jobs.push({ gen, finish });
-    });
+    if (vis.has(k) || !available.has(k)) return null;
+    return queue.start(k, { tx, tz }, now);
   }
 
   // which tiles should be loaded around a point
@@ -324,33 +333,29 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const [sx, sz] = W.spawn;
   const first = wanted(sx, sz, LOAD_R);
   let done = 0;
-  await Promise.all(first.map(([tx, tz]) => startLoad(tx, tz, true).then(() => onProgress(++done, first.length))));
+  await Promise.all(first.map(([tx, tz]) => (startLoad(tx, tz, true) || Promise.resolve()).then(() => onProgress(++done, first.length))));
 
   // vel (m/s, optional): at speed, also load around a point up to AHEAD_S seconds ahead, nearest-to-that-point
   // first, and allow more build time per frame, so the map keeps up even at 1000 km/h
-  function update(cam, vel) {
+  // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
+  function update(cam, vel, extraMs = 0) {
     const sp = vel ? Math.hypot(vel.x, vel.z) : 0, la = Math.min(AHEAD_MAX, sp * AHEAD_S) / (sp || 1);
     const ax = cam.x + (vel ? vel.x * la : 0), az = cam.z + (vel ? vel.z * la : 0);
     const want = new Map();
     for (const [tx, tz] of [...wanted(cam.x, cam.z, LOAD_R), ...(la ? wanted(ax, az, LOAD_R) : [])]) want.set(world.key(tx, tz), [tx, tz]);
     const nx = (cam.x + ax) / 2, nz = (cam.z + az) / 2, d2 = ([tx, tz]) => (tx * T - nx) ** 2 + (tz * T - nz) ** 2;
-    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (loading.size < 3) startLoad(tx, tz);
+    // at most 3 tiles in flight, but the tile under the camera never waits behind look-ahead tiles from before a
+    // respawn / teleport
+    const [cx, cz] = world.tileIndex(cam.x, cam.z);
+    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (queue.loading.size < 3 || (tx === cx && tz === cz)) startLoad(tx, tz);
     for (const [k, v] of vis) {
       const t = world.tiles.get(k); if (!t) continue;
       const dx = Math.max(t.x0 - cam.x, 0, cam.x - (t.x0 + T)), dz = Math.max(t.z0 - cam.z, 0, cam.z - (t.z0 + T));
       if (Math.hypot(dx, dz) > DROP_R) { dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
     }
-    // Each step's cost is remembered by the label the job yielded just before it (that label tells which piece comes
-    // next); a step only starts if its usual cost still fits in what is left of this frame's budget. The first step
-    // of a frame always runs, so the queue never stalls.
-    const t0 = performance.now(), budget = FRAME_BUDGET_MS + Math.min(4, sp / 60);
-    for (let first = true; jobs.length; first = false) {
-      const now = performance.now(), j = jobs[0];
-      if (!first && now - t0 + (stepCost.get(j.next) || 0) > budget) break;
-      const r = j.gen.next(), d = performance.now() - now, c = stepCost.get(j.next);
-      stepCost.set(j.next, c === undefined ? d : Math.max(d, c * 0.9 + d * 0.1));   // falls slowly, jumps up at once
-      if (r.done) { jobs.shift(); j.finish(r.value); } else j.next = r.value;
-    }
+    // build steps within this frame's budget, nearest tile first, by the same point the loads are ordered by (after a
+    // respawn / teleport the queue can still hold tiles from where the vehicle was)
+    queue.update(FRAME_BUDGET_MS + Math.min(4, sp / 60) + extraMs, j => d2([j.tx, j.tz]));
   }
 
   // shadow casters: only trees near the car (that's all the shadow area covers); invisible in the normal view
@@ -378,8 +383,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     casters.forEach((m, i) => { m.count = n[i]; m.instanceMatrix.needsUpdate = true; });
   }
 
-  function updateLOD(cam, vel) {
-    update(cam, vel);
+  function updateLOD(cam, vel, extraMs = 0) {
+    update(cam, vel, extraMs);
     for (const v of vis.values()) {
       v.scenery?.update(cam, sceneryTime, nightAmount);
       for (const c of v.chunks) {
@@ -410,7 +415,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { stripMat.color.setScalar(1 - Math.max(0, Math.min(1, Number(value) || 0)) * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
-    loadedTiles: () => vis.size, pendingTiles: () => loading.size + jobs.length });
+    loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep });
 }
 
 

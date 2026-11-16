@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { VEHICLE_TYPES, typeInfo } from './vehicletypes.js';
-import { LIVERIES, sanitizeCosmetics, disposeCosmeticPreview } from './cosmetics.js';
+import { LIVERIES, sanitizeCosmetics } from './cosmetics.js';
 
 let activeKeyboard = null;
 // Registered during module evaluation, before settings/vehicle/race capture handlers.
@@ -31,8 +31,10 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
   const message = text => { status.textContent = text; };
   function preview() {
     if (!renderer) return;
-    if (model) { scene.remove(model); disposeCosmeticPreview(model); }
-    model = cosmetics.createPreview(kind); scene.add(model);
+    // cosmetics keeps one preview model per type (repainted here), so it is swapped, not rebuilt or disposed
+    const next = cosmetics.createPreview(kind);
+    if (next !== model) { if (model) scene.remove(model); scene.add(next); model = next; }
+    model.position.set(0, 0, 0); model.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(model), size = bounds.getSize(new THREE.Vector3()), center = bounds.getCenter(new THREE.Vector3());
     model.position.sub(center); model.position.y += size.y/2;
     modelRadius = Math.max(size.x,size.z,size.y); modelHeight = size.y;

@@ -137,7 +137,8 @@ function makeRamp(world, r) {
 }
 
 // ---------------------------------------------------------------- manager
-export async function createChallenges({ scene, world, car, minimap, vehicles = null, base = './assets/' }) {
+// onPlace(): a race is putting the car somewhere (start, restart, checkpoint): main.js drops a waiting respawn hold
+export async function createChallenges({ scene, world, car, minimap, vehicles = null, base = './assets/', onPlace = () => {} }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
   const ghost = createGhost({ scene });
   const rewards = createRewards();
@@ -213,14 +214,18 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   }
 
   // place the car on the start line once the tiles there have streamed in
+  // A respawn waiting for its ground (respawnhold.js) is dropped when this begins and again right before the car is put
+  // down (one could start meanwhile), so the race's placement always wins.
   async function placeCar(x, z, yaw, requireLoaded = false) {
     const token = ++placeToken;
+    onPlace();
     for (let k = 0; k < 80 && !(world.loadedAt(x, z) && world.pendingTiles() === 0); k++) {
       car.pos.set(x, car.pos.y, z); car.vel.set(0, 0, 0); car._lastLoaded = null;
       await new Promise(r => setTimeout(r, 150));
       if (token !== placeToken) return false;
     }
     if (token !== placeToken || (requireLoaded && !world.loadedAt(x, z))) return false;
+    onPlace();
     car.reset(x, z, yaw); car.safe = []; car._lastLoaded = null;
     return true;
   }

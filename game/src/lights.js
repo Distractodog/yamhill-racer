@@ -68,7 +68,8 @@ export const HEADLIGHT = 220, HEADLIGHT_FADE = 8;     // spot intensity when on;
 // The SpotLight stays in `scene` for good and is never hidden: adding, removing or hiding a light changes the
 // scene's light count, and three.js then recompiles every lit material (a stutter). Off = intensity faded to 0.
 // Each frame the beam is placed from the head anchors in the model's light mount, so a vehicle switch or a Garage type
-// change (a new mesh) just rebuilds the lenses and moves the beam.
+// change (another mesh) just picks that mesh's lenses and moves the beam. Each mesh's lenses are made once and kept
+// with it: disposing them would free their shader program, and the next vehicle's lenses would compile it again.
 export function createVehicleLights(scene = null) {
   // One shared light, never a shadow pass. A broad beam serves both car lenses.
   const spot = new THREE.SpotLight('#fff4dc', 0, 95, .43, .65, 1.2);
@@ -78,12 +79,16 @@ export function createVehicleLights(scene = null) {
   const from = new THREE.Vector3(), to = new THREE.Vector3();     // beam start / aim in the light mount's space
   let lenses = null, mount = null, beam = false;
   let override = null, lastNight = null, currentMesh = null, elapsed = 0;
+  const rigs = new Map();                   // vehicle mesh → its lenses
+  const rigFor = (mesh, kind) => { let r = rigs.get(mesh); if (!r) rigs.set(mesh, r = createVehicleLightLenses(mesh, kind)); return r; };
   return {
     spot,
     get override() { return override; },
     get on() { return lightsEnabled(lastNight || 0, override); },
     get beam() { return beam; },                // whether the beam is wanted (it fades in / out from there)
     get lenses() { return lenses; },
+    // lenses for a model before it is first driven (warmup.js compiles them with it)
+    prepare(mesh, kind) { return rigFor(mesh, kind); },
     toggle(night = lastNight || 0) {
       if (lastNight !== null && night !== lastNight) override = null;
       lastNight = night;
@@ -97,9 +102,8 @@ export function createVehicleLights(scene = null) {
       const mesh = vehicle.mesh;
       const on = lightsEnabled(night, override);
       if (currentMesh !== mesh) {
-        lenses?.dispose();
         currentMesh = mesh;
-        lenses = createVehicleLightLenses(mesh, vehicle.kind);
+        lenses = rigFor(mesh, vehicle.kind);
         mount = mesh.userData.lightMount || mesh;
         const head = lenses.anchors.head || [];
         from.set(0, 0, 0);
@@ -117,7 +121,7 @@ export function createVehicleLights(scene = null) {
       target.position.copy(to).applyMatrix4(mount.matrixWorld);
       lenses.update({ on, brake: Math.max(input.brake || 0, input.handbrake ? 1 : 0), time: elapsed });
     },
-    dispose() { spot.removeFromParent(); target.removeFromParent(); spot.dispose(); lenses?.dispose(); lenses = null; currentMesh = null; },
+    dispose() { spot.removeFromParent(); target.removeFromParent(); spot.dispose(); rigs.forEach(r => r.dispose()); rigs.clear(); lenses = null; currentMesh = null; },
   };
 }
 const _aim = new THREE.Vector3(0, -1.4, 35);

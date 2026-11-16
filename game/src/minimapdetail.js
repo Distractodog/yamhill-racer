@@ -41,11 +41,17 @@ export function createMapDetail(meta, base, loadImage = async url => {
     }
     visible = new Set(coords.map(([x,z])=>`${x}_${z}`));
     queue=[];
+    // The first draw of a newly loaded 2000px image is the costly one (scaled-down copies get built): at most one new
+    // image per frame, so after a reset / respawn / H several don't land in the same frame. A skipped one shows on the
+    // next frame (revision changes so a cached full map is redrawn too).
+    let fresh=0;
     for(const [x,z] of coords) {
       const key=`${x}_${z}`,entry=cache.get(key);
       if(!entry) {queue.push(key);continue;}
       entry.used=++stamp;
       if(entry.image) {
+        if(!entry.shown && fresh++) {revision++;continue;}
+        entry.shown=true;
         const dx=ox+(x*T-T/2-meta.extent[0])*scale,dy=oy+(z*T-T/2-meta.extent[1])*scale;
         // Rounded adjoining boundaries prevent hairline seams between tile images.
         const left=Math.round(dx),top=Math.round(dy);

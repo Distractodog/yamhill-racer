@@ -2,6 +2,7 @@
 // For each jet type: paint it (body red, trim green) through createCosmetics, then a normal reset, a crash (wreck
 // colours), the wreck's respawn and a reset again; after each, cosmetics.update() runs and the painted materials must
 // show the custom paint (or the wreck colour while wrecked). Also a repaint while wrecked shows after the respawn.
+// (grace = 0 before each forced crash: right after a respawn jet.js would turn the crash into a reset, airrespawn.js)
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createVehicles } from '../game/src/vehicles.js';
@@ -35,14 +36,14 @@ for (const { id } of VEHICLE_TYPES.jet) {
   v.reset(0, 0, 0); expect(v, 'ff0000', '00ff00', 'after a reset');
   v.reset(0, 0, 0); expect(v, 'ff0000', '00ff00', 'after a second reset');
   // crash: wreck colours while it tumbles (the wreck look wins over the Garage paint until the respawn)
-  v.placeInAir(0, 200, 0, 0, 300); v.crash('impact'); assert.equal(v.mode, 'crashed');
+  v.placeInAir(0, 200, 0, 0, 300); v.grace = 0; v.crash('impact'); assert.equal(v.mode, 'crashed');
   const wrecked = paint(v.mesh); assert(wrecked.body.has(wreckHex), `${id}: wreck colour while crashed (${[...wrecked.body]})`);
   for (let i = 0; i < 120 * 6 && v.mode === 'crashed'; i++) { v.savePrev(); v.step(1 / 120, input); }
   assert.notEqual(v.mode, 'crashed', `${id}: respawned`);
   expect(v, 'ff0000', '00ff00', 'after the wreck respawn');
   // repaint, then crash and respawn again: the new paint comes back
   cosmetics.set('jet', { body: '#0000ff', trim: '#ffff00' });
-  v.placeInAir(0, 200, 0, 0, 300); v.crash('impact');
+  v.placeInAir(0, 200, 0, 0, 300); v.grace = 0; v.crash('impact');
   for (let i = 0; i < 120 * 6 && v.mode === 'crashed'; i++) { v.savePrev(); v.step(1 / 120, input); }
   v.reset(0, 0, 0); expect(v, '0000ff', 'ffff00', 'after a repaint, a second wreck and a reset');
   rows.push(id);

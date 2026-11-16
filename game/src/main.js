@@ -21,6 +21,8 @@ import { createVehicles } from './vehicles.js';
 import { BIKE } from './bike.js';
 import { JET } from './jet.js';
 import { createSpawn } from './spawn.js';
+import { createRespawnHold } from './respawnhold.js';
+import { createWarmup } from './warmup.js';
 import { createSettings } from './settings.js';
 import { createMPMenu } from './mp/menu.js';
 import { makeRim } from './rim.js';
@@ -106,13 +108,18 @@ const vehicleLights = createVehicleLights(scene);
 const audio = new CarAudio();
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
-const challenges = await createChallenges({ scene, world, car, minimap, vehicles });
+// a race placing the car (start, J, Backspace restart, multiplayer start, checkpoint R) drops a waiting respawn hold
+const challenges = await createChallenges({ scene, world, car, minimap, vehicles, onPlace: () => respawnHold.cancel() });
 import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 const remotes = await createRemotes({ scene, camera, minimap, world, audio, night: () => atmosphere.night });   // other players' vehicles, tags and map dots (multiplayer)
 document.getElementById('loading').remove();
 const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });
 const gliderColors = createGliderColors({ car: glider, bike: bikeGlider });
+// every vehicle type's model built and its shaders compiled ahead, one per frame (no stutter on a first switch)
+const warmup = createWarmup({ renderer, scene, camera, vehicles, cosmetics, lights: vehicleLights });
+// R / crash respawns onto ground that hasn't streamed in wait there until it has (respawnhold.js)
+const respawnHold = createRespawnHold({ world, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft], current: () => vehicles.current });
 mp.setVehicleSource(() => ({ vehicle: car, kind: vehicles.current.kind,
   colors: cosmetics.get(vehicles.current.kind), glider: gliderColors.get(vehicles.current.kind) || {} }));
 const garage = createGarage({ cosmetics, vehicles, gliderColors, rewards: challenges.rewards,
@@ -145,7 +152,7 @@ gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuni
 gui.open();
 
 // H returns to the point chosen for this session.
-function goHome() { sessionSpawn.goHome(); }
+function goHome() { respawnHold.cancel(); sessionSpawn.goHome(); }
 
 // F: put the car back on its wheels right where it is, facing the way it was pointing (keeps the clock running)
 function flipUpright() {
@@ -422,8 +429,9 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   readInput();
   challenges.holdInput(input);
-  acc += sessionSpawn.blocked || garage.open ? 0 : dt;
-  while (acc >= STEP) { car.savePrev(); car.step(STEP, input); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
+  respawnHold.update(dt);
+  acc += sessionSpawn.blocked || garage.open || respawnHold.blocked ? 0 : dt;
+  while (acc >= STEP && !respawnHold.blocked) { car.savePrev(); car.step(STEP, input); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
   challenges.update(dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
@@ -442,7 +450,7 @@ function frame(now) {
   audio.update(car, input, dt);
   updateCamera(dt);
   world.tick?.(now / 1000);
-  world.updateLOD(camera.position, car.vel);
+  world.updateLOD(camera.position, car.vel, respawnHold.blocked || sessionSpawn.blocked ? 8 : 0);   // paused: build faster
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
@@ -450,6 +458,7 @@ function frame(now) {
   directions.update(dt);
   rimRing?.update(car.renderPos);
   remotes.update(dt);
+  warmup.step();
   renderer.render(scene, camera);
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
@@ -481,6 +490,6 @@ window.game.vehicles = vehicles;
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim });
 window.game.sessionSpawn = sessionSpawn;
 
-Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX, vehicleLights });
+Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup });
 Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

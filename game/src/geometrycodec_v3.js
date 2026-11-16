@@ -15,12 +15,18 @@ function matrix(value, scales) {
   return out;
 }
 export function decodeGeometry(value) {
+  const steps=decodeGeometrySteps(value);let r;while(!(r=steps.next()).done);return r.value;
+}
+// The same decode in pieces (a town tile takes ~50-150 ms in one go): yields 'geometry' every ~`budget` points, so
+// world.js can spread it over frames. inPlace: decode into `value.tile` itself (a fresh JSON.parse nobody else holds).
+export function* decodeGeometrySteps(value,{inPlace=false,budget=6000}={}) {
   if(!value||value.format!=='G3E1')return value;
   if(Object.keys(value).sort().join()!=='format,roads,tile'||!Array.isArray(value.roads)||!value.tile||typeof value.tile!=='object'||Array.isArray(value.tile))throw Error('Invalid geometry wrapper');
-  const obj=clone(value.tile),pool=clone(value.roads);
-  for(const r of pool){if(!r||typeof r!=='object'||!('pts'in r))throw Error('Invalid pooled road');r.pts=matrix(r.pts,[100,100]);if('yc'in r)r.yc=matrix(r.yc,[1000,10000]);}
-  for(const k of ['paths','physPaths'])if(k in obj){const refs=obj[k];if(!refs||Object.keys(refs).join()!=='$p'||!Array.isArray(refs.$p))throw Error('Invalid road references');obj[k]=refs.$p.map(i=>{if(!Number.isInteger(i)||i<0||i>=pool.length)throw Error('Invalid road index');return clone(pool[i]);});}
-  for(const b of obj.buildings||[])b.pts=matrix(b.pts,[100,100]);
-  for(const k of ['junctions','physJunctions'])for(const j of obj[k]||[]){if(j.c&&!Array.isArray(j.c)){const c=matrix(j.c,[100,100,1000]);if(c.length!==1)throw Error('Invalid junction center');j.c=c[0];}else j.c=matrix([j.c],[100,100,1000])[0];j.ring=matrix(j.ring,[100,100,1000,1]);}
+  let work=0;const tick=n=>(work+=n)>budget?(work=0,true):false,rows=v=>v?.$d?.[1]?.length??v?.length??1;
+  const obj=inPlace?value.tile:clone(value.tile),pool=inPlace?value.roads:clone(value.roads);
+  for(const r of pool){if(!r||typeof r!=='object'||!('pts'in r))throw Error('Invalid pooled road');r.pts=matrix(r.pts,[100,100]);if('yc'in r)r.yc=matrix(r.yc,[1000,10000]);if(tick(r.pts.length*2))yield 'geometry';}
+  for(const k of ['paths','physPaths'])if(k in obj){const refs=obj[k];if(!refs||Object.keys(refs).join()!=='$p'||!Array.isArray(refs.$p))throw Error('Invalid road references');const out=[];for(const i of refs.$p){if(!Number.isInteger(i)||i<0||i>=pool.length)throw Error('Invalid road index');out.push(clone(pool[i]));if(tick(pool[i].pts.length))yield 'geometry';}obj[k]=out;}
+  for(const b of obj.buildings||[]){const n=rows(b.pts);b.pts=matrix(b.pts,[100,100]);if(tick(n))yield 'geometry';}
+  for(const k of ['junctions','physJunctions'])for(const j of obj[k]||[]){if(j.c&&!Array.isArray(j.c)){const c=matrix(j.c,[100,100,1000]);if(c.length!==1)throw Error('Invalid junction center');j.c=c[0];}else j.c=matrix([j.c],[100,100,1000])[0];j.ring=matrix(j.ring,[100,100,1000,1]);if(tick(j.ring.length))yield 'geometry';}
   return obj;
 }

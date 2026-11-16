@@ -12,6 +12,7 @@
 // World queries only: heightAt / surfaceAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt / loadedAt / extent).
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { GRACE, findGround, airHeight } from './airrespawn.js';
 import { Jet } from './jet.js';
 import { LEDGE, roofLedge } from './roofs.js';
 import { buildHeliModel, HELI_SKIDS, HELI_SKID_H, HELI_BODY } from './models/heli.js';
@@ -51,6 +52,7 @@ export class Heli extends Vehicle {
     this.help = 'W/S up/down · A/D turn · arrows tilt to fly that way (let go to hover) · land gently on flat ground';
     this.mode = 'ground'; this.rotor = tuning.idle; this.throttle = this.rotor; this.yaw = 0; this.pitch = 0; this.roll = 0;
     this.agl = 0; this.idleT = 99; this.crashT = 0; this.gear = 1; this.respawn = null; this.steep = false;
+    this.grace = 0; this.graceAir = false; this.lastRespawn = null;   // respawn crash grace (airrespawn.js)
     this._acc = new THREE.Vector3();
     this.wheels = HELI_SKIDS.map(([x, z], i) => ({ x, z, front: i < 2, contact: false, surf: 0, comp: 0, contactPoint: new THREE.Vector3(), spin: 0 }));
     this.mesh = buildHeliModel();
@@ -86,10 +88,13 @@ export class Heli extends Vehicle {
     this.pitch = clamp(_e.x / BODY_PITCH, -this.t.maxTilt, this.t.maxTilt); this.roll = clamp(_e.z / BODY_ROLL, -this.t.maxTilt, this.t.maxTilt);
   }
 
-  reset(x, z, yaw) {
+  // y: the height the spot was recorded at (a respawn's safe spot), so ground above it (a bridge deck) doesn't count
+  reset(x, z, yaw, y) {
     this.mode = 'ground'; this.yaw = yaw; this.rotor = this.t.idle; this.throttle = this.rotor; this.idleT = 99;
     this.crashT = 0; this.burning = false; this.steep = false; this.mesh.userData.wreck(false);
-    this.pos.set(x, this.groundPose(x, z, yaw), z);
+    // stand at the new spot first: the ground queries (roofs) go by where the helicopter is (airrespawn.js)
+    this.pos.set(x, this.world.terrainAt?.(x, z) ?? 0, z); this.vel.set(0, 0, 0);
+    this.pos.y = this.groundPose(x, z, yaw, y);
     this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this._acc.set(0, 0, 0); this.airTime = 0; this.agl = 0;
     this.grounded = true;
     this.afterReset();
@@ -97,9 +102,28 @@ export class Heli extends Vehicle {
 
   // R / crash: a race gives an air respawn (the last ring passed); else the last safe spot
   resetToSafe() {
-    if (this.respawn) { const r = this.respawn(); if (r) { this.placeInAir(...r); return; } }
-    super.resetToSafe();
-    if (this.mode === 'crashed') { const [sx, sz] = this.world.spawn; this.reset(sx, sz, 0); }
+    if (this.respawn) { const r = this.respawn(); if (r) { this.respawnInAir(...r); return; } }
+    const s = this.safe.length > 40 ? this.safe[this.safe.length - 40] : this.safe[0];
+    if (s) this.respawnAt(s);
+    else if (this.mode === 'crashed') { const [sx, sz] = this.world.spawn; this.respawnAt([sx, sz, 0]); }
+  }
+  // respawns as for the jet (airrespawn.js): on the skids on a level, clear spot, or in the air; then GRACE s of grace
+  footing(x, z, yaw, y) {
+    return findGround(this, x, z, yaw, { yRef: y, pose: (px, pz, pyaw, py) => this.groundPose(px, pz, pyaw, py), body: HELI_BODY, reach: 5.5 });
+  }
+  respawnAt([x, z, yaw, y]) {
+    const g = this.footing(x, z, yaw, y);
+    this.reset(g.x, g.z, yaw, g.y);
+    this.lastRespawn = { ground: [x, z, yaw, y] }; this.grace = GRACE; this.graceAir = false;
+  }
+  respawnInAir(x, y, z, yaw, kmh = 150) {
+    this.placeInAir(x, airHeight(this.world, x, z, yaw, Math.min(kmh, 150), y), z, yaw, kmh);
+    this.lastRespawn = { air: [x, y, z, yaw, kmh] }; this.grace = GRACE; this.graceAir = true;
+  }
+  recover() {
+    const sp = this.vel.length(), yaw = sp > 3 ? Math.atan2(this.vel.x, this.vel.z) : this.yaw;
+    if (this.graceAir) this.placeInAir(this.pos.x, airHeight(this.world, this.pos.x, this.pos.z, yaw, 150, this.pos.y), this.pos.z, yaw, 150);
+    else { const g = this.footing(this.pos.x, this.pos.z, yaw); this.reset(g.x, g.z, yaw); }
   }
   // flying at (x, y, z) heading yaw, rotor up to speed (a jet's 450 km/h becomes the helicopter's cruise)
   placeInAir(x, y, z, yaw, kmh = 150) {
@@ -121,6 +145,7 @@ export class Heli extends Vehicle {
     const J = input.jet || { thr: 0, pitch: 0, roll: 0, yaw: 0 };
     this._prevVel.copy(this.vel);
     this.hit = 0;
+    if (this.grace > 0 && this.mode !== 'crashed') this.grace -= dt;
     if (this.mode === 'crashed') {
       this.rotor = Math.max(0, this.rotor - dt * 0.5); this.throttle = this.rotor;
       this.stepWreck(dt);
@@ -332,6 +357,7 @@ export class Heli extends Vehicle {
 
   crash(why) {
     if (this.mode === 'crashed') return;
+    if (this.grace > 0) { this.recover(); return; }      // just respawned: never a wreck (no respawn loop)
     this.mode = 'crashed'; this.crashT = 0; this.burning = true; this.grounded = false;
     this.hit = Math.max(this.hit, 40); this.landing = 1;
     this.vel.multiplyScalar(0.6);

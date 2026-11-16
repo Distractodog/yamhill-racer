@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { drawMapImage } from '../game/src/mapimage.js';
+import { drawMapImage, prepareMapImage, mapImageRevision } from '../game/src/mapimage.js';
 let creates=0,copies=[];
 globalThis.document={createElement(){creates++;return{width:0,height:0,getContext(){return{drawImage(...a){copies.push(a);}};}};}};
 const image={naturalWidth:9600,naturalHeight:9600};
@@ -24,4 +24,27 @@ drawMapImage(ctx,{width:9600,height:9600},-12345.678,-9876.123,2.718);
 for(let i=0;i<draws.length;i++){const [patch,dx,dy,dw,dh]=draws[i],copy=copies[i];assert(Math.abs(dx-(-12345.678+copy[1]*2.718))<1e-8);assert(Math.abs(dy-(-9876.123+copy[2]*2.718))<1e-8);assert.equal(dw,patch.width*2.718);assert.equal(dh,patch.height*2.718);}
 draws=[];view(0,0,.02);assert.equal(draws[0][0],image,'overview keeps full original source');
 const saved=creates;for(const scale of [0,-1,NaN,Infinity])drawMapImage(ctx,image,0,0,scale);assert.equal(creates,saved);
-console.log('PASS: original-resolution patches, repeat-frame reuse, 16-entry eviction, padded bounds, fractional pixel mapping, overview fallback');
+// evicted patches free their pixels: canvases shrink to 0×0 …
+{ const made=[];const prev=globalThis.document.createElement;globalThis.document.createElement=()=>{const c=prev();made.push(c);return c;};
+  const big={width:9600,height:9600};for(let i=0;i<40;i++)drawMapImage(ctx,big,-i*512,0,1);
+  assert(made.some(c=>c.width===0&&c.height===0),'evicted canvas patches are shrunk to nothing');globalThis.document.createElement=prev; }
+// … and with the file's bytes (prepareMapImage) patches are cut off the main thread, one at a time, and closed on eviction
+{ let closed=0,pending=[];globalThis.createImageBitmap=(blob,sx,sy,sw,sh)=>new Promise(r=>pending.push(()=>r({width:sw,height:sh,close(){closed++;}})));
+  const pic={width:9600,height:9600};prepareMapImage(pic,{});const n0=creates,rev0=mapImageRevision(pic);
+  for(let i=0;i<40;i++){drawMapImage(ctx,pic,-i*512,0,1);assert(pending.length<=1,'one patch cut at a time');while(pending.length)pending.shift()();await new Promise(r=>setTimeout(r,0));}
+  assert.equal(creates,n0,'no patch cut on the main thread');assert(mapImageRevision(pic)>rev0,'revision moves when patches arrive');assert(closed>0,'evicted ImageBitmap patches are closed');
+  delete globalThis.createImageBitmap; }
+// a failed off-thread cut: the revision still only goes up (so minimap.js redraws its cached full map), and from then on
+// patches are cut on the main thread, so the next draw really shows the picture
+{ let fail=false,pending=[];globalThis.createImageBitmap=()=>new Promise((ok,no)=>pending.push(()=>fail?no(new Error('decode failed')):ok({width:520,height:520,close(){}})));
+  const pic={width:9600,height:9600};prepareMapImage(pic,{});const revs=[mapImageRevision(pic)];
+  for(let i=0;i<3;i++){drawMapImage(ctx,pic,-i*512,0,1);while(pending.length)pending.shift()();await new Promise(r=>setTimeout(r,0));revs.push(mapImageRevision(pic));}
+  fail=true;draws=[];drawMapImage(ctx,pic,-5000,-5000,1);assert.equal(draws.length,0,'nothing drawn while the patch is being cut');
+  while(pending.length)pending.shift()();await new Promise(r=>setTimeout(r,0));revs.push(mapImageRevision(pic));
+  for(let i=1;i<revs.length;i++)assert(revs[i]>revs[i-1],`revision strictly increasing (${revs.join(' → ')})`);
+  const n0=creates;draws=[];drawMapImage(ctx,pic,-5000,-5000,1);
+  assert(creates>n0&&draws.length>0,'after the failure the patch is cut on the main thread and drawn at once');assert.equal(pending.length,0,'no more off-thread requests after a failure');
+  const minimapSrc=(await import('node:fs')).readFileSync(new URL('../game/src/minimap.js',import.meta.url),'utf8');
+  assert(/baseKey=\[[^\]]*mapImageRevision\(img\)/.test(minimapSrc),'minimap.js keys its cached full map by mapImageRevision (a failure redraws it)');
+  delete globalThis.createImageBitmap; }
+console.log('PASS: original-resolution patches, repeat-frame reuse, 16-entry eviction, padded bounds, fractional pixel mapping, overview fallback; async patches one at a time; evicted patches released (closed / 0×0); revision strictly increasing, a failed off-thread cut falls back to drawing on the main thread at once');

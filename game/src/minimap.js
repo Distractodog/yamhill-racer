@@ -1,4 +1,4 @@
-import { drawMapImage } from './mapimage.js';
+import { drawMapImage, prepareMapImage, mapImageRevision } from './mapimage.js';
 import { createMapDetail, mapDetailLevel } from './mapdetail.js';
 import { createMapDetail as createMapImagery } from './minimapdetail.js';
 // Map: a small north-up corner map that follows the car, and a full map of the whole area (M, or click it).
@@ -21,9 +21,12 @@ export const PIN_COLOR = '#ff2fd6';      // magenta: apart from the challenge co
 
 export async function createMinimap(base = './assets/') {
   const meta = await fetch(base + 'minimap.json').then(r => r.json());
+  // one download: the <img> and the bytes mapimage.js cuts new patches from off the main thread
+  const blob = await fetch(base + 'minimap.jpg').then(r => r.blob());
   const img = new Image();
-  img.src = base + 'minimap.jpg';
+  img.src = URL.createObjectURL(blob);
   await img.decode();
+  prepareMapImage(img, blob);
   const imagery = createMapImagery(meta, base);
   const [ex0, ez0] = meta.extent, mpp = meta.mpp;
   const detail = createMapDetail(base);
@@ -303,7 +306,7 @@ export async function createMinimap(base = './assets/') {
       const fmap = (gx, gz) => { const [a, b] = toPx(gx, gz); return [ox + a * s, oy + b * s]; };
       const ppm=s/mpp,bounds=[ex0+(vx-W/2/s)*mpp,ez0+(vy-H/2/s)*mpp,ex0+(vx+W/2/s)*mpp,ez0+(vy+H/2/s)*mpp];
       detail.update(bounds,ppm/d);
-      const baseKey=[W,H,vx,vy,zoom,d,detail.revision,imagery.revision].join(':');
+      const baseKey=[W,H,vx,vy,zoom,d,detail.revision,imagery.revision,mapImageRevision(img)].join(':');
       if(baseKey!==mapBaseKey){
         mapBase.width=W;mapBase.height=H;mapBaseKey=baseKey;
         mapCtx.fillStyle='#141816';mapCtx.fillRect(0,0,W,H);mapCtx.save();
