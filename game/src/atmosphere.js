@@ -1,8 +1,9 @@
 // Lighting, sky, fog, stars, sun/moon and rain from the day/night cycle (daycycle.js) or a fixed preset look.
-// No simulation or vehicle handling changes. Only values change over time: the same lights, fog type and meshes stay
+// Road moisture also feeds tyre grip through the world. Only values change: the same lights, fog type and meshes stay
 // in the scene for good (no shader recompiles).
 import * as THREE from 'three';
 import { createRain } from './weatherfx.js';
+import { roadWetness } from './wetgrip.js';
 import { ATMOSPHERE_PRESETS, DEFAULT_SETTINGS, PHASES, cleanSettings, createDayCycle } from './daycycle.js';
 export { ATMOSPHERE_PRESETS };
 const KEY = 'yr-atmo-2', OLD_KEY = 'yr-atmosphere-1';
@@ -19,6 +20,7 @@ export function createAtmosphere({ scene, sun, sunDirection, world, storage = br
   const hemi = scene.children.find(o => o.isHemisphereLight);
   let disposed = false, worldNight = -1, worldWet = -1;
   const cycle = createDayCycle({ settings: loadAtmosphereSettings(storage), seed, speed });
+  let roadWet = cycle.out.rain;
   const listeners = new Set();
   const changed = () => listeners.forEach(fn => { try { fn(); } catch (e) { console.warn('atmosphere:', e); } });
   const rain = createRain({ scene });
@@ -41,7 +43,7 @@ export function createAtmosphere({ scene, sun, sunDirection, world, storage = br
   const sunHalo = disc('sky-sun-halo', '#fff4dc', 190, haloGeometry), sunDisc = disc('sky-sun', '#fff6e2', 38), moonDisc = disc('sky-moon', '#e6ecf7', 30);
   const discs = [[sunHalo, 'sun', .45], [sunDisc, 'sun', 1], [moonDisc, 'moon', 1]];
   const _v = new THREE.Vector3();
-  function apply() {
+  function apply(dt = 0) {
     const o = cycle.out, L = o.look;
     scene.background.setRGB(...L.sky);
     if (scene.fog) { scene.fog.color.setRGB(...L.fog); scene.fog.near = L.near; scene.fog.far = L.far; }
@@ -50,8 +52,10 @@ export function createAtmosphere({ scene, sun, sunDirection, world, storage = br
     sunDirection?.fromArray(o.light);
     starsMaterial.opacity = o.stars; stars.visible = o.stars > .005;
     rain.setAmount(o.rain);
-    // the world's lit windows and wet roads only change in 1% steps
-    const night = Math.round(L.night * 100) / 100, wet = Math.round(L.wetness * 100) / 100;
+    // Full rain soaks the road; drying continues after the visible shower fades.
+    roadWet = roadWetness(roadWet, o.rain, dt);
+    // The world's lit windows and wet roads only change in 1% steps.
+    const night = Math.round(L.night * 100) / 100, wet = Math.round(roadWet * 100) / 100;
     if (night !== worldNight) { worldNight = night; world.setNight?.(night); }
     if (wet !== worldWet) { worldWet = wet; world.setWetness?.(wet); }
     for (const [mesh, body, alpha] of discs) {
@@ -83,13 +87,15 @@ export function createAtmosphere({ scene, sun, sunDirection, world, storage = br
     get speed() { return cycle.speed; }, set speed(v) { cycle.speed = v; },
     cycle, setPreset, set,
     jump(to) { if (disposed || !cycle.jump(to)) return false; apply(); changed(); return true; },
-    shared: () => cycle.shared(), clock: () => cycle.clock(),
-    follow(state) { if (disposed) return; const was = JSON.stringify(cycle.settings); cycle.follow(state); apply(); if (JSON.stringify(cycle.settings) !== was || !state) changed(); },
+    shared: () => cycle.shared(), clock: () => ({ ...cycle.clock(), roadWetness: roadWet }),
+    follow(state) { if (disposed) return; const was = JSON.stringify(cycle.settings); cycle.follow(state);
+      if (Number.isFinite(state?.roadWetness)) roadWet = Math.max(0, Math.min(1, state.roadWetness));
+      apply(); if (JSON.stringify(cycle.settings) !== was || !state) changed(); },
     unfollow() { if (disposed || !cycle.following) return; cycle.unfollow(); apply(); changed(); },
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     update(dt, camera) {
       if (disposed) return;
-      cycle.update(dt); apply();
+      cycle.update(dt); apply(Number.isFinite(dt) ? Math.max(0, Math.min(1, dt)) : 0);
       const at = camera?.position || camera;
       if (!at) return;
       if (stars.visible) stars.position.copy(at);

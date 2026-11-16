@@ -171,7 +171,9 @@ for (const p of ATMOSPHERE_PRESETS) sameLook(fixedLook(p.id), p);
   const after = []; scene.traverse(o => after.push(o)); assert.deepEqual(after, objects, 'no object added or removed over time'); assert.equal(lights(), lightCount, 'light count unchanged');
   assert(nightCalls < 300, 'world.setNight only in 1% steps');
   // settings
-  a.set({ weather: 'rain' }); assert.equal(a.rain, 1); assert(near(wet, .8)); assert(scene.getObjectByName('nearby-rain').visible);
+  a.set({ weather: 'rain' }); assert.equal(a.rain, 1); assert(scene.getObjectByName('nearby-rain').visible);
+  for (let i = 0; i < 8 * 60; i++) a.update(1 / 60, camera);
+  assert(near(wet, 1), 'road moisture rises gradually to fully wet');
   assert.deepEqual(JSON.parse(storage.map.get('yr-atmo-2')), { cycle: true, look: 'midday', weather: 'rain' });
   a.jump('night'); a.update(0, camera); assert.equal(a.phase, 'night'); assert(scene.getObjectByName('night-stars').visible === false || a.rain === 1);
   a.set({ weather: 'clear' }); a.update(0, camera); assert(scene.getObjectByName('night-stars').visible); assert(scene.getObjectByName('sky-moon').visible);

@@ -16,6 +16,7 @@
 //   * Air: W / S (or Shift) lean forward / back (keys held from the take-off don't count), A / D turn the bike in the
 //     air (scrub); hands off it slowly lines up with its flight path. Landing far off line is a bail.
 import * as THREE from 'three';
+import { wetGrip, wetBraking } from './wetgrip.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
 import { keepBodyAboveGround } from './bodyclearance.js';
@@ -231,7 +232,8 @@ export class Bike extends Vehicle {
     // ------------------------------------------------ riding on the ground: lean → turn, grip, slides
     let leanWant;
     if (drive > 0) {
-      const n = _nAvg, k = drive / 2, grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1), loose = LOOSE[this.surface];
+      const rainGrip = wetGrip(W, this.surface), brakeGrip = wetBraking(W, this.surface);
+      const n = _nAvg, k = drive / 2, grip = rainGrip * GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1), loose = LOOSE[this.surface];
       _hp.copy(_fw).addScaledVector(n, -_fw.dot(n)).normalize();
       _vp.copy(this.vel).addScaledVector(n, -this.vel.dot(n));
       const vPlane = _vp.length(), vf = _vp.dot(_hp), reversing = vf < -0.5, av = Math.abs(vf);
@@ -244,7 +246,9 @@ export class Bike extends Vehicle {
       const wLean = -Math.sign(vf) * g * Math.tan(this.lean) / Math.max(av, 3);
       const wBars = -vf * Math.tan(this.steer * t.steerLock) / WB;
       const b = clamp((av - 3) / 6, 0, 1);
-      let wT = wBars * (1 - b) + wLean * b;
+      // Wet tyres widen the commanded arc too: high-grip sport tyres can stay below
+      // the lateral limit even at full lean, but should still feel a little slippery.
+      let wT = (wBars * (1 - b) + wLean * b) * rainGrip;
       // grip limit: sideways acceleration the tyres can hold
       const gripA = t.cornerGrip * grip, latA = Math.abs(vf * wT);
       this.washout = false;
@@ -284,9 +288,9 @@ export class Bike extends Vehicle {
       // engine (rear wheel), brakes, drag
       const vmax = t.topSpeed / 3.6 * 1.02;
       let a = 0;
-      if (input.throttle > 0 && rear) a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2) * (1 - 0.3 * this.slip);
-      if (input.brake > 0) { if (vf > 1) a -= t.brakeDecel * input.brake * (front ? 1 : 0.4); else if (vf > -6) a -= input.brake * 6; }
-      if (this.drifting) a -= Math.sign(vf) * Math.min(av / dt, 5);
+      if (input.throttle > 0 && rear) a = reversing ? t.brakeDecel * brakeGrip * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2) * (1 - 0.3 * this.slip);
+      if (input.brake > 0) { if (vf > 1) a -= t.brakeDecel * brakeGrip * input.brake * (front ? 1 : 0.4); else if (vf > -6) a -= input.brake * 6; }
+      if (this.drifting) a -= Math.sign(vf) * Math.min(av / dt, 5 * brakeGrip);
       if (!input.throttle && !input.brake && av < 1.5) a -= Math.sign(vf) * Math.min(av / dt, 8);
       a -= (DRAG[this.surface] + (input.throttle || input.brake ? 0 : 1.0)) * Math.sign(vf) * Math.min(1, av);
       _vp.addScaledVector(_hp, a * dt * k);
