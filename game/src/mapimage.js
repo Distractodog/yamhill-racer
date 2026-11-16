@@ -11,9 +11,10 @@ const TILE = 512, PAD = 4, LIMIT = 16;
 const sources = new WeakMap();
 export function prepareMapImage(image, blob) {
   if (!blob || typeof createImageBitmap !== 'function') return;
-  sources.set(image, { blob, busy: false, revision: 0 });
+  sources.set(image, { blob, busy: false, failed: false, revision: 0 });
 }
-// changes when a patch arrives, for callers that cache what they drew (minimap.js full map)
+// Goes up (never down) whenever what drawMapImage would draw changes: a patch arrived, or cutting them off the main
+// thread failed and patches are now cut the old way. Callers that cache what they drew (minimap.js full map) redraw.
 export const mapImageRevision = image => sources.get(image)?.revision ?? 0;
 // evicted patches give their pixels back at once: an ImageBitmap is closed, a canvas shrunk to nothing
 const release = patch => { const c = patch?.canvas; if (!c) return; if (typeof c.close === 'function') c.close(); else { c.width = 0; c.height = 0; } };
@@ -36,12 +37,12 @@ export function drawMapImage(ctx, image, ox, oy, scale) {
     const key = `${tx},${ty}`, x = tx * TILE, y = ty * TILE;
     let patch = cache.get(key);
     const src = sources.get(image);
-    if (!patch && src) {
+    if (!patch && src && !src.failed) {
       const sx = Math.max(0, x - PAD), sy = Math.max(0, y - PAD), sw = Math.min(width, x + TILE + PAD) - sx, sh = Math.min(height, y + TILE + PAD) - sy;
       if (!src.busy) {
         src.busy = true;
         createImageBitmap(src.blob, sx, sy, sw, sh).then(canvas => { release(cache.get(key)); cache.set(key, { canvas, sx, sy }); keep(cache); src.revision++; },
-          () => sources.delete(image)).finally(() => { src.busy = false; });       // failed: cut them as before
+          () => { src.failed = true; src.revision++; }).finally(() => { src.busy = false; });   // failed: cut them on the main thread from now on
       }
       continue;
     }

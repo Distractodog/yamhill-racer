@@ -458,7 +458,7 @@ if (which === 'all' || which === 'jet') {
     let next = 1, done = null, prev = null, rings = 0;
     const G = c.gates;
     const { st } = flight(`jet race: bot flies ${c.name}`, c.start.x, c.start.z, c.start.yaw, 240,
-      k => { k.respawn = () => next >= 2 ? [G[next - 1].x, G[next - 1].y, G[next - 1].z, G[next - 1].yaw, 450] : null; }, (t, J, k) => {
+      k => { k.respawn = () => next >= 2 && !done ? [G[next - 1].x, G[next - 1].y, G[next - 1].z, G[next - 1].yaw, 450] : null; /* none once finished, like the game */ }, (t, J, k) => {
       if (done) { J.thr = -1; return; }
       const g = G[next], kmh = k.vel.length() * 3.6;
       if (k.mode === 'ground') { J.thr = 1; J.yaw = keep(k, c.start.yaw); J.pitch = kmh > 240 ? 1 : 0; }

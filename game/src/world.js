@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
+import { createTileQueue } from './tilequeue.js';
 import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
@@ -69,11 +70,6 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
-  const loading = new Set();
-  const failedAt = new Map();       // tile key -> when its download failed (retried after 3 s)
-  const jobs = [];                  // generators building tile visuals, stepped within the frame budget
-  const stepCost = new Map();
-  const slowStep = { label: '', ms: 0 };   // this frame's slowest build step (tools/lib/hitchprobe.mjs reads it)       // step kind (what the generator yielded before it) -> recent cost, ms
 
   async function fetchTile(tx, tz) {
     const dir = `${base}tiles/${tx}_${tz}/`;
@@ -86,11 +82,12 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     return { data, img };
   }
 
-  // builds one tile's data and meshes, yielding between pieces so the frame budget can pause it
-  function* buildTile(tx, tz, raw, img) {
+  // builds one tile's data and meshes, yielding between pieces so the frame budget can pause it. job.partial holds what
+  // is built so far, so a failure part-way (tilequeue.js) can free it
+  function* buildTile(tx, tz, raw, img, job = {}) {
     const td = yield* makeTileDataSteps(W, tx, tz, yield* decodeTileSteps(raw));
     const g = new THREE.Group(), out = { td, group: g, chunks: [], treeLods: [], buildingLods: [], propLods: [], campusLods: [], campusItemLods: [], treeMats: null, tgrid: null };
-    out.textures = []; out.materials = [];
+    out.textures = []; out.materials = []; job.partial = out;
     const quarterMats = [];
     for (const bmp of img) {
       const tex = new THREE.Texture(bmp); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
@@ -304,20 +301,21 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     group.remove(v.group);
   }
 
+  // fetch → build in time slices → add to the world; a tile that fails is freed and retried later (tilequeue.js)
+  const queue = createTileQueue({
+    fetch: job => fetchTile(job.tx, job.tz),
+    build: (job, { data, img }) => { job.img = img; return buildTile(job.tx, job.tz, data, img, job); },
+    finish: (job, v) => { world.add(v.td); vis.set(job.k, v); group.add(v.group); lastShadowAt = null; },
+    free: job => {
+      const v = job.partial;
+      if (v) { if (vis.get(job.k) === v) { vis.delete(job.k); world.remove(job.tx, job.tz); } dispose(v); }
+      job.img?.forEach(b => b.close?.());
+    },
+  });
   function startLoad(tx, tz, now = false) {
     const k = world.key(tx, tz);
-    if (loading.has(k) || vis.has(k) || !available.has(k) || (failedAt.get(k) ?? -Infinity) > performance.now() - 3000) return null;
-    loading.add(k);
-    return fetchTile(tx, tz).then(({ data, img }) => {
-      const gen = buildTile(tx, tz, data, img);
-      const finish = v => { world.add(v.td); vis.set(k, v); group.add(v.group); loading.delete(k); lastShadowAt = null; };
-      if (now) { let r; while (!(r = gen.next()).done); finish(r.value); }
-      else jobs.push({ gen, finish, tx, tz });
-    }).catch(e => {
-      // a failed download is tried again a few seconds later (it used to stay "loading" for good: that tile never
-      // came, and it held one of the 3 streaming slots, so a respawn there waited forever)
-      console.warn(`tile ${k}:`, e); loading.delete(k); failedAt.set(k, performance.now());
-    });
+    if (vis.has(k) || !available.has(k)) return null;
+    return queue.start(k, { tx, tz }, now);
   }
 
   // which tiles should be loaded around a point
@@ -336,7 +334,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const [sx, sz] = W.spawn;
   const first = wanted(sx, sz, LOAD_R);
   let done = 0;
-  await Promise.all(first.map(([tx, tz]) => startLoad(tx, tz, true).then(() => onProgress(++done, first.length))));
+  await Promise.all(first.map(([tx, tz]) => (startLoad(tx, tz, true) || Promise.resolve()).then(() => onProgress(++done, first.length))));
 
   // vel (m/s, optional): at speed, also load around a point up to AHEAD_S seconds ahead, nearest-to-that-point
   // first, and allow more build time per frame, so the map keeps up even at 1000 km/h
@@ -350,28 +348,15 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     // at most 3 tiles in flight, but the tile under the camera never waits behind look-ahead tiles from before a
     // respawn / teleport
     const [cx, cz] = world.tileIndex(cam.x, cam.z);
-    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (loading.size < 3 || (tx === cx && tz === cz)) startLoad(tx, tz);
+    for (const [tx, tz] of [...want.values()].sort((p, q) => d2(p) - d2(q))) if (queue.loading.size < 3 || (tx === cx && tz === cz)) startLoad(tx, tz);
     for (const [k, v] of vis) {
       const t = world.tiles.get(k); if (!t) continue;
       const dx = Math.max(t.x0 - cam.x, 0, cam.x - (t.x0 + T)), dz = Math.max(t.z0 - cam.z, 0, cam.z - (t.z0 + T));
       if (Math.hypot(dx, dz) > DROP_R) { dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
     }
-    // Each step's cost is remembered by the label the job yielded just before it (that label tells which piece comes
-    // next); a step only starts if its usual cost still fits in what is left of this frame's budget. The first step
-    // of a frame always runs, so the queue never stalls.
-    const t0 = performance.now(), budget = FRAME_BUDGET_MS + Math.min(4, sp / 60) + extraMs;
-    // nearest tile first, by the same point the loads are ordered by (after a respawn / teleport the queue can still
-    // hold tiles from where the vehicle was)
-    if (jobs.length > 1) jobs.sort((p, q) => d2([p.tx, p.tz]) - d2([q.tx, q.tz]));
-    slowStep.ms = 0;
-    for (let first = true; jobs.length; first = false) {
-      const now = performance.now(), j = jobs[0];
-      if (!first && now - t0 + (stepCost.get(j.next) || 0) > budget) break;
-      const r = j.gen.next(), d = performance.now() - now, c = stepCost.get(j.next);
-      stepCost.set(j.next, c === undefined ? d : Math.max(d, c * 0.9 + d * 0.1));   // falls slowly, jumps up at once
-      if (d > slowStep.ms) { slowStep.ms = d; slowStep.label = j.next || 'decode-height'; }
-      if (r.done) { jobs.shift(); j.finish(r.value); } else j.next = r.value;
-    }
+    // build steps within this frame's budget, nearest tile first, by the same point the loads are ordered by (after a
+    // respawn / teleport the queue can still hold tiles from where the vehicle was)
+    queue.update(FRAME_BUDGET_MS + Math.min(4, sp / 60) + extraMs, j => d2([j.tx, j.tz]));
   }
 
   // shadow casters: only trees near the car (that's all the shadow area covers); invisible in the normal view
@@ -431,7 +416,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { stripMat.color.setScalar(1 - Math.max(0, Math.min(1, Number(value) || 0)) * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
-    loadedTiles: () => vis.size, pendingTiles: () => loading.size + jobs.length, buildStep: slowStep });
+    loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep });
 }
 
 
