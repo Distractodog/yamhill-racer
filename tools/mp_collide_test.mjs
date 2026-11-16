@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 import { Bike } from '../game/src/bike.js';
 import { Jet } from '../game/src/jet.js';
+import { Boat, JETSKI, SPEEDBOAT } from '../game/src/boat.js';
 import { makeTrack } from '../game/src/track.js';
 import { createCollisions, resolveCollision, gridPosition, gridTrack, SHAPES } from '../game/src/mp/collide.js';
 import { Track, parseState, predictedState } from '../game/src/mp/remotes.js';
@@ -64,7 +65,8 @@ for (const scenario of ['head-on', 'side-swipe', 'rear-end']) for (const kmh of 
 }
 
 // Every ground vehicle pairing, both orientations, responds and preserves momentum by symmetry.
-for (const kindA of Object.keys(SHAPES)) for (const kindB of Object.keys(SHAPES)) {
+const GROUND = ['car', 'bike', 'jet'];       // land vehicles (the boats have their own pairing below)
+for (const kindA of GROUND) for (const kindB of GROUND) {
   const a = create(kindA), b = create(kindB, 0, (SHAPES[kindA].l + SHAPES[kindB].l) / 2 - 0.1, Math.PI);
   // Ground origins differ (jet gear vs car wheels), with actual overlapping body heights.
   a.vel.z = 10; b.vel.z = -10;
@@ -76,6 +78,22 @@ for (const kindA of Object.keys(SHAPES)) for (const kindB of Object.keys(SHAPES)
   sane(a); sane(b);
 }
 console.log('PASS all 9 ground vehicle mass pairings and jet taxi speed');
+
+// Jet skis and speedboats bump each other on the water the same way (their own shapes and masses).
+{
+  const lake = { ...world, heightAt: () => -3, terrainAt: () => -3, groundAt: () => -3, surfaceAt: () => 5, waterLevelAt: () => 0 };
+  const boat = (P, z, yaw) => { const v = new Boat(lake, P); v.reset(0, z, yaw); for (let i = 0; i < 120; i++) v.step(DT, input); v.savePrev(); return v; };
+  for (const [A, B] of [[JETSKI, JETSKI], [JETSKI, SPEEDBOAT], [SPEEDBOAT, JETSKI], [SPEEDBOAT, SPEEDBOAT]]) {
+    const a = boat(A, 0, 0), b = boat(B, (SHAPES[A.kind].l + SHAPES[B.kind].l) / 2 - 0.1, Math.PI);
+    assert(a.grounded && b.grounded && a.onWater && b.onWater, 'afloat');
+    a.vel.z = 8; b.vel.z = -8;
+    const sa = sample(a), sb = sample(b), momentum = a.vel.z * SHAPES[A.kind].mass + b.vel.z * SHAPES[B.kind].mass;
+    assert(resolveCollision(a, sb), `${A.kind} hits ${B.kind}`); assert(resolveCollision(b, sa));
+    assert(Math.abs(a.vel.z * SHAPES[A.kind].mass + b.vel.z * SHAPES[B.kind].mass - momentum) < 1e-6);
+    assert(a.vel.z < b.vel.z, 'boats bounce apart'); sane(a); sane(b);
+  }
+}
+console.log('PASS jet ski / speedboat pairings on the water');
 
 // An entire bike width can be crossed in one sample: swept SAT must still intercept.
 {
@@ -120,7 +138,7 @@ for (const inGame of [false, true]) {
 console.log('PASS bump-off/SP pass-through, reset/remote ghost expiry, air/glider/height/stale exclusions and small taps');
 
 // Grid stays separated and inside the extended corridor (16 slots, every vehicle, rotated start).
-for (const kind of Object.keys(SHAPES)) for (const yaw of [0, 0.8, Math.PI]) {
+for (const kind of GROUND) for (const yaw of [0, 0.8, Math.PI]) {
   const start = { x: 25, z: 40, yaw }, points = [[25, 40, 6], [25 + Math.sin(yaw) * 200, 40 + Math.cos(yaw) * 200, 6]];
   const track = makeTrack(gridTrack(points, start, 16, kind));
   const slots = Array.from({ length: 16 }, (_, i) => gridPosition(start, i, kind));

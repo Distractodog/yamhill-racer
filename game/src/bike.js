@@ -155,7 +155,10 @@ export class Bike extends Vehicle {
     } else _nAvg.set(0, 1, 0);
     this.onWater = wet > 0;
     const hx = Math.sin(this.yaw), hz = Math.cos(this.yaw);
-    this.groundPitch = Math.atan2(W.heightAt(this.pos.x + hx * LF, this.pos.z + hz * LF, this.pos.y + _fw.y * LF) - W.heightAt(this.pos.x + hx * LR, this.pos.z + hz * LR, this.pos.y + _fw.y * LR), WB);
+    // the slope under the bike; skimming (tyres planing, none on the bed) it rides the flat water, not the bed below
+    const skimOnly = !bed && wet > 0;
+    const under = (x, z, y) => { const h = W.heightAt(x, z, y); return skimOnly ? Math.max(h, W.waterLevelAt(x, z)) : h; };
+    this.groundPitch = Math.atan2(under(this.pos.x + hx * LF, this.pos.z + hz * LF, this.pos.y + _fw.y * LF) - under(this.pos.x + hx * LR, this.pos.z + hz * LR, this.pos.y + _fw.y * LR), WB);
 
     // ------------------------------------------------ water: bike + rider float, fill nose-first, sink
     const wlC = W.waterLevelAt(this.pos.x, this.pos.z);
@@ -193,7 +196,7 @@ export class Bike extends Vehicle {
     const rel = this.pitch - this.groundPitch;
     this.wheelie = false; this.stoppie = false;
     if (contacts) {
-      if (input.lean && rear && vfNow > -1) {
+      if (!this.typePhysics?.noWheelie && input.lean && rear && vfNow > -1) {
         // wheelie: gas lifts the front (more the further down it is), off the gas it falls back; balance point = t.wheelie
         const lift = input.throttle ? Math.max(0, 2500 + 7000 * (t.wheelie - rel)) : 0;
         torque += lift - 900 * this.pitchRate * (input.throttle ? 0.6 : 1);
@@ -227,7 +230,7 @@ export class Bike extends Vehicle {
     // ------------------------------------------------ riding on the ground: lean → turn, grip, slides
     let leanWant;
     if (drive > 0) {
-      const n = _nAvg, k = drive / 2, grip = GRIP[this.surface], loose = LOOSE[this.surface];
+      const n = _nAvg, k = drive / 2, grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1), loose = LOOSE[this.surface];
       _hp.copy(_fw).addScaledVector(n, -_fw.dot(n)).normalize();
       _vp.copy(this.vel).addScaledVector(n, -this.vel.dot(n));
       const vPlane = _vp.length(), vf = _vp.dot(_hp), reversing = vf < -0.5, av = Math.abs(vf);
@@ -280,7 +283,7 @@ export class Bike extends Vehicle {
       // engine (rear wheel), brakes, drag
       const vmax = t.topSpeed / 3.6 * 1.02;
       let a = 0;
-      if (input.throttle > 0 && rear) a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * Math.max(0, 1 - (vf / vmax) ** 2) * (1 - 0.3 * this.slip);
+      if (input.throttle > 0 && rear) a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2) * (1 - 0.3 * this.slip);
       if (input.brake > 0) { if (vf > 1) a -= t.brakeDecel * input.brake * (front ? 1 : 0.4); else if (vf > -6) a -= input.brake * 6; }
       if (this.drifting) a -= Math.sign(vf) * Math.min(av / dt, 5);
       if (!input.throttle && !input.brake && av < 1.5) a -= Math.sign(vf) * Math.min(av / dt, 8);
@@ -452,6 +455,8 @@ export function buildBikeModel() {
   helmet.castShadow = true; rider.add(helmet);
   box(0.22, 0.08, 0.14, black, 0, 0.8, 0.38, 0, rider);                 // goggles
   box(0.12, 0.06, 0.16, helmetMat, 0, 0.7, 0.42, 0.4, rider);              // chin guard
-  root.userData = { lean, bars, wheels, rider, blob: [0.9, 2.0] };
+  root.userData = { lean, bars, wheels, rider, blob: [0.9, 2.0], lightMount: body, lights: {
+    head: [new THREE.Vector3(0, .46, .68)], tail: [new THREE.Vector3(0, .46, -.99)],
+  } };
   return root;
 }

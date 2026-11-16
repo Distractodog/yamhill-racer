@@ -485,6 +485,9 @@ export function buildJetModel() {
     aileronR.rotation.z = on ? -0.7 : 0;
   };
   // wreckMats / wreckColor / canopy: what wreck() changes, for copies with merged paint (mp/remotes.js)
-  root.userData = { wheels, setGear, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, canopy, wreckMats: mats, wreckColor: WRECK, blob: [9.8, 13] };
+  root.userData = { wheels, setGear, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, canopy, wreckMats: mats, wreckColor: WRECK, blob: [9.8, 13], lights: { head: [], tail: [], nav: {
+    left: new THREE.Vector3(5.02, .08, -1.6), right: new THREE.Vector3(-5.02, .08, -1.6),
+    tail: new THREE.Vector3(0, .58, -5.82), strobe: new THREE.Vector3(0, .82, -.6),
+  } } };
   return root;
 }

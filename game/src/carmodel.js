@@ -107,6 +107,9 @@ export function buildCarModel(colors = {}) {
     spin.add(tyre, rim, spoke); holder.add(spin); car.add(holder);
     wheels.push({ holder, spin, restY: y, front, r });
   }
-  car.userData = { wheels, bodyPivot };
+  car.userData = { wheels, bodyPivot, lightMount: bodyPivot, lights: {
+    head: [new THREE.Vector3(.86, .02, 2.43), new THREE.Vector3(-.86, .02, 2.43)],
+    tail: [new THREE.Vector3(.6, .76, -2.36), new THREE.Vector3(-.6, .76, -2.36)],
+  } };
   return car;
 }

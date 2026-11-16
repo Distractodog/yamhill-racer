@@ -6,6 +6,7 @@ import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
 import { Boat, JETSKI, SPEEDBOAT, findBank } from './boat.js';
 import { activeProxy } from './vehicle.js';
+import { createVehicleTypeSelector } from './vehicletypeselector.js';
 
 export const VEHICLES = [
   { kind: 'car', icon: '🏎️', name: 'Car', help: 'W/S drive · A/D steer · Space handbrake · G glider' },
@@ -37,6 +38,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   const car = new Car(world, tuning), bike = new Bike(world, bikeTuning), jet = new Jet(world, jetTuning);
   const jetski = new Boat(world, JETSKI), boat = new Boat(world, SPEEDBOAT);
   const all = { car, bike, jet, jetski, boat };
+  const types = createVehicleTypeSelector(all, { canSwitch });
   let cur = car, sel = 0, open = false;
   scene.add(car.mesh);
   const player = activeProxy(() => cur);
@@ -88,7 +90,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   function render() {
     menu.innerHTML = `<h2>Vehicles</h2>` + VEHICLES.map((v, i) =>
       `<button class="veh-item${i === sel ? ' sel' : ''}${v.kind === cur.kind ? ' cur' : ''}" data-k="${v.kind}">
-        <span class="veh-icon">${v.icon}</span><span><div class="veh-name">${v.name}</div><div class="veh-help">${v.help}</div></span>
+        <span class="veh-icon">${v.icon}</span><span><div class="veh-name">${all[v.kind]?.name || v.name}</div><div class="veh-help">${all[v.kind]?.typePhysics?.noWheelie ? v.help.replace('Shift wheelie · ', '') : v.help}</div></span>
         <span class="veh-key">${i + 1}</span></button>`).join('') +
       `<div class="veh-hint">1–${VEHICLES.length}, ↑/↓ + Enter or click · V or Esc to close${canSwitch() ? '' : ' · switching ends the race you\'re in'}</div>`;
     menu.querySelectorAll('.veh-item').forEach(b => b.addEventListener('click', () => pick(b.dataset.k)));
@@ -109,7 +111,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   }, true);
 
   return {
-    player, all, car, bike, jet, jetski, boat, switchTo, show, close,
+    player, all, car, bike, jet, jetski, boat, switchTo, show, close, ...types,
     get current() { return cur; }, get open() { return open; },
     onSwitch(f) { listeners.push(f); },
   };

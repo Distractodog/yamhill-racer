@@ -394,11 +394,15 @@ export class Boat extends Vehicle {
     const m = this.mesh, ud = m.userData;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
     m.visible = !this.launching?.away;
-    if (ud.bars) ud.bars.rotation.y = -this.steer * 0.45;
-    if (ud.wheel) ud.wheel.rotation.z = this.steer * 1.6;
-    if (ud.rider) ud.rider.rotation.z = this.lean * 0.35;      // hangs off the inside a little more than the hull
+    poseBoatParts(ud, this.steer, this.lean);
     updateWake(this.wakeMesh, this.wake, this.renderPos, this.yaw, this.t, this.onWater);
   }
+}
+// the moving parts of a boat model (also other players' boats, mp/remotes.js): bars / wheel turn, the rider leans
+export function poseBoatParts(ud, steer, lean) {
+  if (ud.bars) ud.bars.rotation.y = -steer * 0.45;
+  if (ud.wheel) ud.wheel.rotation.z = steer * 1.6;
+  if (ud.rider) ud.rider.rotation.z = lean * 0.35;      // hangs off the inside a little more than the hull
 }
 
 // ---------------------------------------------------------------- wake foam (world space, child of the boat mesh so it
@@ -523,7 +527,7 @@ export function buildJetSkiModel() {
     bars, rider, wheels: [], blob: [1.2, 3.2],
     decalSpots: [[0.5, 0.17, hb + 0.012, 0.23, -0.9, 0, Math.PI / 2], [0.5, 0.17, -hb - 0.012, 0.23, -0.9, 0, -Math.PI / 2]],
     lights: { head: [new THREE.Vector3(0, 0.45, 1.25)], tail: [new THREE.Vector3(0.2, 0.32, -1.6), new THREE.Vector3(-0.2, 0.32, -1.6)],
-      nav: { left: [new THREE.Vector3(0.4, 0.45, 0.85)], right: [new THREE.Vector3(-0.4, 0.45, 0.85)], tail: [new THREE.Vector3(0, 0.62, -0.9)] } },
+      nav: { left: new THREE.Vector3(0.4, 0.45, 0.85), right: new THREE.Vector3(-0.4, 0.45, 0.85), tail: new THREE.Vector3(0, 0.62, -0.9) } },   // left = port (red)
   };
   return root;
 }
@@ -577,7 +581,7 @@ export function buildSpeedboatModel() {
     decalSpots: [[0.9, 0.3, hb + 0.012, 0.47, -1.6, 0, Math.PI / 2], [0.9, 0.3, -hb - 0.012, 0.47, -1.6, 0, -Math.PI / 2]],
     lights: { head: [new THREE.Vector3(0.3, 0.85, 2.9), new THREE.Vector3(-0.3, 0.85, 2.9)],
       tail: [new THREE.Vector3(0.6, 0.72, -3.22), new THREE.Vector3(-0.6, 0.72, -3.22)],
-      nav: { left: [new THREE.Vector3(0.7, 0.95, 1.9)], right: [new THREE.Vector3(-0.7, 0.95, 1.9)], tail: [new THREE.Vector3(0, 1.52, -2.95)] } },
+      nav: { left: new THREE.Vector3(0.7, 0.95, 1.9), right: new THREE.Vector3(-0.7, 0.95, 1.9), tail: new THREE.Vector3(0, 1.52, -2.95) } },   // left = port (red)
   };
   return root;
 }

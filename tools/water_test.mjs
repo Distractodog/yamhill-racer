@@ -239,6 +239,42 @@ if (!filter.length || filter.includes('flat')) {
   }
 }
 
+// ---------------------------------------------------------------- skimming ignores the bed
+// Skimming tyres ride the water, so a bed that slopes up and down well below them must change nothing: the same 150 km/h
+// skim over a flat bed 2.2 m down and over a wavy bed (2.2 ± 0.9 m, slopes up to ~0.23) must match step for step
+// (the bike once took its ground pitch from the bed while skimming and bounced with no tyre on it).
+function skimTrace(vehicle, amp) {
+  const lv = x => (x >= 0 ? 0 : -Infinity), bed = x => (x >= 0 ? -2.2 + amp * Math.sin(x / 4) : 0);
+  const w = { ...pool(2.2), heightAt: bed, terrainAt: bed, groundAt: bed, waterLevelAt: x => lv(x), surfaceAt: x => (x >= 0 ? 5 : 3),
+    normalAt: (x, z, out = new THREE.Vector3()) => out.set(x >= 0 ? -amp / 4 * Math.cos(x / 4) : 0, 1, 0).normalize() };
+  const v = vehicle === 'bike' ? new Bike(w, { ...BIKE }) : new Car(w, { ...TUNING_DEFAULTS });
+  v.reset(-20, 0, Math.PI / 2); v.vel.set(150 / 3.6, 0, 0);
+  const inp = { throttle: 1, brake: 0, steer: 0, handbrake: false, lean: false }, out = { y: [], pitch: [], bed: 0, skim: 0 };
+  const fw = new THREE.Vector3();
+  for (let i = 0; i < 4 / DT; i++) {
+    // full throttle, then a brake (the bike's stoppie pull), then gas + Shift (its wheelie pull): both aim at the slope under it
+    const t = i * DT; inp.throttle = t < 1.2 || t > 1.7 ? 1 : 0; inp.brake = t >= 1.2 && t <= 1.7 ? 0.4 : 0; inp.lean = t > 1.9 && t < 2.8;
+    v.step(DT, inp);
+    out.y.push(v.pos.y); out.pitch.push(Math.asin(fw.set(0, 0, 1).applyQuaternion(v.quat).y));
+    if (v.pos.x > 5 && v.wheels.some(wh => wh.bed)) out.bed++;          // (past the rim: no tyre still on the dry edge)
+    if (v.skimming) out.skim += DT;
+  }
+  return out;
+}
+if (!filter.length || filter.includes('skimbed')) {
+  for (const vehicle of ['car', 'bike']) {
+    const a = skimTrace(vehicle, 0), b = skimTrace(vehicle, 0.9), fails = [];
+    const dy = Math.max(...a.y.map((y, i) => Math.abs(y - b.y[i]))), dp = Math.max(...a.pitch.map((p, i) => Math.abs(p - b.pitch[i])));
+    if (!(a.skim > 2 && b.skim > 2)) fails.push(`did not skim (${a.skim.toFixed(1)} / ${b.skim.toFixed(1)} s)`);
+    if (b.bed) fails.push(`tyres touched the bed ${b.bed} steps`);
+    if (!(dy < 0.005)) fails.push(`height differs by ${dy.toFixed(3)} m`);
+    if (!(dp < 0.005)) fails.push(`pitch differs by ${(dp * 57.3).toFixed(2)}°`);
+    console.log(`${fails.length ? 'FAIL' : 'ok  '} skim over a sloping bed ${vehicle}: skimmed ${b.skim.toFixed(1)} s · vs flat bed: height Δ ${dy.toFixed(4)} m, pitch Δ ${(dp * 57.3).toFixed(3)}°` +
+      `${fails.length ? ' · ' + fails.join(', ') : ''}`);
+    results.push({ name: `skim over a sloping bed ${vehicle}`, fails });
+  }
+}
+
 const bad = results.filter(r => r.fails.length);
 console.log(`\n${results.length - bad.length}/${results.length} runs ok${bad.length ? ' · FAILED: ' + bad.map(r => r.name).join('; ') : ''}`);
 process.exit(bad.length ? 1 : 0);

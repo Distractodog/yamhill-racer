@@ -39,11 +39,11 @@ export const TUNING_DEFAULTS = {
 const GRIP = [0.86, 0.8, 0.93, 1.0, 0.9, 0.45, 0.97, 0.98];      // per surface class
 const TOP_DRAG = 5.6;        // m/s² of drag at top speed (measured flat out on asphalt; see CLAUDE.md gotchas)
 const DRAG = [0.25, 0.35, 0.1, 0.0, 0.12, 5.0, 0.0, 0.0];        // extra rolling drag, m/s²
-const MASS = 900, WHEELBASE = 2.78;
-const HALF = new THREE.Vector3(0.9, 0.38, 2.15);              // inertia only
+const DEFAULT_MASS = 900, WHEELBASE = 2.78;
+const DEFAULT_HALF = new THREE.Vector3(0.9, 0.38, 2.15);              // inertia only
 // hard collision box for the body: sits above the floor so only the tyres touch normal ground
 const BOX_C = new THREE.Vector3(0, 0.2, -0.1), BOX_H = new THREE.Vector3(0.8, 0.3, 1.85);
-const RADIUS = 0.38;
+const DEFAULT_RADIUS = 0.38;
 // water (water.js): the body floats on four columns under the floor's corners
 const FLOAT = 1.5, FLOAT_H = 0.6;     // buoyancy × weight with the body fully in (floats ~2/3 in); column height, m
 const FLOAT_DAMP = 10;                 // 1/s: heave / pitch / roll damping in the water (no bobbing)
@@ -90,7 +90,7 @@ export class Car extends Vehicle {
   reset(x, z, yaw) {
     this.glide?.cancel();
     const h = this.world.heightAt(x, z);
-    this.pos.set(x, h + 0.75, z);
+    this.pos.set(x, h + (this.typePhysics ? this.t.restLength + this.typePhysics.radius : 0.75), z);
     this.quat.setFromAxisAngle(_v.set(0, 1, 0), yaw);
     this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.steer = 0; this.drifting = false;
     this.savePrev?.(); this.renderPos?.copy(this.pos); this.renderQuat?.copy(this.quat);
@@ -120,6 +120,8 @@ export class Car extends Vehicle {
     this.bankT -= dt;
     if (this.glide?.active) { this.glide.step(dt, input); return; }     // flying: glider.js
     const t = this.t, W = this.world;
+    const MASS = this.typePhysics?.mass ?? DEFAULT_MASS, RADIUS = this.typePhysics?.radius ?? DEFAULT_RADIUS;
+    const HALF = this.typeHalf || DEFAULT_HALF;
     this._prevVel.copy(this.vel);
     _up.set(0, 1, 0).applyQuaternion(this.quat);
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
@@ -179,7 +181,7 @@ export class Car extends Vehicle {
     this.grounded = contacts > 0;
     const firm = contacts >= 2;
     if (contacts) { let b = 0; for (let i = 1; i < 8; i++) if (counts[i] > counts[b]) b = i; this.surface = b; }
-    const grip = GRIP[this.surface];
+    const grip = GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1);
     if (contacts) _nAvg.normalize(); else _nAvg.set(0, 1, 0);
     if (bed >= 2) _F.addScaledVector(_nAvg, -t.downforce * speed * speed * MASS);
 
@@ -187,9 +189,10 @@ export class Car extends Vehicle {
     const wlC = W.waterLevelAt(this.pos.x, this.pos.z);
     this.waterDepth = Math.max(0, wlC - (this.pos.y - 0.35));
     let sub = 0;                                            // how much of the body is under water, 0..1
+    const bw = this.typePhysics?.width ?? 1, bl = this.typePhysics?.length ?? 1;
     for (let i = 0; i < 4; i++) {
       const front = i & 2;
-      _r.set(i & 1 ? BOX_H.x : -BOX_H.x, BOX_C.y - BOX_H.y, BOX_C.z + (front ? BOX_H.z : -BOX_H.z)).applyQuaternion(this.quat);
+      _r.set((i & 1 ? BOX_H.x : -BOX_H.x) * bw, BOX_C.y - BOX_H.y, (BOX_C.z + (front ? BOX_H.z : -BOX_H.z)) * bl).applyQuaternion(this.quat);
       const f = Math.min(1, (W.waterLevelAt(this.pos.x + _r.x, this.pos.z + _r.z) - this.pos.y - _r.y) / FLOAT_H);
       if (!(f > 0)) continue;
       sub += f / 4;
@@ -295,7 +298,7 @@ export class Car extends Vehicle {
       const vmax = t.topSpeed / 3.6 / Math.sqrt(Math.max(0.05, 1 - TOP_DRAG / t.accel));
       let a = 0;
       if (input.throttle > 0) {
-        a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * Math.max(0, 1 - (vf / vmax) ** 2);
+        a = reversing ? t.brakeDecel * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2);
         if (this.drifting) a += t.driftBoost * this.slip;
       }
       if (input.brake > 0) {
@@ -366,9 +369,10 @@ export class Car extends Vehicle {
 
   collideGround() {
     const W = this.world;
+    const width = this.typePhysics?.width ?? 1, length = this.typePhysics?.length ?? 1;
     let worst = 0;
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-      _w.set(BOX_C.x + sx * BOX_H.x, BOX_C.y + sy * BOX_H.y, BOX_C.z + sz * BOX_H.z).applyQuaternion(this.quat).add(this.pos);
+      _w.set((BOX_C.x + sx * BOX_H.x) * width, BOX_C.y + sy * BOX_H.y, (BOX_C.z + sz * BOX_H.z) * length).applyQuaternion(this.quat).add(this.pos);
       const pen = W.heightAt(_w.x, _w.z, _w.y) - _w.y;
       if (pen > worst) { worst = pen; _r.copy(_w).sub(this.pos); }
     }
@@ -387,9 +391,9 @@ export class Car extends Vehicle {
   }
 
   collideTrees() {
-    const R = 1.15;
+    const R = 1.15 * (this.typePhysics?.width ?? 1);
     for (const zo of [-1.4, 0, 1.4]) {
-      _w.set(0, 0, zo).applyQuaternion(this.quat).add(this.pos);
+      _w.set(0, 0, zo * (this.typePhysics?.length ?? 1)).applyQuaternion(this.quat).add(this.pos);
       if (_w.y - this.world.heightAt(_w.x, _w.z, _w.y) > 14) continue;
       this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr) => {
         const dx = _w.x - tx, dz = _w.z - tz, d = Math.hypot(dx, dz), min = R + tr;
@@ -409,7 +413,7 @@ export class Car extends Vehicle {
   }
 
   collideBuildings() {
-    const R = 1.5, roofSupport = this.world.canReachRoof?.();
+    const R = 1.5 * (this.typePhysics?.width ?? 1), roofSupport = this.world.canReachRoof?.();
     for (const b of this.world.buildingsNear(this.pos.x, this.pos.z)) {
       if (!b.pts || this.pos.y > b.top + 1) continue;
       const roof = roofSupport && this.pos.y > buildingRoofFloor(b, this.world) ? buildingRoofAt(b, this.pos.x, this.pos.z, this.world) : Infinity;
@@ -445,12 +449,15 @@ export class Car extends Vehicle {
     } else this._lastLoaded = [this.pos.x, this.pos.z];
   }
 
+  wheelReach() { return this.t.restLength + (this.typePhysics?.radius ?? DEFAULT_RADIUS); }
+
   syncMesh(dt) {
     const m = this.mesh, ud = m.userData;
+    const RADIUS = this.typePhysics?.radius ?? DEFAULT_RADIUS, lean = this.typePhysics?.lean ?? 1;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
     // body lean: roll toward the outside of the turn, squat / dive with throttle and brake
-    const roll = THREE.MathUtils.clamp(this.latAcc * 0.0045, -0.09, 0.09);
-    const pitch = THREE.MathUtils.clamp(-this.lonAcc * 0.0028, -0.06, 0.06);
+    const roll = THREE.MathUtils.clamp(this.latAcc * 0.0045 * lean, -0.09 * lean, 0.09 * lean);
+    const pitch = THREE.MathUtils.clamp(-this.lonAcc * 0.0028 * lean, -0.06 * lean, 0.06 * lean);
     ud.bodyPivot.rotation.z += (roll - ud.bodyPivot.rotation.z) * Math.min(1, dt * 10);
     ud.bodyPivot.rotation.x += (pitch - ud.bodyPivot.rotation.x) * Math.min(1, dt * 10);
     this.wheels.forEach((wh, i) => {

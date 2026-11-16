@@ -45,9 +45,12 @@ sends `Cache-Control: no-store` so edits always load.
 | `node tools/ghost_test.mjs` / `node tools/ghost_visual_test.mjs <dir>` | visual only | Ghost recording, replay, storage, challenge lifecycle; browser appearance/performance evidence. |
 | `node tools/checkpoint_respawn_test.mjs --node` (omit `--node` for browser) | browser only | Checkpoint R reset, wrong-way hint, jet/free-roam preservation and stale-load cancellation. |
 | `python tools/footprints_test.py` / `python tools/fetch_buildings_test.py` | no | Supplementary footprint merge and clipping/provenance checks; requires numpy, shapely, pillow. |
+| `node tools/vehicle_types_test.mjs` | no | Car/bike type acceleration and top speed, campus/gravel routes, finite states and zero flips; model, paint, tuning and storage checks. |
+| `node tools/vehicle_types_shots.mjs --out <dir>` | yes | Every type in Garage and driving, reload persistence, page errors and frame samples; review PNGs. |
 | `node tools/vehicles_test.mjs <dir>` | yes | V picker, bike race, jet ring race, crash + respawn; writes screenshots to `<dir>`. |
 | `node tools/welcome_test.mjs <dir>` | yes | Welcome card shows, blocks game keys, closes with button/Enter/Esc/Space, "don't show again". |
 | `node tools/shot.mjs out.png [x z surfaceClass cam]` | yes | One headless screenshot at a spot (also prints fps). Use it to **look** at your work. |
+| `node tools/lights_test.mjs` / `node tools/lights_shots.mjs <dir>` | screenshots only | Vehicle light logic/anchors; director night views and McMinnville night A/B/A benchmark (use heavy gate). |
 | `node tools/bench.mjs` | yes | 20 s at four fixed spots (McMinnville NE 3rd, Sheridan Main, Willamina Main, campus Main Building). Prints triangles, draw calls, median and p95 frame time, and % of frames over 20 ms. |
 
 Browser tests launch Chrome at `/Applications/Google Chrome.app/...` (macOS); edit the `executablePath` at the top

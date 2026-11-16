@@ -192,7 +192,7 @@ if (J && S) {
 console.log('\n== light anchors');
 for (const P of [JETSKI, SPEEDBOAT]) {
   const L = new Boat(W, P).mesh.userData.lights, arr = a => Array.isArray(a) && a.length && a.every(v => v.isVector3);
-  check(arr(L.head) && arr(L.tail) && arr(L.nav?.left) && arr(L.nav?.right) && arr(L.nav?.tail) && L.nav.left[0].x > 0 && L.nav.right[0].x < 0,
+  check(arr(L.head) && arr(L.tail) && L.nav?.left?.isVector3 && L.nav?.right?.isVector3 && L.nav?.tail?.isVector3 && L.nav.left.x > 0 && L.nav.right.x < 0,
     `${P.name}: head / tail / nav {left, right, tail} anchors`, `${L.head.length} head, ${L.tail.length} tail`);
 }
 

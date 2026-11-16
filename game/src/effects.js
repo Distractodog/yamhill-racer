@@ -120,7 +120,7 @@ export class Effects {
 
   update(dt, car) { this.drive(dt, car); this.advance(dt); }
   // one vehicle's own share of the state, so several can take turns through drive (mp/remotes.js swaps it in)
-  static vehicleState() { return { last: [null, null, null, null], skidT: [0, 0, 0, 0], brakeT: 0, launchT: 0, wasWet: false, kind: null }; }
+  static vehicleState() { return { last: [null, null, null, null], skidT: [0, 0, 0, 0], brakeT: 0, launchT: 0, wasWet: false, kind: null, model: null }; }
 
   // what one vehicle adds this frame (mp/remotes.js runs other players' vehicles through it too, then advance once)
   drive(dt, car) {
@@ -134,8 +134,8 @@ export class Effects {
       });
       for (let i = mw.length; i < this.tyreBlobs.length; i++) this.tyreBlobs[i].visible = false;   // bike: 2 tyres, jet: 3
     }
-    if (car.kind !== this.kind) {                       // vehicle switched: blob size + fresh tyre marks
-      this.kind = car.kind; const [bw, bl] = car.mesh.userData.blob || [2.4, 4.9];
+    if (car.kind !== this.kind || car.mesh !== this.model) {   // vehicle or its type (Garage) switched: blob size + fresh tyre marks
+      this.kind = car.kind; this.model = car.mesh; const [bw, bl] = car.mesh.userData.blob || [2.4, 4.9];
       this.bodyBlob?.scale.set(bw / 2.4, 1, bl / 4.9); this.last = [null, null, null, null];
     }
     const rp = car.renderPos;

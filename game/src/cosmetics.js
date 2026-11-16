@@ -3,6 +3,7 @@ import { buildCarModel } from './carmodel.js';
 import { buildBikeModel } from './bike.js';
 import { buildJetModel } from './jet.js';
 import { buildJetSkiModel, buildSpeedboatModel } from './boat.js';
+import { buildVehicleTypeModel, VEHICLE_TYPES } from './vehicletypes.js';
 
 export const COSMETIC_KEY = 'yr-cosmetics-1';
 export const LIVERIES = [
@@ -121,15 +122,17 @@ function applyBinding(binding, config, wear) {
   const texture = decalTexture(config); if (!texture) return;
   const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
   const add = (w, h, x, y, z, rx, ry = 0) => { const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material); mesh.position.set(x,y,z); mesh.rotation.set(rx,ry,0); mesh.renderOrder = 3; decals.add(mesh); };
-  if (kind === 'car') { add(.38,.65,0,.32,1.0,-Math.PI/2); for (const side of [-1,1]) add(.58,.72,side*.58,.272,-.2,-Math.PI/2); }
-  if (kind === 'bike') for (const side of [-1,1]) add(.3,.16,side*.174,.22,-.45,0,side*Math.PI/2);
+  if (binding.model.userData.decalPanels) { for (const panel of binding.model.userData.decalPanels) add(...panel); }
+  else if (kind === 'car') { add(.38,.65,0,.32,1.0,-Math.PI/2); for (const side of [-1,1]) add(.58,.72,side*.58,.272,-.2,-Math.PI/2); }
+  if (kind === 'bike' && !binding.model.userData.decalPanels) for (const side of [-1,1]) add(.3,.16,side*.174,.22,-.45,0,side*Math.PI/2);
   if (kind === 'jet') for (const side of [-1,1]) add(1.35,1.05,side*2.6,.085,-1.15,-Math.PI/2);
   for (const spot of binding.model.userData.decalSpots || []) add(...spot);
 }
 
-// Another player's vehicle (mp/remotes.js): the same model and paint rules, in their colours (no wear, no unlock check).
-export function paintedModel(kind, colors) {
-  const model = BUILDERS[kind](); applyBinding(bindModel(model, kind), sanitizeCosmetics(colors, kind, () => true), { dirt: 0, scuff: 0, wet: 0 }); return model;
+// Another player's vehicle (mp/remotes.js): the same model (of their type, vehicletypes.js) and paint rules, in their
+// colours (no wear, no unlock check).
+export function paintedModel(kind, colors, type = null) {
+  const model = type && VEHICLE_TYPES[kind] ? buildVehicleTypeModel(kind, type) : BUILDERS[kind](); applyBinding(bindModel(model, kind), sanitizeCosmetics(colors, kind, () => true), { dirt: 0, scuff: 0, wet: 0 }); return model;
 }
 
 function browserStorage() { try { return globalThis.localStorage; } catch { return null; } }
@@ -149,7 +152,7 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
     setWetness(value) { forcedWet = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     refreshUnlocks() { notify(vehicles.current.kind); },
-    createPreview(kind) { const model = BUILDERS[kind](); const binding = bindModel(model, kind); applyBinding(binding, configs[kind], wear[kind]); return model; },
+    createPreview(kind) { const model = vehicles.getType?.(kind) ? buildVehicleTypeModel(kind, vehicles.getType(kind)) : BUILDERS[kind](); const binding = bindModel(model, kind); applyBinding(binding, configs[kind], wear[kind]); return model; },
     update(dt, vehicle = vehicles.current) {
       if (!vehicle || !wear[vehicle.kind] || !Number.isFinite(dt)) return;
       const state = wear[vehicle.kind], speed = vehicle.vel.length();
@@ -162,5 +165,9 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
       if (wearSignature !== bindings[vehicle.kind].wearSignature) applyBinding(bindings[vehicle.kind], configs[vehicle.kind], state);
     },
   };
+  vehicles.onTypeChange?.(kind => {
+    bindings[kind] = bindModel(vehicles.all[kind].mesh, kind);
+    applyBinding(bindings[kind], configs[kind], wear[kind]); notify(kind);
+  });
   return api;
 }
