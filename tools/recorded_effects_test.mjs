@@ -65,6 +65,24 @@ await recordedEffect(late, 'squeal').ready;
 assert.equal(late.sources.length, count, 'late download cannot resurrect stopped voice');
 assert(effectSoundLog.some(l => l.fallback === 'procedural'));
 
+// Rain follows local weather, remains silent/unloaded for remote voices, and
+// uses the same smooth fallback replacement as the tyre loop.
+globalThis.fetch = async () => { fetches++; return { ok: true, arrayBuffer: async () => new ArrayBuffer(44) }; };
+const rainContext = context(), localRain = new EffectsAudio(rainContext, new Node());
+const remoteRain = new EffectsAudio(rainContext, new Node(), { remote: true });
+const parked = { ...car, slip: 0, vel: { length: () => 0 } };
+const beforeRain = fetches;
+remoteRain.update(parked, .016, { rain: 1 }); assert.equal(fetches, beforeRain);
+localRain.update(parked, .016, { rain: 1 }); await recordedEffect(rainContext, 'rain').ready;
+assert.equal(fetches, beforeRain + 1); assert.equal(localRain.channels.rain.fallback.gain.value, 0);
+assert(localRain.channels.rain.gain.gain.value > 0);
+localRain.update(parked, .016, { rain: 0 }); assert.equal(localRain.channels.rain.gain.gain.value, 0);
+localRain.stop(); remoteRain.stop(); assert(rainContext.sources.every(s => s.stopped && s.disconnected));
+const badRainContext = context(), badRain = new EffectsAudio(badRainContext, new Node());
+globalThis.fetch = async () => ({ ok: false, status: 404 });
+badRain.update(parked, .016, { rain: 1 }); await recordedEffect(badRainContext, 'rain').ready;
+assert.equal(badRain.channels.rain.fallback.gain.value, 1); badRain.stop();
+
 for (const [name, file] of Object.entries(EFFECT_RECORDINGS)) {
   const wav = fs.readFileSync(new URL(`../game/assets/audio/${file}`, import.meta.url));
   assert(wav.length <= 150000); assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
@@ -72,9 +90,9 @@ for (const [name, file] of Object.entries(EFFECT_RECORDINGS)) {
   assert.equal(wav.readUInt16LE(22), 1); assert.equal(wav.readUInt32LE(24), 44100); assert.equal(wav.readUInt16LE(34), 16);
   const samples = Array.from({ length: (wav.length - 44) / 2 }, (_, i) => wav.readInt16LE(44 + i * 2));
   assert(samples.every(x => Math.abs(x) < 32700), 'no clipped samples');
-  if (name === 'squeal') {
+  if (name === 'squeal' || name === 'rain') {
     const steps = samples.slice(1).map((x, i) => Math.abs(x - samples[i])).sort((a, b) => a - b);
     assert(Math.abs(samples[0] - samples.at(-1)) <= steps[Math.floor(steps.length * .99)], 'wrap discontinuity below normal 99th percentile sample step');
   }
 }
-console.log('PASS: recording format/size/clipping/seam, lazy sharing, HTTP/decode fallback, immediate impact, late-load and source disposal');
+console.log('PASS: recording format/size/clipping/seam, lazy sharing, HTTP/decode fallback, immediate impact, local/remote rain, late-load and source disposal');

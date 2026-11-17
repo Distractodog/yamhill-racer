@@ -1,0 +1,82 @@
+{
+  "race_low": {
+    "source": "Ferrari_F355_under-hood_exhaust_sound.wav",
+    "sha256": "7eebfd31a63b79b9318c0053e845cc69516deee7bb625142bb390206cf787fb6",
+    "start": 0.4,
+    "end": 1.2,
+    "estimatedRpm": 2670,
+    "highpassHz": 45
+  },
+  "race_med": {
+    "source": "Ferrari_F355_under-hood_exhaust_sound.wav",
+    "sha256": "7eebfd31a63b79b9318c0053e845cc69516deee7bb625142bb390206cf787fb6",
+    "start": 4.7,
+    "end": 5.05,
+    "estimatedRpm": 3105,
+    "highpassHz": 45
+  },
+  "race_high": {
+    "source": "Ferrari_F355_under-hood_exhaust_sound.wav",
+    "sha256": "7eebfd31a63b79b9318c0053e845cc69516deee7bb625142bb390206cf787fb6",
+    "start": 6.5,
+    "end": 6.9,
+    "estimatedRpm": 3570,
+    "highpassHz": 45
+  },
+  "hatch": {
+    "source": "Open_Corsa_E_model_2014_engine_startup_sound.wav",
+    "sha256": "7f962fd37ddd0a8a5133f085832d0800efdbe9f83a082d4eacf6ad5e1e59b4d1",
+    "start": 3.68,
+    "end": 3.86,
+    "estimatedRpm": 1215,
+    "highpassHz": 20
+  },
+  "suv": {
+    "source": "5_cylinder_engine_sound.wav",
+    "sha256": "19543a9f72366db9056150035b3d43bb89a3b2208493d43a5fe3a9cf4fa65d8b",
+    "start": 24,
+    "end": 24.6,
+    "estimatedRpm": 840,
+    "highpassHz": 20
+  },
+  "suv_med": {
+    "source": "5_cylinder_engine_sound.wav",
+    "sha256": "19543a9f72366db9056150035b3d43bb89a3b2208493d43a5fe3a9cf4fa65d8b",
+    "start": 4.9,
+    "end": 5.15,
+    "estimatedRpm": 1200,
+    "highpassHz": 20
+  },
+  "suv_high": {
+    "source": "5_cylinder_engine_sound.wav",
+    "sha256": "19543a9f72366db9056150035b3d43bb89a3b2208493d43a5fe3a9cf4fa65d8b",
+    "start": 28,
+    "end": 28.2,
+    "estimatedRpm": 2460,
+    "highpassHz": 20
+  },
+  "prop": {
+    "source": "EAA_Ford_TriMotor_NC8407.wav",
+    "sha256": "c788a220c4158c71eb28e7a2cd0c3d57b4292c3287e2a06e930072e3b47f0af0",
+    "start": 12.3,
+    "end": 13.15,
+    "estimatedRpm": 1320,
+    "highpassHz": 35
+  },
+  "heli": {
+    "source": "Helicopter_over_quiet_n.wav",
+    "sha256": "5d91acdaf935205e26b8de3ae3c3ea71a83e063db64038dcbe45ea466fe1a14d",
+    "start": 20.5,
+    "end": 22.1,
+    "estimatedRpm": null,
+    "highpassHz": 20
+  },
+  "rain": {
+    "source": "Rain_against_the_window.wav",
+    "sha256": "85393048d2fb5526ae676ec19ed2e1cce57ea0ad58c76cfcb84ab69c026b9b7e",
+    "start": 20,
+    "end": 21.7,
+    "estimatedRpm": null,
+    "highpassHz": 180
+  }
+}

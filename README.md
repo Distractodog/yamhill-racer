@@ -54,8 +54,8 @@ serve `game/` with any static web server.
 - Extra building outlines: © OpenStreetMap contributors, Microsoft, and [Overture Maps Foundation](https://docs.overturemaps.org/attribution/) (buildings theme, ODbL).
 - Elevation: USGS 3D Elevation Program; imagery used to colour the ground: USDA NAIP (both public domain).
 - Tree heights: Meta & World Resources Institute, *High Resolution Canopy Height Maps* (CC BY 4.0).
-- Engine sounds: the hatchback's are real BMW 120d recordings by GiocoSound on [Freesound](https://freesound.org/people/GiocoSound/packs/22622/) (CC0); every other engine is synthesised for this game (`tools/make_engine_sounds.py`, CC0). Details: `game/assets/audio/CREDITS.md`.
-- Recorded effects: tyre squeal by audible-edge, edited by qubodup (CC BY 3.0), and impact by Eldritch Grim (CC0), trimmed and normalised for this game. Source links, licences and edits: [audio credits](game/assets/audio/CREDITS.md). Procedural sounds remain as loading/error fallbacks.
+- Engine recordings: Ferrari V8 by enginemusic (CC BY 3.0), Corsa by MKFI (public domain), Volvo five-cylinder by Jonas Tittmann / LM7805 (CC BY-SA 4.0), Ford TriMotor by Alexf (CC BY-SA 3.0), and helicopter by ezwa (public domain). Edited for the game; BY-SA audio is shared under the same licence. Other engines retain synthesis; original loops, including GiocoSound's CC0 BMW hatchback set, remain as fallbacks. Source links and edits: [audio credits](game/assets/audio/CREDITS.md).
+- Recorded effects: tyre squeal by audible-edge, edited by qubodup (CC BY 3.0), impact by Eldritch Grim (CC0), and rain by cori (public domain), trimmed and normalised for this game. Details: [audio credits](game/assets/audio/CREDITS.md). Procedural effects remain as loading/error fallbacks.
 - Rendering: [three.js](https://threejs.org) (MIT).
 
 ### Road directions

@@ -1,12 +1,13 @@
 // Engine sounds per vehicle type (audio.js plays one EngineVoice for your vehicle and one per nearby other player).
-// Cars and bikes: each type's loops (engineloops.js: synthesised by tools/make_engine_sounds.py, the hatchback's are
-// the recorded BMW set), loaded the first time that type is heard, decoded once per audio context and shared by every
+// Cars and bikes: recorded loops where available (recordedengines.js), otherwise
+// engineloops.js (synthesis / original BMW set), loaded on first use and shared by every
 // voice; the two loops either side of the rpm play pitch-shifted and crossfaded. The rpm comes from the speed through
 // each type's gearbox (stepEngine), with shifts you hear (a short dip and a clunk), lift-off crackle (sports car,
 // race car, sport bike) and a turbo whistle (truck). Aircraft: jets are a synthesised turbine (whine + roar, afterburner
 // rumble and a boom when it lights); prop and stunt planes the piston loops with the propeller's beat at the
 // blade-pass rate; the helicopter a rotor chop and blade slap over a turbine whine.
 import { ENGINE_LOOPS } from './engineloops.js';
+import { RECORDED_ENGINES } from './recordedengines.js';
 
 // idle / redline rpm; gears: count, spread (top gear's speed / first gear's at the same rpm), gearTop (km/h at redline
 // in top gear, or the vehicle's top speed if lower); shift: seconds the drive is cut; dip: engine level during it;
@@ -14,7 +15,7 @@ import { ENGINE_LOOPS } from './engineloops.js';
 export const ENGINES = {
   race: { loops: 'race', idle: 4000, redline: 12500, gears: 8, spread: 2.9, gearTop: 400, shift: 0.05, dip: 0.55, clunk: 0.25, crackle: 0.45, gain: 1, bright: 1.7 },
   sports: { loops: 'sports', idle: 1000, redline: 8500, gears: 7, spread: 3.4, gearTop: 360, shift: 0.09, dip: 0.45, clunk: 0.3, crackle: 1, gain: 1, bright: 1.25 },
-  // pitch: the recordings span only 840–2550 rpm, so game rpm -> recording rpm as the car engine always sounded
+  // Preserve the original 840–2550 audio-rpm mapping for both Corsa and BMW fallback.
   hatch: { loops: 'hatch', idle: 900, redline: 6500, gears: 5, spread: 4, gearTop: 210, shift: 0.22, dip: 0.35, clunk: 0.45, gain: 0.9, bright: 1,
     pitch: [[900, 840], [2600, 1470], [4400, 2040], [6000, 2550]] },
   suv: { loops: 'suv', idle: 750, redline: 6200, gears: 6, spread: 4, gearTop: 230, shift: 0.18, dip: 0.55, clunk: 0.25, gain: 0.95, bright: 0.75 },
@@ -105,7 +106,7 @@ export const soundLog = [];                              // every loop fetched: 
 const decoded = new WeakMap();                           // ctx -> Map(type -> Promise<[{ buf, rpm }]>)
 export function loadLoops(ctx, type) {
   let m = decoded.get(ctx); if (!m) decoded.set(ctx, m = new Map());
-  if (!m.has(type)) m.set(type, Promise.all((ENGINE_LOOPS[type] || []).map(async l => {
+  const loadSet = specs => Promise.all(specs.map(async l => {
     const t0 = performance.now();
     try {
       const r = await fetch(new URL(`../../assets/audio/${l.file}`, import.meta.url));
@@ -114,9 +115,14 @@ export function loadLoops(ctx, type) {
       soundLog.push({ type, file: l.file, bytes: bytes.byteLength, seconds: buf.duration, rate: buf.sampleRate, ms: Math.round(performance.now() - t0) });
       return { buf, rpm: l.rpm };
     } catch (e) {
-      soundLog.push({ type, file: l.file, error: String(e?.message || e) }); throw e;
+      soundLog.push({ type, file: l.file, error: String(e?.message || e), fallback: RECORDED_ENGINES[type]?.includes(l) ? 'original audio' : undefined }); throw e;
     }
-  })));
+  }));
+  // Switch whole sets on failure: mixing recorded and synthetic firing pitches
+  // mid-crossfade would beat. Keep the old files and their original rpm anchors.
+  if (!m.has(type)) m.set(type, RECORDED_ENGINES[type]
+    ? loadSet(RECORDED_ENGINES[type]).catch(() => loadSet(ENGINE_LOOPS[type] || []))
+    : loadSet(ENGINE_LOOPS[type] || []));
   return m.get(type);
 }
 
@@ -211,17 +217,25 @@ export class EngineVoice {
       const n = noiseNode(), chop = gain(), slapGate = gain();
       const tone = src(ctx.createOscillator()); tone.type = 'triangle'; tone.frequency.value = 62;
       n.connect(filter('lowpass', 240, 0.9)).connect(chop); tone.connect(chop);
-      part.rotorGain = gain(); chop.connect(part.rotorGain).connect(part.out);
-      part.slap = gain(); n.connect(filter('bandpass', 650, 1.1)).connect(slapGate).connect(part.slap).connect(part.out);
+      part.rotorFallback = gain(1); part.rotorFallback.connect(part.out);
+      part.rotorGain = gain(); chop.connect(part.rotorGain).connect(part.rotorFallback);
+      part.slap = gain(); n.connect(filter('bandpass', 650, 1.1)).connect(slapGate).connect(part.slap).connect(part.rotorFallback);
       const lfo = src(ctx.createOscillator()); lfo.type = 'sine'; lfo.frequency.value = 4; part.rotorLfo = lfo;
       const pulse = ctx.createWaveShaper(), curve = new Float32Array(256);
       for (let i = 0; i < curve.length; i++) curve[i] = Math.max(0, i / 127.5 - 1) ** 3;   // a short thump once per cycle
       pulse.curve = curve; lfo.connect(pulse); pulse.connect(chop.gain); pulse.connect(slapGate.gain);
       const tail = src(ctx.createOscillator()); tail.type = 'triangle'; tail.frequency.value = 20; part.tailOsc = tail;
-      part.tail = gain(); tail.connect(part.tail).connect(part.out);
+      part.tail = gain(); tail.connect(part.tail).connect(part.rotorFallback);
       part.hiss = gain(); n.connect(filter('bandpass', 2400, 1.2)).connect(part.hiss).connect(part.out);
       const w = src(ctx.createOscillator()); w.type = 'sawtooth'; w.frequency.value = 520; part.whineOsc = [w];
       part.whineBand = filter('bandpass', 1200, 8); part.whine = gain(); w.connect(part.whineBand).connect(part.whine).connect(part.out);
+      loadLoops(ctx, 'heli').then(loops => {
+        if (this.part !== part || !loops.length) return;
+        const s = ctx.createBufferSource(), g = gain();
+        s.buffer = loops[0].buf; s.loop = true; s.connect(g).connect(part.out); src(s);
+        part.recordedRotor = { source: s, gain: g };
+        ease(part.rotorFallback.gain, 0, ctx.currentTime, .15);
+      }).catch(e => console.warn('engine sound', key, e));
     }
     return part;
   }
@@ -331,6 +345,10 @@ export class EngineVoice {
   updateRotor(h, part, t) {
     const on = h.mode === 'crashed' ? 0 : 1, pw = Math.max(0, Math.min(1, h.throttle || 0)), air = h.mode === 'air';
     const rate = 3 + 11 * pw * pw;                       // blade passes per second
+    if (part.recordedRotor) {
+      ease(part.recordedRotor.source.playbackRate, .7 + .3 * pw, t, .3);
+      ease(part.recordedRotor.gain.gain, on * (.08 * Math.min(1, pw * 10) + .8 * pw * pw), t, .2);
+    }
     ease(part.rotorLfo.frequency, rate, t, 0.3);
     ease(part.rotorGain.gain, 0.08 * Math.min(1, pw * 10) + 0.8 * pw * pw, t, 0.2);   // silent once stopped
     const speed = Math.min(1, (h.vel?.length?.() || 0) / 50);

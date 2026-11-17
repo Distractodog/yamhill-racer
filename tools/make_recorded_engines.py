@@ -1,0 +1,111 @@
+"""Build compact recorded engines/rotor/rain from the director's PCM WAVs.
+
+Usage: python tools/make_recorded_engines.py <incoming-directory>
+Requires numpy/scipy. Run through the heavy gate. Originals are not shipped.
+Source rpm values below are spectral estimates, not tachometer measurements.
+The game keeps its existing gear/rpm/pitch tables; pitch rendering here aligns
+each source with those audio anchors. See audio/CREDITS.md for provenance.
+"""
+import argparse
+import hashlib
+import json
+import math
+from pathlib import Path
+import wave
+
+import numpy as np
+from scipy.io import wavfile
+from scipy.signal import butter, resample, resample_poly, sosfiltfilt
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / 'game/assets/audio/recordings'
+RATE = 44100
+# source filename, start/end seconds, estimated source rpm, firing Hz, highpass Hz
+SOURCES = {
+    'race_low': ('Ferrari_F355_under-hood_exhaust_sound.wav', .4, 1.2, 2670, 178, 45),
+    'race_med': ('Ferrari_F355_under-hood_exhaust_sound.wav', 4.7, 5.05, 3105, 207, 45),
+    'race_high': ('Ferrari_F355_under-hood_exhaust_sound.wav', 6.5, 6.9, 3570, 238, 45),
+    'hatch': ('Open_Corsa_E_model_2014_engine_startup_sound.wav', 3.68, 3.86, 1215, 40.5, 20),
+    'suv': ('5_cylinder_engine_sound.wav', 24, 24.6, 840, 35, 20),
+    'suv_med': ('5_cylinder_engine_sound.wav', 4.9, 5.15, 1200, 50, 20),
+    'suv_high': ('5_cylinder_engine_sound.wav', 28, 28.2, 2460, 102.5, 20),
+    'prop': ('EAA_Ford_TriMotor_NC8407.wav', 12.3, 13.15, 1320, 99, 35),
+    'heli': ('Helicopter_over_quiet_n.wav', 20.5, 22.1, None, 32.5, 20),
+    'rain': ('Rain_against_the_window.wav', 20, 21.7, None, None, 180),
+}
+LAYERS = {
+    'race': [('race_low', 4000), ('race_med', 7000), ('race_high', 10500)],
+    # Match the existing soundRpm mapping, including the hatch's compressed range.
+    'hatch': [('hatch', r) for r in [840, 1470, 2040, 2550]],
+    'suv': [('suv', 750), ('suv_med', 1500), ('suv_high', 3000), ('suv_high', 5400)],
+    'prop': [('prop', r) for r in [800, 1500, 2450]],
+}
+
+
+def loop_source(path, start, end, hz, highpass):
+    rate, original = wavfile.read(path)
+    data = original[int(start * rate):int(end * rate)].astype(float) / np.iinfo(original.dtype).max
+    if np.any(np.abs(data) >= .999):
+        raise ValueError(f'Clipped selected segment: {path.name}')
+    if data.ndim == 2:
+        data = data.mean(axis=1)
+    divisor = math.gcd(rate, RATE)
+    data = resample_poly(data, RATE // divisor, rate // divisor)
+    data = sosfiltfilt(butter(2, highpass, 'highpass', fs=RATE, output='sos'), data)
+    # Line up approximately whole firing cycles before blending the wrap. Short
+    # startup tails use fewer cycles; wind/rain use a longer noise crossfade.
+    cycle = max(1, round(RATE / hz)) if hz else 1
+    data = data[:len(data) // cycle * cycle]
+    overlap = min(len(data) // 3 // cycle, max(1, round(.15 * RATE / cycle))) * cycle
+    fade = np.linspace(0, 1, overlap)
+    loop = data[overlap:].copy()
+    loop[-overlap:] = data[-overlap:] * (1 - fade) + data[:overlap] * fade
+    return loop
+
+
+def save(name, data, target_rms=.16):
+    data = data - data.mean()
+    data *= min(.8 / np.max(np.abs(data)), target_rms / np.sqrt(np.mean(data * data)))
+    pcm = np.round(data * 32767).astype('<i2')
+    path = OUT / name
+    with wave.open(str(path), 'wb') as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(RATE)
+        f.writeframes(pcm.tobytes())
+    assert path.stat().st_size <= 150000, name
+    print(f'{name}: {len(pcm) / RATE:.3f} s, {path.stat().st_size} bytes')
+    return {'file': f'recordings/{name}', 'bytes': path.stat().st_size}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('incoming', type=Path)
+    args = parser.parse_args()
+    OUT.mkdir(parents=True, exist_ok=True)
+    loops, provenance = {}, {}
+    for key, (file, start, end, rpm, hz, highpass) in SOURCES.items():
+        path = args.incoming / file
+        loops[key] = loop_source(path, start, end, hz, highpass)
+        provenance[key] = dict(source=file, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                               start=start, end=end, estimatedRpm=rpm, highpassHz=highpass)
+    manifest = {}
+    for kind, layers in LAYERS.items():
+        manifest[kind] = []
+        for key, rpm in layers:
+            source_rpm = SOURCES[key][3]
+            loop = resample(loops[key], round(len(loops[key]) * source_rpm / rpm))
+            # Repeat whole periods; don't create a new discontinuity by cutting.
+            data = np.tile(loop, max(1, int(.8 * RATE / len(loop))))
+            info = save(f'{kind}_{rpm}.wav', data)
+            manifest[kind].append(dict(**info, rpm=rpm))
+    manifest['heli'] = [dict(**save('heli_rotor.wav', loops['heli'], .18), rpm=1)]
+    save('rain.wav', loops['rain'], .20)
+    (ROOT / 'game/src/audio/recordedengines.js').write_text(
+        '// Generated by tools/make_recorded_engines.py; originals remain in ENGINE_LOOPS as fallbacks.\n'
+        'export const RECORDED_ENGINES = ' + json.dumps(manifest, indent=2) + ';\n')
+    (OUT / 'processing.json').write_text(json.dumps(provenance, indent=2) + '\n')
+
+
+if __name__ == '__main__':
+    main()

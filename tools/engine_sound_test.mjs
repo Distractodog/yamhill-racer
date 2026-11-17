@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { ENGINES, engineKey, gearTops, newEngineState, stepEngine, loopMix, soundRpm, soundLog } from '../game/src/audio/engines.js';
 import { ENGINE_LOOPS } from '../game/src/audio/engineloops.js';
+import { RECORDED_ENGINES } from '../game/src/audio/recordedengines.js';
 import { SOUND_KEY, SOUND_DEFAULTS, sanitizeSound, loadSound, saveSound, sliderGain, mixerFor } from '../game/src/audio/mixer.js';
 import { CarAudio } from '../game/src/audio.js';
 
@@ -139,7 +140,7 @@ await check('revs: on the spot, in the air, wheelspin, past the top gear', () =>
 await check('loop crossfade: equal power, pitch = rpm / loop rpm, stays near the loops', () => {
   let worst = [9, 0];
   for (const key of [...GROUND, 'prop', 'stunt']) {
-    const p = ENGINES[key], L = ENGINE_LOOPS[p.loops];
+    const p = ENGINES[key], L = RECORDED_ENGINES[p.loops] || ENGINE_LOOPS[p.loops];
     for (let gr = p.idle * 0.5; gr <= p.redline * 1.1; gr += 37) {
       const r = soundRpm(p, gr), m = loopMix(L, r), pw = m.reduce((s, x) => s + x[1] ** 2, 0);
       assert(Math.abs(pw - 1) < 1e-9, `${key} ${r} power ${pw}`);
@@ -156,7 +157,7 @@ await check('loop crossfade: equal power, pitch = rpm / loop rpm, stays near the
 // ---------------------------------------------------------------- the loop files
 await check('loop files: on disk, sizes as listed, mono 16-bit 44.1 kHz WAV, ≤ 150 KB, rpm ascending', () => {
   let total = 0; const per = [];
-  for (const [type, L] of Object.entries(ENGINE_LOOPS)) {
+  for (const [type, L] of [...Object.entries(ENGINE_LOOPS), ...Object.entries(RECORDED_ENGINES)]) {
     let sum = 0;
     L.forEach((l, i) => {
       const b = fs.readFileSync(new URL(`../game/assets/audio/${l.file}`, import.meta.url));
@@ -185,7 +186,7 @@ await check('lazy per type, decoded once per audio context, buffers shared by yo
   me.update(ground('car', 'race'), { throttle: 0 }, 1 / 60); other.update(ground('car', 'race'), { throttle: 0 }, 1 / 60);
   await settle();
   assert.equal(fetches.length, ENGINE_LOOPS.race.length, `race loops fetched once: ${fetches.length}`);
-  assert(fetches.every(u => /engines\/race_/.test(u)), 'only the race car\'s files');
+  assert(fetches.every(u => RECORDED_ENGINES.race.some(l => u.endsWith(l.file))), 'only the race car\'s recordings');
   assert.equal(stats.decodes, ENGINE_LOOPS.race.length);
   const a = me.engine.part.layers.map(l => l.src.buffer), b = other.engine.part.layers.map(l => l.src.buffer);
   assert.equal(a.length, ENGINE_LOOPS.race.length); a.forEach((buf, i) => assert.equal(buf, b[i], 'same AudioBuffer'));
@@ -195,7 +196,7 @@ await check('lazy per type, decoded once per audio context, buffers shared by yo
   assert.equal(fetches.length, ENGINE_LOOPS.race.length + ENGINE_LOOPS.sport.length, 'back to a heard type: no new fetch');
   for (const v of [air('fighter'), air('heli')]) me.update(v, { throttle: 0 }, 1 / 60);
   await settle();
-  assert.equal(fetches.length, ENGINE_LOOPS.race.length + ENGINE_LOOPS.sport.length, 'jet and helicopter: synthesised, no files');
+  assert.equal(fetches.length, ENGINE_LOOPS.race.length + ENGINE_LOOPS.sport.length + 1, 'jet is synthesised; helicopter loads one rotor recording');
   const second = fakeAudio(), v3 = new CarAudio({ ctx: second.ctx, out: second.ctx.createGain() }); v3.start();
   v3.update(ground('car', 'race'), { throttle: 0 }, 1 / 60); await settle();
   assert.equal(second.stats.decodes, ENGINE_LOOPS.race.length, 'another context decodes its own');

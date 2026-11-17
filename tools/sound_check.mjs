@@ -51,7 +51,8 @@ try {
       if (!g.vehicles.choose(kind, type)) return { kind, type, error: 'could not choose' };
       g.vehicles.current.reset(...start);
       g.keys.add('KeyW'); await sleep(2500);
-      const on = { rpm: a.engine?.st.rpm, gear: a.gear, key: a.engine?.key, sources: a.engine?.part?.sources.length, layers: a.engine?.part?.layers?.length ?? null };
+      const on = { rpm: a.engine?.st.rpm, gear: a.gear, key: a.engine?.key, sources: a.engine?.part?.sources.length,
+        layers: a.engine?.part?.layers?.length ?? null, recordedRotor: !!a.engine?.part?.recordedRotor };
       g.keys.delete('KeyW'); await sleep(800);
       const { soundLog } = await import('./src/audio/engines.js');
       return { kind, type, engine: on.key, on, offRpm: a.engine?.st.rpm, kmh: Math.round(g.vehicles.current.vel.length() * 3.6), loaded: soundLog.slice(before), ctx: a.ctx?.state };
@@ -65,16 +66,17 @@ try {
     const own = r.engine && (r.loaded || []).every(l => l.type === r.engine);
     if (!own) { ok = false; console.log('  FAIL: loaded another type\'s loops'); }
     if (r.on?.layers === 0) { ok = false; console.log('  FAIL: loops not playing after 2.5 s'); }
+    if (r.engine === 'heli' && !r.on.recordedRotor) { ok = false; console.log('  FAIL: recorded rotor not ready'); }
   }
-  // Exercise both recorded effects without moving physics. First impact uses
+  // Exercise recorded effects without moving physics. First impact uses
   // synthesis during loading; the next uses the decoded sample on the same bus.
   effectResults = await page.evaluate(async () => {
     const { recordedEffect, effectSoundLog } = await import('./src/audio/recordings.js');
     const fx = game.audio.effects, ctx = game.audio.ctx;
-    fx.loadSqueal(); fx.shot('impact', .1);
-    await Promise.all(['squeal', 'impact'].map(name => recordedEffect(ctx, name).ready));
+    fx.loadLoop('squeal'); fx.loadLoop('rain'); fx.shot('impact', .1);
+    await Promise.all(['squeal', 'impact', 'rain'].map(name => recordedEffect(ctx, name).ready));
     fx.shot('impact', .1);
-    return { loaded: effectSoundLog, ready: ['squeal', 'impact'].every(name => !!recordedEffect(ctx, name).buffer) };
+    return { loaded: effectSoundLog, ready: ['squeal', 'impact', 'rain'].every(name => !!recordedEffect(ctx, name).buffer) };
   });
   console.log('Recorded effects:', JSON.stringify(effectResults));
   if (!effectResults.ready || effectResults.loaded.some(l => l.error)) ok = false;
@@ -91,6 +93,9 @@ try {
   if (!slider.saved || JSON.parse(slider.saved).engines !== 0.4 || Math.abs(slider.gainLater - 0.16) > 0.02) { ok = false; console.log('  FAIL: slider not applied / saved'); }
   await page.evaluate(() => document.getElementById('sound-content').scrollIntoView());
   await page.screenshot({ path: path.join(out, 'settings-sound.png') });
+  await page.evaluate(() => { document.getElementById('settings-help').click(); document.getElementById('credits').scrollIntoView(); });
+  await wait(300);
+  await page.screenshot({ path: path.join(out, 'sound-credits.png') });
   const total = results.flatMap(r => r.loaded || []).reduce((s, l) => s + (l.bytes || 0), 0);
   console.log(`\nloops fetched: ${results.flatMap(r => r.loaded || []).length} files, ${(total / 1024).toFixed(0)} KB in all`);
 } finally {
@@ -100,7 +105,7 @@ try {
 if (warnings.length) console.log('audio warnings:\n  ' + warnings.join('\n  '));
 if (failed.length) { ok = false; console.log('failed requests:\n  ' + failed.join('\n  ')); }
 if (errors.length) { ok = false; console.log('page errors:\n  ' + errors.join('\n  ')); }
-console.log(ok ? `PASS — details in ${out}/sound_check.json; look at ${out}/settings-sound.png` : 'FAIL');
+console.log(ok ? `PASS — details in ${out}/sound_check.json; review settings-sound.png and sound-credits.png` : 'FAIL');
 process.exit(ok ? 0 : 1);
 
 function game_ok(cond, msg) { if (!cond) console.log('FAIL:', msg); return cond; }

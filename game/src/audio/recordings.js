@@ -3,6 +3,7 @@
 export const EFFECT_RECORDINGS = {
   squeal: 'recordings/tyre_squeal.wav',
   impact: 'recordings/impact.wav',
+  rain: 'recordings/rain.wav',
 };
 export const effectSoundLog = [];
 const contexts = new WeakMap();
