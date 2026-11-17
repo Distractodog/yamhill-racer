@@ -8,17 +8,18 @@ import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer-core';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { GAME_URL, startGame, holdCar, watchErrors } from './lib/startgame.mjs';
+import { GAME_URL, startGame, holdCar } from './lib/startgame.mjs';
 import { findCarDamageSite } from './lib/cardamagesite.mjs';
 import { probeDentUploads } from './lib/cardamagegpu.mjs';
+import { dentOptions, dentCasePlan, DENT_HELP, dentSources, dentNetwork } from './car_damage_check.mjs';
 import { dentLimits, compareFrames, installDentTiming } from './lib/cardamageperf.mjs';
-const option = (key, fallback) => process.argv.includes(key) ? process.argv[process.argv.indexOf(key) + 1] : fallback;
-const url = option('--url', GAME_URL), out = option('--out', '/tmp/yr-car-dents');
-// Technical limits are configurable via YR_DENT_LIMITS JSON; no appearance approval is implied.
-const limits = dentLimits(process.env.YR_DENT_LIMITS);
-const sampleCount = Number(process.env.YR_DENT_SAMPLES || 4);
-assert(Number.isInteger(sampleCount) && sampleCount >= 2 && sampleCount <= 8, 'distractodog: YR_DENT_SAMPLES must be 2..8');
-const report = { status: 'running', limits, sampleCount, timingNotes: 'Matched fixed-step runs (36 follow-through ticks after impact; 120 moving ticks), alternating order, warmed renderer. CPU = step + syncMesh (includes damage.update) + render submission; GPU completion is not isolated. intervalBeforeMs captures deformation before render; intervalAfterMs captures following upload stalls. Frame guardrails use the worse adjacent interval, retaining both raw intervals. Impact summaries include contact frame and next two frames. Small sample p95 is descriptive, not statistical confidence. Same production scene, with non-car weather/FX/bird clocks held constant in both paths; excludes ongoing FX emission cost.', comparisons: [], measuredRuns: [], validationFailures: [], gpuChecks: [], author: 'distractodog', url, errors: [], warnings: [], shots: [], impacts: [], performance: [], visualReview: 'NOT REVIEWED: Ethan judges appearance' };
+const options = dentOptions(process.argv.slice(2), process.env, true);
+if (options.help) { console.log(DENT_HELP); process.exit(0); }
+if (options.checkOnly || options.preparePreview) throw Error('distractodog: use car_damage_check.mjs for preparation flags');
+const url = options.url || GAME_URL, out = options.out;
+const limits = dentLimits(process.env.YR_DENT_LIMITS), sampleCount = options.samples;
+const started = Date.now();
+const report = { status: 'running', startedAt: new Date(started).toISOString(), plan: dentCasePlan(options), selection: options, sources: await dentSources(), limits, sampleCount, timingNotes: 'Matched fixed-step runs (36 follow-through ticks after impact; 120 moving ticks), alternating order, warmed renderer. CPU = step + syncMesh (includes damage.update) + render submission; GPU completion is not isolated. intervalBeforeMs captures deformation before render; intervalAfterMs captures following upload stalls. Frame guardrails use the worse adjacent interval, retaining both raw intervals. Impact summaries include contact frame and next two frames. Small sample p95 is insufficient for high-confidence tail estimates. Raw slow-frame percentages remain; duration-qualified quantile crossings avoid <=1ms boundary jitter, without changing CPU/p95/worst budgets. Same production scene, with non-car weather/FX/bird clocks held constant in both paths; excludes ongoing FX emission cost.', comparisons: [], measuredRuns: [], validationFailures: [], gpuChecks: [], author: 'distractodog', url, errors: [], warnings: [], shots: [], impacts: [], performance: [], visualReview: 'NOT REVIEWED: Ethan judges appearance' };
 const checkpoint = () => writeFile(join(out, 'report.json'), JSON.stringify(report, null, 2));
 await mkdir(out, { recursive: true });
 await checkpoint();
@@ -28,13 +29,7 @@ try {
   browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
   page = await browser.newPage(); await page.setViewport({ width: 1280, height: 800 });
-  watchErrors(page, 'car-dents', report.errors);
-  page.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) report.errors.push(`HTTP ${r.status()} ${r.url()}`); });
-  page.on('requestfailed', r => { if (!r.url().endsWith('/favicon.ico')) report.errors.push(`REQUEST ${r.url()}: ${r.failure()?.errorText}`); });
-  page.on('console', m => {
-    if (m.type() === 'error' && !m.text().includes('favicon')) report.errors.push(m.text());
-    if (m.type() === 'warn') report.warnings.push(m.text());
-  });
+  await dentNetwork(page, url, report);
   await startGame(page, { url, hold: { x: -542, z: 440, kind: 'car' }, storage: { 'yr-graphics-2': JSON.stringify({ mode: 'high' }) } });
   const site = await page.evaluate(findCarDamageSite);
   await page.evaluate(site => {
@@ -121,7 +116,8 @@ try {
   }
   async function gpuCheck(type) {
     await pose();
-    const result = await page.evaluate(probeDentUploads, { ...limits });
+    await page.evaluate(() => { dentShots.mode = 'enabled'; dentShots.measure = false; });
+    const result = await page.evaluate(probeDentUploads, { ...limits, ...(options.timingOnly ? { imagePhases: ['pristine', 'repeated-sync-3', 'dented-reference', 'reset-first', 'reset-reference'] } : {}) });
     for (const [phase, data] of Object.entries(result.images)) {
       const file = `${type}-gpu-${phase}.png`;
       await writeFile(join(out, file), Buffer.from(data.split(',')[1], 'base64'));
@@ -131,7 +127,7 @@ try {
     if (!result.pass) report.validationFailures.push(`${type}: rendered dent/repair pixel guardrails failed`);
     await checkpoint();
     // Leave the driven car dented for Garage/repaint evidence, after the probe repaired it.
-    await impact(type, 'post-gpu-probe', 45);
+    if (!options.timingOnly) await impact(type, 'post-gpu-probe', 45);
   }
   async function moving(mode) {
     await page.evaluate(mode => {
@@ -154,10 +150,15 @@ try {
       Object.assign(s, { mode, kind: 'repair', running: false, measure: true, frames: [], lastTimingFrame: null,
         finished: true, finishRendered: false, measureDone: false });
       s.frame = { stepMs: 0, syncMs: 0, damageMs: 0, renderMs: 0, impact: false, repairMs: 0 };
+      const beforeSites = c.damage.sites.length;
       const t = performance.now(); c.reset(s.display.x, s.display.z, s.display.yaw); s.frame.repairMs = performance.now() - t;
+      s.frame.repairState = { beforeSites, afterSites: c.damage.sites.length, revision: c.damage.revision, appliedBeforeSync: c.damage.applied };
     }, mode);
     await page.waitForFunction(() => dentShots.measureDone, { timeout: 20000 });
-    return page.evaluate(() => dentShots.frames);
+    const frames = await page.evaluate(() => dentShots.frames);
+    const repair = frames[0]?.repairState;
+    if (!repair || repair.afterSites || (mode === 'enabled' && !repair.beforeSites) || frames[0].applied !== repair.revision) report.validationFailures.push(`repair/${mode}: missing dent/reset/sync coverage`);
+    return frames;
   }
   async function benchmark(type) {
     const fullSpeed = await page.evaluate(() => game.vehicles.current.t.topSpeed / 3.6);
@@ -172,7 +173,7 @@ try {
       }
     });
     try {
-      for (const speed of [45, fullSpeed]) {
+      for (const speed of options.speeds.map(s => s === 'high' ? 45 : fullSpeed)) {
         const runs = { baseline: [], enabled: [] }, movingRuns = { baseline: [], enabled: [] }, repeatedRuns = { baseline: [], enabled: [] }, repairRuns = { baseline: [], enabled: [] };
         // Warm both paths, their shaders, private geometry and restoration uploads before timing.
         for (const mode of ['baseline', 'enabled']) { await reset(); await impact(type, 'warmup', speed, 0, true, mode); }
@@ -211,7 +212,7 @@ try {
           catch { report.validationFailures.push(`${type}/${speed}/${sample}: matched physics differ; inspect measuredRuns`); }
         }
         for (const [kind, data] of [['impact', runs], ['repeated', repeatedRuns], ['moving', movingRuns], ['repair', repairRuns]]) {
-          const comparison = { type, speed, kind, ...compareFrames(data.baseline, data.enabled, kind, limits) };
+          const comparison = { type, speed, kind, samplePairs: sampleCount, ...compareFrames(data.baseline, data.enabled, kind, limits) };
           report.comparisons.push(comparison);
           if (!comparison.pass) report.validationFailures.push(`${type}/${speed}/${kind}: technical timing limits exceeded`);
         }
@@ -221,7 +222,7 @@ try {
       await page.evaluate(() => { for (const [object, method, fn] of dentShots.visualClocks) object[method] = fn; });
     }
   }
-  for (const type of ['race', 'sports', 'hatch', 'suv', 'truck']) {
+  for (const type of options.types) {
     await page.evaluate(type => {
       dentShots.restore?.();
       game.vehicles.choose('car', type);
@@ -236,6 +237,7 @@ try {
       });
     });
     await benchmark(type);
+    if (options.timingOnly) { await gpuCheck(type); continue; }
     await page.evaluate(() => game.vehicles.current.reset(dentShots.display.x, dentShots.display.z, dentShots.display.yaw));
     await pose(); await shots(type, 'pristine'); await perf(type, 'before');
     for (const [phase, speed] of [['low', 2], ['medium', 15], ['high', 45], ['full-speed', await page.evaluate(() => game.vehicles.current.t.topSpeed / 3.6)]]) {
@@ -283,6 +285,17 @@ try {
   }
   throw error;
 } finally {
+  if (page && !page.isClosed()) {
+    try {
+      report.measurementRestored = await page.evaluate(() => {
+        const s = window.dentShots; if (!s) return false;
+        s.restore?.();
+        for (const [object, method, fn] of s.visualClocks || []) object[method] = fn;
+        game.renderer.render = s.originalRender; return true;
+      });
+    } catch (error) { report.errors.push(`distractodog restoration failed: ${error.message}`); report.status = 'failed'; process.exitCode = 1; }
+  }
+  report.finishedAt = new Date().toISOString(); report.elapsedMs = Date.now() - started;
   await checkpoint();
   await browser?.close();
 }

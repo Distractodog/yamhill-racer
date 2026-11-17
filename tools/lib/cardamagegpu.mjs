@@ -34,7 +34,7 @@ export async function probeDentUploads(options = {}) {
     const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext('2d'), image = ctx.createImageData(width, height);
     for (let y = 0; y < height; y++) image.data.set(p.subarray(y * width * 4, (y + 1) * width * 4), (height - y - 1) * width * 4);
-    ctx.putImageData(image, 0, 0); if (!name.startsWith('moving-')) images[name] = canvas.toDataURL('image/png');
+    ctx.putImageData(image, 0, 0); if (!name.startsWith('moving-') && (!options.imagePhases || options.imagePhases.includes(name))) images[name] = canvas.toDataURL('image/png');
     stages.push({ name, syncMs: synced - t, renderSubmitMs: submitted - synced, sites: c.damage.sites.length,
       revision: c.damage.revision, applied: c.damage.applied });
   }

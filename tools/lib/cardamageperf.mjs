@@ -2,7 +2,7 @@
 // Override any default with YR_DENT_LIMITS='{"impactCpuP95AddedMs":4,...}'.
 export const DEFAULT_DENT_LIMITS = Object.freeze({
   impactCpuP95AddedMs: 4, repeatedCpuP95AddedMs: 4, repairCpuP95AddedMs: 4, movingCpuP95AddedMs: 2, frameP95AddedMs: 8,
-  frameWorstAddedMs: 20, slow33AddedPoints: 10, slow20AddedPoints: 10,
+  frameWorstAddedMs: 20, slow33AddedPoints: 10, slow20AddedPoints: 10, slowBoundaryHysteresisMs: 1,
   pixelChannelThreshold: 24, minDentPixels: 8, maxRepairPixels: 0, maxUploadMismatchPixels: 0,
 });
 export function dentLimits(json = '{}') {
@@ -28,6 +28,22 @@ export function summarizeFrames(frames) {
     slow20Percent: intervals.filter(ms => ms > 20).length / frames.length * 100,
     slow33Percent: intervals.filter(ms => ms > 33.3).length / frames.length * 100 };
 }
+// Compare duration ranks, not clock-adjacent frames (moving runs may render different
+// frame counts). Integrate quantile bins from BOTH empirical distributions. A new slow
+// frame counts only if it crosses the original boundary AND adds >1 ms, symmetrically
+// subtracting material improvements. Raw rates and CPU/p95/worst gates are untouched.
+export function materialSlowDelta(baseline, enabled, boundary, hysteresis) {
+  const intervals = fs => fs.map(f => Math.max(f.intervalBeforeMs ?? f.intervalAfterMs, f.intervalAfterMs)).sort((a, b) => a - b);
+  const a = intervals(baseline), b = intervals(enabled);
+  const cuts = [...new Set([0, ...a.map((_, i) => (i + 1) / a.length), ...b.map((_, i) => (i + 1) / b.length)])].sort((x, y) => x - y);
+  let points = 0;
+  for (let i = 1; i < cuts.length; i++) {
+    const q = (cuts[i - 1] + cuts[i]) / 2, x = a[Math.floor(q * a.length)], y = b[Math.floor(q * b.length)];
+    if (x <= boundary && y > boundary && y - x > hysteresis) points += (cuts[i] - cuts[i - 1]) * 100;
+    if (y <= boundary && x > boundary && x - y > hysteresis) points -= (cuts[i] - cuts[i - 1]) * 100;
+  }
+  return points;
+}
 export function compareFrames(baseline, enabled, kind, limits) {
   const a = summarizeFrames(baseline), b = summarizeFrames(enabled);
   const added = { cpuMedianMs: b.cpuMs.median - a.cpuMs.median, cpuWorstMs: b.cpuMs.worst - a.cpuMs.worst,
@@ -35,13 +51,19 @@ export function compareFrames(baseline, enabled, kind, limits) {
     renderSubmitP95Ms: b.renderSubmitMs.p95 - a.renderSubmitMs.p95, frameMedianMs: b.frameMs.median - a.frameMs.median,
     slow20Points: b.slow20Percent - a.slow20Percent, cpuP95Ms: b.cpuMs.p95 - a.cpuMs.p95, frameP95Ms: b.frameMs.p95 - a.frameMs.p95,
     frameWorstMs: b.frameMs.worst - a.frameMs.worst, slow33Points: b.slow33Percent - a.slow33Percent };
+  const materialSlow = { slow20Points: materialSlowDelta(baseline, enabled, 20, limits.slowBoundaryHysteresisMs), slow33Points: materialSlowDelta(baseline, enabled, 33.3, limits.slowBoundaryHysteresisMs) };
   const cpuLimit = limits[`${kind}CpuP95AddedMs`];
   if (!Number.isFinite(cpuLimit)) throw Error(`distractodog unknown timing kind ${kind}`);
   const checks = [
     ['cpuP95Ms', cpuLimit],
     ['frameP95Ms', limits.frameP95AddedMs], ['frameWorstMs', limits.frameWorstAddedMs], ['slow33Points', limits.slow33AddedPoints], ['slow20Points', limits.slow20AddedPoints],
-  ].map(([metric, limit]) => ({ metric, limit, actual: added[metric], pass: added[metric] <= limit }));
-  return { baseline: a, enabled: b, added, checks, pass: checks.every(c => c.pass) };
+  ].map(([metric, limit]) => {
+    const actual = metric in materialSlow ? materialSlow[metric] : added[metric];
+    return { metric, limit, actual, rawActual: added[metric], pass: actual <= limit };
+  });
+  return { baseline: a, enabled: b, added, materialSlow,
+    slowFramePolicy: { hysteresisMs: limits.slowBoundaryHysteresisMs, method: 'Quantile-matched threshold crossings require an absolute duration increase above hysteresis; raw >20/>33.3 rates retained.' },
+    p95Confidence: 'Insufficient for high-confidence p95: small fixed-count matched trials, correlated frames; descriptive tail estimates only.', checks, pass: checks.every(c => c.pass) };
 }
 
 // Installed with page.evaluate: production methods remain intact and are restored per type.
