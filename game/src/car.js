@@ -15,6 +15,7 @@ import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
 import { keepBodyAboveGround, bodyLiftCap } from './bodyclearance.js';
 import { collideBuilding } from './roofs.js';
+import { CarDamage } from './cardamage.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const TUNING_DEFAULTS = {
@@ -77,6 +78,7 @@ export class Car extends Vehicle {
       mount: new THREE.Vector3(x, y + 0.3, z), front, comp: 0, prevComp: 0, contact: false, surf: 0,
       contactPoint: new THREE.Vector3(), spin: 0 }));
     this.mesh = primeWheelArch(buildCarModel());
+    this.damage = new CarDamage(this);
     this.surface = 0; this.grounded = false; this.airTime = 0; this.contacts = 0;
     this.latAcc = 0; this.lonAcc = 0; this.hit = 0; this.landing = 0;
     this.safe = []; this.stuck = 0; this.straightT = 0; this.wasGrounded = false;
@@ -95,6 +97,7 @@ export class Car extends Vehicle {
   }
 
   reset(x, z, yaw) {
+    this.damage?.repair();
     this.glide?.cancel();
     const h = this.world.heightAt(x, z);
     this.pos.set(x, h + (this.typePhysics ? this.t.restLength + this.typePhysics.radius : 0.75), z);
@@ -122,7 +125,10 @@ export class Car extends Vehicle {
     if (s) this.reset(s[0], s[1], s[2]);
   }
 
+  recordImpact(...contact) { this.damage.impact(...contact); }
+
   step(dt, input) {
+    this.damage.step(dt);
     this.bankT -= dt;
     if (this.glide?.active) { this.glide.step(dt, input); return; }     // flying: glider.js
     const t = this.t, W = this.world;
@@ -396,9 +402,11 @@ export class Car extends Vehicle {
     }
     if (worst > 0) {
       W.normalAt(this.pos.x, this.pos.z, _n, this.pos.y);
-      this.pos.addScaledVector(_n, worst);
+      const contactX = this.pos.x + _r.x, contactY = this.pos.y + _r.y, contactZ = this.pos.z + _r.z;
       _v.copy(this.ang).cross(_r).add(this.vel);
       const vn = _v.dot(_n);
+      this.recordImpact?.(contactX, contactY, contactZ, _n.x, _n.y, _n.z, -vn, 'ground');
+      this.pos.addScaledVector(_n, worst);
       if (vn < 0) {
         this.vel.addScaledVector(_n, -vn * 1.1);
         this.ang.multiplyScalar(0.85);
@@ -417,6 +425,7 @@ export class Car extends Vehicle {
         const dx = _w.x - tx, dz = _w.z - tz, d = Math.hypot(dx, dz), min = R + tr;
         if (d < min && d > 1e-4) {
           const nx = dx / d, nz = dz / d, pen = min - d;
+          this.recordImpact?.(tx + nx * tr, _w.y, tz + nz * tr, nx, 0, nz, -(this.vel.x * nx + this.vel.z * nz), 'tree');
           if (breakTrunk(this, id, h, this.vel.x * nx + this.vel.z * nz)) return;
           this.pos.x += nx * pen; this.pos.z += nz * pen; _w.x += nx * pen; _w.z += nz * pen;
           const vn = this.vel.x * nx + this.vel.z * nz;
@@ -452,6 +461,7 @@ export class Car extends Vehicle {
   wheelReach() { return this.t.restLength + (this.typePhysics?.radius ?? DEFAULT_RADIUS); }
 
   syncMesh(dt) {
+    this.damage?.update();
     const m = this.mesh, ud = m.userData;
     const RADIUS = this.typePhysics?.radius ?? DEFAULT_RADIUS, lean = this.typePhysics?.lean ?? 1;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
@@ -496,6 +506,7 @@ export class Car extends Vehicle {
       g.holder.position.y = drawnWheelY(m, i, g.restY + 0.3 - drop - (RADIUS - g.r));
       g.spin.rotation.x = wh.spin;
     });
+    this.damage?.setDrawOffset(m.position, this.renderPos, this.renderQuat);
     ud.linkage?.update();      // a model's suspension arms follow its wheels (models/racecar.js)
   }
 }

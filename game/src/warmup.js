@@ -14,6 +14,7 @@ export function createWarmup({ renderer, scene, camera, vehicles, cosmetics, lig
     const model = typeModel(vehicle, id);
     cosmetics?.prepare(kind, model);
     lights?.prepare(model, vehicle.kind);
+    if (kind === 'car') vehicle.damage?.prepare(model);
     model.updateMatrixWorld(true);
     return compile(model, scene);
   });

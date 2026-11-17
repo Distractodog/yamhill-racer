@@ -425,7 +425,7 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
   const near = body(false), far = body(true);
   // suspension: the last vertices of the near body mesh (no extra draw call, and mp/remotes.js bakeParts keeps their
   // order), one block per wheel hinged on the chassis; the far body has fixed arms
-  const armStart = near.p.length / 3;
+  const armStart = near.p.length / 3, farArmStart = far.p.length / 3;
   const links = spec.map((W, i) => {
     const { pivot, bars } = arms(W), from = near.p.length / 3;
     for (const [a, b] of bars) rod(near, a, b, .045, .016, CARBON);
@@ -437,6 +437,8 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
   });
   const armEnd = near.p.length / 3;
   const nearMeshes = near.meshes({ fixed }), farMeshes = far.meshes({ fixed });
+  nearMeshes[0].userData.damageVertexCount = armStart;
+  farMeshes[0].userData.damageVertexCount = farArmStart;
   recolour([...nearMeshes, ...farMeshes], colors);
   const lod = lodBody(bodyPivot, nearMeshes, farMeshes, FAR_AT);
   const [nearGroup, farGroup] = lod.levels.map(l => l.object);
@@ -472,7 +474,15 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
       }
       if (!moved) return;
       posed = pos;                       // (a baked copy, mp/remotes.js, is a new buffer: posed in full once)
-      pos.clearUpdateRanges(); pos.addUpdateRange(armStart * 3, (armEnd - armStart) * 3); pos.needsUpdate = true;
+      // Damage/repair can already have queued the skin. Extend that pending upload;
+      // after the renderer consumes it, ordinary animation still uploads only the arms.
+      const start = armStart * 3, end = armEnd * 3;
+      const pending = pos.updateRanges.find(r => r.start <= end && r.start + r.count >= start);
+      if (pending) {
+        const stop = Math.max(end, pending.start + pending.count);
+        pending.start = Math.min(start, pending.start); pending.count = stop - pending.start;
+      } else pos.addUpdateRange(start, end - start);
+      pos.needsUpdate = true;
     },
     // the arms' largest |swing| (rad) and stretch as last drawn, and as the wheels asked (tests)
     extent() {

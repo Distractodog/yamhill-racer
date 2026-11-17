@@ -1,3 +1,5 @@
+import { refreshCarDamageAttachments, carDamageVersion, deformCarPoint } from './cardamage.js';
+import { splitPanelGeometry } from './models/panelskin.js';
 // Vehicle-space anchors: +x left, +z forward. Remotes use lenses only.
 // A model's userData.lights (all in its lightMount's space unless said otherwise):
 //   head / tail: [Vector3] lens centres on the drawn lamps; nav: { left, right, tail, strobe } (aircraft)
@@ -103,7 +105,8 @@ export function createVehicleLightLenses(mesh, kind = 'car') {
   const glowPlane = new THREE.PlaneGeometry(1, 1); geometries.push(glowPlane);
   function add(position, color, role, outline) {
     let geometry = ball;
-    if (role === 'head' || role === 'tail') geometries.push(geometry = lensGeometry(position, outline, role));
+    if (role === 'head' || role === 'tail') geometries.push(geometry = splitPanelGeometry(
+      lensGeometry(position, outline, role), mesh.userData.damagePanels, new THREE.Matrix4().makeTranslation(...position)));
     const material = materialFor(color);
     const lens = new THREE.Mesh(geometry, material); lens.position.copy(position);
     lens.name = `vehicle-light-${role}`;
@@ -129,6 +132,7 @@ export function createVehicleLightLenses(mesh, kind = 'car') {
   }
   lightMount.add(group);
   if (headGroup !== group) headMount.add(headGroup);
+  refreshCarDamageAttachments(mesh);
   return {
     anchors, group,
     update({ night = 0, on = night > 0, brake = 0, time = 0, distance = 0 } = {}) {
@@ -265,11 +269,16 @@ export function createVehicleLights(scene = null) {
   scene?.add(spot, target);
   let lenses = null, mount = null, beam = false, shape = null, level = 0;
   let override = null, lastNight = null, currentMesh = null, elapsed = 0;
+  let damageVersion = -1;
+  const damageShift = new THREE.Vector3(), damagePoint = new THREE.Vector3();
   let reach = 1, power = 1;                 // Settings → Graphics (Low: a shorter, slightly dimmer beam; uniforms only)
   const rigs = new Map();                   // vehicle mesh → { lenses, shape }
   const rigFor = (mesh, kind) => {
     let r = rigs.get(mesh);
-    if (!r) { const l = createVehicleLightLenses(mesh, kind); rigs.set(mesh, r = { lenses: l, shape: beamFor(mesh, kind, l.anchors) }); }
+    if (!r) {
+      const l = createVehicleLightLenses(mesh, kind), shape = beamFor(mesh, kind, l.anchors);
+      rigs.set(mesh, r = { lenses: l, shape, from: shape.from.clone(), to: shape.to.clone() });
+    }
     return r;
   };
   return {
@@ -294,11 +303,20 @@ export function createVehicleLights(scene = null) {
       const mesh = vehicle.mesh;
       const on = lightsEnabled(night, override);
       if (currentMesh !== mesh) {
-        currentMesh = mesh;
+        currentMesh = mesh; damageVersion = -1;
         ({ lenses, shape } = rigFor(mesh, vehicle.kind));
         mount = mesh.userData.lightMount || mesh;
         spot.angle = shape.angle; spot.penumbra = shape.penumbra; spot.distance = shape.distance * reach; spot.color.set(shape.color);
         level = Math.min(1, spot.intensity / (shape.intensity * power));       // carry on from the same strength (no pop)
+      }
+      const revision = carDamageVersion(mesh);
+      if (damageVersion !== revision) {
+        const rig = rigFor(mesh, vehicle.kind), points = lenses.anchors.beam || lenses.anchors.head || [];
+        damageShift.set(0, 0, 0);
+        for (const p of points) damageShift.add(deformCarPoint(mesh, damagePoint.copy(p)).sub(p));
+        if (points.length) damageShift.divideScalar(points.length);
+        shape.from.copy(rig.from).add(damageShift); shape.to.copy(rig.to).add(damageShift);
+        damageVersion = revision;
       }
       const aircraft = vehicle.kind === 'jet';
       beam = !aircraft && on && mesh.visible && lenses.anchors.head?.length > 0;

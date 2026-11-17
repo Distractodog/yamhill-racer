@@ -4,6 +4,7 @@
 // sRGB hex turned into linear vertex colours (as campusmodel.js does); the Garage paint roles (body / trim / wheels)
 // get their own materials tagged with cosmeticRole, so cosmetics.js repaints them.
 import * as THREE from 'three';
+import { splitPanelGeometry } from './panelskin.js';
 
 const _c = new THREE.Color(), _lin = new Map();
 // sRGB hex → linear rgb (THREE.Color converts sRGB input into the linear working space)
@@ -43,13 +44,13 @@ export class Shape {
   mirror(pts, col, want) { this.poly(pts, col, want); this.poly(pts.map(([x, y, z]) => [-x, y, z]), col, [-want[0], want[1], want[2]]); }
   triangles() { return (this.p.length + ROLES.reduce((n, r) => n + this.role[r].length, 0)) / 9; }
   // one mesh per paint role in use plus one vertex-coloured mesh; mats = { body, trim, wheels, fixed }
-  meshes(mats) {
+  meshes(mats, panels = []) {
     const out = [];
     const make = (p, mat, c) => {
       const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
       if (c) g.setAttribute('color', new THREE.Float32BufferAttribute(c, 3));
       g.computeVertexNormals();           // not indexed: every triangle keeps its own face normal (flat shading)
-      const m = new THREE.Mesh(g, mat); m.castShadow = true; out.push(m);
+      const m = new THREE.Mesh(splitPanelGeometry(g, panels), mat); m.castShadow = true; out.push(m);
     };
     for (const r of ROLES) if (this.role[r].length) make(this.role[r], mats[r]);
     if (this.p.length) make(this.p, mats.fixed, this.c);
@@ -123,11 +124,13 @@ export function loft(shape, { keys, arches, cuts = [], archSteps = 9, colour, ca
       shape.tri(A[k], B[k], B[k2], col); shape.tri(A[k], B[k2], A[k2], col);     // ring order makes these face out
     }
   }
+  const panels = [];
   for (const [R, want] of [[rings[0], [0, 0, 1]], [rings.at(-1), [0, 0, -1]]]) {
     const c = [0, R.reduce((s, p) => s + p[1], 0) / R.length, R[0][2]];
+    panels.push({ z: R[0][2], dir: want[2], triangles: R.map((p, k) => [c, p, R[(k + 1) % 20]]) });
     for (let k = 0; k < 20; k++) shape.tri(c, R[k], R[(k + 1) % 20], typeof cap === 'function' ? cap(want[2]) : cap, want);
   }
-  return { at, low, stations, nose: stations[0], tail: stations.at(-1) };
+  return { at, low, stations, panels, nose: stations[0], tail: stations.at(-1) };
 }
 
 // Flared lip round each wheel arch on both sides (up the front leg, over the top, down the rear leg): t = how far it

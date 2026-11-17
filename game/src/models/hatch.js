@@ -101,8 +101,8 @@ export function buildHatchModel(type, p, suspension) {
   // arch circles centred on the parked wheel centres, r = tyre + gap
   const arches = [wheels[0], wheels[2]].map(w => ({ z: w.holder.position.z, y: w.holder.position.y, r: p.radius + .07 }));
   const near = body(false, arches), far = body(true, arches);
-  lodBody(bodyPivot, near.shape.meshes(mats), far.shape.meshes(mats));
-  root.userData = { bodyPivot, wheels, lightMount: bodyPivot, blob: [2.4 * p.width, 4.6 * p.length],
+  lodBody(bodyPivot, near.shape.meshes(mats, near.car.panels), far.shape.meshes(mats, far.car.panels));
+  root.userData = { bodyPivot, damagePanels: near.car.panels, wheels, lightMount: bodyPivot, blob: [2.4 * p.width, 4.6 * p.length],
     // lit lenses over the headlight, and the tail lamp above its reversing light
     lights: panelLights(near.car, { at: [.645, .175], pts: [[.38, .10], [.91, .10], [.91, .21], [.86, .25], [.44, .25]] },
       { at: [.77, .345], pts: [[.548, .275], [.955, .275], [.955, .415], [.60, .415]] }, [4, 3]),
