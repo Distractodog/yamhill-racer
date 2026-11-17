@@ -183,7 +183,10 @@ console.log('PASS 16-slot grids/walls, accept order, host/guest settings and Net
   const mp = peer(), v = create(), grid = gridPosition(race.start, 15);
   const collisions = createCollisions({ mp, player: () => v, vehicles: [v], predictedState: () => null });
   const ch = await createChallenges({ scene: new Scene(), world: { ...world, pendingTiles: () => 0 }, car: v, minimap: { open: false } });
-  await ch.start(0, { mp: true, grid, gridCount: 16, sync: { at: 15000, now: () => mp.now() } });
+  const starting = ch.start(0, { mp: true, grid, gridCount: 16, sync: { at: 15000, now: () => mp.now() } });
+  await new Promise(resolve => setTimeout(resolve, 900));
+  assert.equal(ch.state, 'placing', 'ready early: wait for the relay countdown window');
+  mp.t = 12000; await starting;
   assert.equal(ch.state, 'countdown'); assert.equal(v.pos.x, grid.x); assert.equal(v.pos.z, grid.z);
   const before = v.pos.clone(); ch.constrain(); assert(v.pos.distanceTo(before) < 1e-6);
   assert.equal(v.ghostUntil, 18000, 'ghost lasts until three seconds after GO, not after placement');

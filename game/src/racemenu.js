@@ -27,7 +27,7 @@ export const filterRaces = (list, filter) => list.map((c, i) => i).filter(i => f
 // The map picture as minimap.js preloaded it (shared, already decoded) and mapimage.js's level-aware drawing.
 // No picture (Node tests, a failed load): the cards keep their plain background and the route alone.
 let picture = null;
-function mapPicture(base) {
+export function mapPicture(base) {
   if (!picture) picture = (async () => {
     if (typeof Image === 'undefined') return null;
     const [mm, mi] = await Promise.all([import('./minimap.js'), import('./mapimage.js')]);

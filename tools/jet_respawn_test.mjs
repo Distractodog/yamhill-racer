@@ -59,10 +59,10 @@ const rand = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(12345);
 
 // one main.js frame: hold, physics unless held, interpolation, camera = vehicle, streaming. v: a vehicle or a getter
 // for the one you're in (vehicles.current)
-function frame(vehicle, world, hold) {
+function frame(vehicle, world, hold, challenges = null) {
   hold?.update(DT);
   const v = typeof vehicle === 'function' ? vehicle() : vehicle;
-  if (!hold?.blocked) for (let i = 0; i < 2; i++) { v.savePrev(); v.step(1 / 120, idle); if (hold?.blocked) break; }
+  if (!hold?.blocked && !challenges?.blocked) for (let i = 0; i < 2; i++) { v.savePrev(); v.step(1 / 120, idle); if (hold?.blocked) break; }
   v.interpolate(1); world.stream(v.renderPos.x, v.renderPos.z);
 }
 const clearance = v => v.pos.y - terrain(v.pos.x, v.pos.z);
@@ -245,7 +245,7 @@ console.table(rows);
     let placed = false, triggered = false;
     ch.start(0).then(() => { placed = true; });
     for (let t = 0; !placed && t < 200; t++) {           // ~9 frames per placeCar wait (150 ms)
-      for (let i = 0; i < 9; i++) frame(v, world, hold);
+      for (let i = 0; i < 9; i++) frame(v, world, hold, ch);
       if (holdDuring && !triggered && t === 2) { v.safe = [[...far, 0]]; v.resetToSafe(); triggered = true; assert(hold.blocked, `${label}: a hold began during the race's wait`); }
       await new Promise(r => setTimeout(r, 150));
     }

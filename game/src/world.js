@@ -328,7 +328,7 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
   // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
   // The budget is for a 60 Hz frame; slower frames get more (tilequeue.js frameBudget), by the frame interval measured
   // here (smoothed; gaps over 250 ms, a hidden tab or a held frame, are left out).
-  let lastAt = 0, frameMs = REF_FRAME_MS;
+  let lastAt = 0, frameMs = REF_FRAME_MS, raceLoadTiles = [];
   function update(cam, vel, extraMs = 0) {
     const at = performance.now(), gap = at - lastAt; lastAt = at;
     if (gap > 0 && gap < 250) frameMs += (gap - frameMs) * 0.1;
@@ -337,6 +337,10 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
     const want = new Map();
     const R = LOAD_R * detail.load;
     for (const [tx, tz] of [...wanted(cam.x, cam.z, R), ...(la ? wanted(ax, az, R) : [])]) want.set(world.key(tx, tz), [tx, tz]);
+    for (const [tx, tz] of raceLoadTiles) {
+      if (available.has(world.key(tx, tz))) want.set(world.key(tx, tz), [tx, tz]);
+    }
+    const pinned = new Set(raceLoadTiles.map(([tx, tz]) => world.key(tx, tz)));
     const nx = (cam.x + ax) / 2, nz = (cam.z + az) / 2, d2 = ([tx, tz]) => (tx * T - nx) ** 2 + (tz * T - nz) ** 2;
     // at most 3 tiles in flight, but the tile under the camera never waits behind look-ahead tiles from before a
     // respawn / teleport
@@ -345,7 +349,7 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
     for (const [k, v] of vis) {
       const t = world.tiles.get(k); if (!t) continue;
       const dx = Math.max(t.x0 - cam.x, 0, cam.x - (t.x0 + T)), dz = Math.max(t.z0 - cam.z, 0, cam.z - (t.z0 + T));
-      if (Math.hypot(dx, dz) > DROP_R) { dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
+      if (Math.hypot(dx, dz) > DROP_R && !pinned.has(k)) { dispose(v); vis.delete(k); world.remove(t.tx, t.tz); lastShadowAt = null; }
     }
     // build steps within this frame's budget, nearest tile first, by the same point the loads are ordered by (after a
     // respawn / teleport the queue can still hold tiles from where the vehicle was)
@@ -420,6 +424,12 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
   }
   return Object.assign(world, { treeFX, group, updateLOD, updateShadows, townRange, setDetail, graphicsDetail: () => ({ ...detail }), setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); nightUniform.value = nightAmount; },
     tick(t) { treeFX.update(t); waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
+    setRaceLoadPoints(points = []) {
+      const tiles = new Map();
+      for (const [x, z] of points) for (const tile of wanted(x, z, 160)) tiles.set(world.key(...tile), tile);
+      raceLoadTiles = [...tiles.values()];
+    },
+    raceLoadProgress: () => raceLoadTiles.length ? raceLoadTiles.filter(([tx, tz]) => vis.has(world.key(tx, tz))).length / raceLoadTiles.length : 1,
     loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep });
 }
 

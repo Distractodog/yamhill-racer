@@ -125,7 +125,7 @@ settings.bindSound(audio);              // Settings → Sound: master / engines 
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 // a race placing the car (start, J, Backspace restart, multiplayer start, checkpoint R) drops a waiting respawn hold
-const challenges = await createChallenges({ scene, world, car, minimap, vehicles, audio, onPlace: () => respawnHold.cancel(),
+const challenges = await createChallenges({ scene, world, car, minimap, vehicles, audio, compileRace: () => renderer.compileAsync ? renderer.compileAsync(scene, camera) : renderer.compile(scene, camera), onPlace: () => respawnHold.cancel(),
   // the race menu (J, ☰ Menu → Races, a start ring) closes the other panels like they close it; not over the spawn
   // map, the Garage or the builder; a start ring doesn't pop it over Settings / How to play / the ☰ Menu either
   canOpenMenu: () => !sessionSpawn.blocked && !garage.open && !builder.open,
@@ -485,8 +485,9 @@ function frame(now) {
   // the V picker and the race menu pause the game like the Garage (race clock too), except in multiplayer where the
   // others play on
   const picking = (vehicles.open || challenges.menuOpen) && !mp.inGame, frozen = garage.open || picking || builder.open;
-  acc += sessionSpawn.blocked || frozen || respawnHold.blocked ? 0 : dt;
-  while (acc >= STEP && !respawnHold.blocked && !builder.open) { car.savePrev(); car.step(STEP, input); builder.step(vehicles.current); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
+  if (challenges.blocked) acc = 0;
+  acc += sessionSpawn.blocked || frozen || respawnHold.blocked || challenges.blocked ? 0 : dt;
+  while (acc >= STEP && !challenges.blocked && !respawnHold.blocked && !builder.open) { car.savePrev(); car.step(STEP, input); builder.step(vehicles.current); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
   challenges.update(picking || builder.open ? 0 : dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
@@ -500,7 +501,7 @@ function frame(now) {
   cosmetics.update(frozen || sessionSpawn.blocked ? 0 : dt, vehicles.current);
   atmosphere.update(dt, camera);
   // after the atmosphere's fog: view distance; Auto measures only frames of real play
-  graphics.frame(dt, !(sessionSpawn.blocked || frozen || respawnHold.blocked || builder.open || minimap.open || settings.open || !warmup.done || document.hidden));
+  graphics.frame(dt, !(sessionSpawn.blocked || frozen || respawnHold.blocked || challenges.blocked || builder.open || minimap.open || settings.open || !warmup.done || document.hidden));
   windView.update(dt);
   garage.update(dt);
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
@@ -511,7 +512,7 @@ function frame(now) {
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
   // Paused for ground to load: build faster (not while the spawn map waits for a click: the player may zoom any moment)
   const mapBusy = minimap.busy;
-  if (!mapBusy) world.updateLOD(camera.position, builder.open ? null : car.vel, respawnHold.blocked || sessionSpawn.loading ? 8 : 0);
+  if (!mapBusy) world.updateLOD(camera.position, builder.open ? null : car.vel, respawnHold.blocked || challenges.blocked || sessionSpawn.loading ? 8 : 0);
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);

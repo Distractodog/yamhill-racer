@@ -14,9 +14,9 @@ export function makeRaceBarriers(points, world) {
     const len = Math.hypot(dx, dz); if (len < 0.01) continue;
     const s = { ax, az, bx, bz, dx, dz, len, nx: dz / len, nz: -dx / len, index, ready: false };
     segments.push(s);
-    // Include the body footprint and one physics step of movement in the broad phase.
-    for (let x = Math.floor((Math.min(ax, bx) - 4) / CELL); x <= Math.floor((Math.max(ax, bx) + 4) / CELL); x++)
-      for (let z = Math.floor((Math.min(az, bz) - 4) / CELL); z <= Math.floor((Math.max(az, bz) + 4) / CELL); z++) {
+    // Vehicle-sized swept queries below find these wall cells, including fast crossings.
+    for (let x = Math.floor((Math.min(ax, bx) - BARRIER_WIDTH / 2) / CELL); x <= Math.floor((Math.max(ax, bx) + BARRIER_WIDTH / 2) / CELL); x++)
+      for (let z = Math.floor((Math.min(az, bz) - BARRIER_WIDTH / 2) / CELL); z <= Math.floor((Math.max(az, bz) + BARRIER_WIDTH / 2) / CELL); z++) {
         const key = `${x},${z}`; if (!grid.has(key)) grid.set(key, []); grid.get(key).push(s);
       }
   }
@@ -28,40 +28,59 @@ export function makeRaceBarriers(points, world) {
   }
   function collide(car, dt) {
     const p = car.pos, v = car.vel, q = car.quat;
-    const near = grid.get(`${Math.floor(p.x / CELL)},${Math.floor(p.z / CELL)}`);
-    if (!near) return 0;
-    const fx = 2 * (q.x * q.z + q.w * q.y), fz = 1 - 2 * (q.x * q.x + q.y * q.y);
-    const h = car.half || { x: 0.8, front: 1.75, back: -1.95 };
-    const radius = h.x + BARRIER_WIDTH / 2;
+    const yaw = Math.atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y));
+    const fx = Math.sin(yaw), fz = Math.cos(yaw), rx = fz, rz = -fx;
+    // The default race car's rear tyres extend to 1.2 m; the old .8 m discs missed them and the box corners.
+    const h = car.half || { x: 1.2, front: 1.95, back: -1.95 };
+    const middle = (h.front + h.back) / 2, halfLength = (h.front - h.back) / 2;
+    const oldX = p.x - v.x * dt, oldZ = p.z - v.z * dt;
+    const radius = Math.hypot(h.x, Math.max(h.front, -h.back)) + BARRIER_WIDTH / 2;
+    const near = new Set();
+    for (let x = Math.floor((Math.min(p.x, oldX) - radius) / CELL); x <= Math.floor((Math.max(p.x, oldX) + radius) / CELL); x++)
+      for (let z = Math.floor((Math.min(p.z, oldZ) - radius) / CELL); z <= Math.floor((Math.max(p.z, oldZ) + radius) / CELL); z++)
+        for (const s of grid.get(`${x},${z}`) || []) near.add(s);
     const reach = car.wheelReach?.() ?? 0.7;
+    // Pitch/roll can leave a low wheel at the wall even when the centre is above its top.
+    const rightY = 2 * (q.x * q.y + q.w * q.z), forwardY = 2 * (q.y * q.z - q.w * q.x);
+    const bottom = Math.min(p.y, p.y - v.y * dt) - reach - Math.abs(rightY) * h.x
+      + Math.min(forwardY * h.back, forwardY * h.front);
     let hit = 0;
-    // Three overlapping discs cover the body without angular impulses or wheel-catching corners.
-    for (const offset of [h.back + h.x, (h.front + h.back) / 2, h.front - h.x]) {
-      for (const s of near) {
-        if (!prepare(s)) continue;
-        const x = p.x + fx * offset, z = p.z + fz * offset;
-        const t = clamp(((x - s.ax) * s.dx + (z - s.az) * s.dz) / (s.len * s.len), 0, 1);
-        const y = s.ay + (s.by - s.ay) * t;
-        if (p.y - reach > y + BARRIER_HEIGHT || p.y + 0.4 < y) continue;
-        const px = s.ax + s.dx * t, pz = s.az + s.dz * t;
-        const dx = x - px, dz = z - pz, d = Math.hypot(dx, dz);
-        const signed = dx * s.nx + dz * s.nz;
-        const oldSigned = signed - (v.x * s.nx + v.z * s.nz) * dt;
-        // Swept crossing prevents tunnelling even if a step traverses the full wall thickness.
-        const swept = signed * oldSigned < 0 && t > 0 && t < 1;
-        if (d >= radius && !swept) continue;
-        const side = Math.sign(oldSigned) || Math.sign(signed) || 1;
-        const nx = swept ? s.nx * side : d > 1e-6 ? dx / d : s.nx * side;
-        const nz = swept ? s.nz * side : d > 1e-6 ? dz / d : s.nz * side;
-        const depth = swept ? radius + Math.abs(signed) : radius - d;
-        p.x += nx * depth; p.z += nz * depth;
-        const vn = v.x * nx + v.z * nz;
-        if (vn < 0) {
-          hit = Math.max(hit, -vn);
-          v.x -= nx * vn * 1.15; v.z -= nz * vn * 1.15;
-          // Lose a little tangential speed while scraping; no vertical or angular impulse.
-          v.x *= 0.985; v.z *= 0.985;
+    for (const s of near) {
+      if (!prepare(s)) continue;
+      const cx = p.x + fx * middle, cz = p.z + fz * middle;
+      const t = clamp(((cx - s.ax) * s.dx + (cz - s.az) * s.dz) / (s.len * s.len), 0, 1);
+      const y = s.ay + (s.by - s.ay) * t;
+      if ((!car.grounded && bottom > y + BARRIER_HEIGHT) || p.y + 0.4 < y) continue;
+      const dx = cx - (s.ax + s.bx) / 2, dz = cz - (s.az + s.bz) / 2;
+      const mx = p.x - oldX, mz = p.z - oldZ, tx = s.dx / s.len, tz = s.dz / s.len;
+      // Swept separating axes for the entire oriented rectangle and the finite wall rectangle.
+      // Segment ends only limit overlap: always push along the wall normal, never around a joint like a wheel/ramp.
+      let enter = 0, exit = 1;
+      for (const [ax, az] of [[s.nx, s.nz], [tx, tz], [rx, rz], [fx, fz]]) {
+        const extent = h.x * Math.abs(rx * ax + rz * az) + halfLength * Math.abs(fx * ax + fz * az)
+          + s.len / 2 * Math.abs(tx * ax + tz * az) + BARRIER_WIDTH / 2 * Math.abs(s.nx * ax + s.nz * az);
+        const start = (dx - mx) * ax + (dz - mz) * az, movement = mx * ax + mz * az;
+        if (Math.abs(movement) < 1e-9) {
+          if (Math.abs(start) > extent) { exit = -1; break; }
+        } else {
+          const a = (-extent - start) / movement, b = (extent - start) / movement;
+          enter = Math.max(enter, Math.min(a, b)); exit = Math.min(exit, Math.max(a, b));
         }
+      }
+      if (enter > exit) continue;
+      const signed = dx * s.nx + dz * s.nz;
+      const side = Math.sign(signed - mx * s.nx - mz * s.nz) || Math.sign(signed) || 1;
+      const support = h.x * Math.abs(rx * s.nx + rz * s.nz) + halfLength * Math.abs(fx * s.nx + fz * s.nz);
+      const depth = support + BARRIER_WIDTH / 2 - side * signed;
+      if (depth <= 0) continue;
+      const nx = s.nx * side, nz = s.nz * side;
+      p.x += nx * depth; p.z += nz * depth;
+      const vn = v.x * nx + v.z * nz;
+      if (vn < 0) {
+        hit = Math.max(hit, -vn);
+        v.x -= nx * vn * 1.15; v.z -= nz * vn * 1.15;
+        // Lose a little tangential speed while scraping; no vertical or angular impulse.
+        v.x *= 0.985; v.z *= 0.985;
       }
     }
     car.hit = Math.max(car.hit || 0, hit * 0.5);

@@ -51,5 +51,9 @@ export function buildRaceBarrierModel(layer) {
     }
   }
   update();
-  return { mesh, update, dispose() { geometry.dispose(); material.dispose(); } };
+  return { mesh, update,
+    readyNear(points, radius = 150) {
+      return ![...pending].some(s => points.some(([x, z]) => Math.hypot((s.ax + s.bx) / 2 - x, (s.az + s.bz) / 2 - z) < radius));
+    },
+    dispose() { geometry.dispose(); material.dispose(); } };
 }

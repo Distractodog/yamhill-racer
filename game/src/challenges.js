@@ -15,6 +15,7 @@ import { fmtDist, fmtHeight } from './units.js';
 import { createMedals, nextMedal, MEDALS, MEDAL_ICON, MEDAL_NAME } from './medals.js';
 import { createRaceMenu } from './racemenu.js';
 import { createRaceMarkers } from './racemarkers.js';
+import { raceLoadPoints, raceGroundProgress, createRaceLoadState, createRaceLoadingView } from './raceloading.js';
 
 const BEST_KEY = 'yr-best-1';
 const POST_H = 7, COUNTDOWN = 3;
@@ -160,7 +161,7 @@ function makeRamp(world, r) {
 // Menu → Races, a start ring): main.js closes the other panels and drops held keys, as the V picker's onOpen does;
 // canAutoOpen(): false while a start ring must not pop the menu up by itself (Settings, How to play, the ☰ Menu, …)
 export async function createChallenges({ scene, world, car, minimap, vehicles = null, audio = null, base ='./assets/', onPlace = () => {},
-  canOpenMenu = () => true, onMenuOpen = () => {}, canAutoOpen = () => true }) {
+  canOpenMenu = () => true, onMenuOpen = () => {}, canAutoOpen = () => true, compileRace = () => null }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
   const ghost = createGhost({ scene });
   const rewards = createRewards();
@@ -187,7 +188,8 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   const saveBest = () => { try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch {} };
   // the race menu, built the first time it opens; menuClosed: it closed itself (Esc, ✕, a click outside), the finish
   // panel comes back if it was up
-  let raceMenu = null;
+  let raceMenu = null, loading = null;
+  const loadingView = createRaceLoadingView({ fmtTime, base });
   const menuUI = () => raceMenu ||= createRaceMenu({ list, best: () => best, medals, rewards, fmtTime, base, racing: () => state !== 'idle',
     onStart: i => start(i), onInvite: i => mpHook?.pick?.(i), canInvite: () => !!mpHook?.canInvite?.(), onClose: () => menuClosed() });
 
@@ -280,6 +282,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   async function start(i, opts = {}) {
     if (!opts.mp) mpHook?.onLocalStart?.();
+    loading?.cancel(); loadingView.hide(); world.setRaceLoadPoints?.([]);
     sync = opts.sync || null;
     ghost.stop();
     ch = list[i]; sel = i; result = null; returning = false; wrongWayTime = 0;
@@ -291,6 +294,8 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       if (state !== 'running' || next < 2) return null;
       const g = ch.gates[next - 1]; return [g.x, g.y, g.z, g.yaw, 450];
     } : null;
+    state = 'placing'; count.style.display = 'none';
+    loadingView.show(ch);
     buildArches();
     const points = ch.vehicle !== 'jet' && ch.track
       ? (opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track) : null;
@@ -303,7 +308,42 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     state = 'placing'; next = 1; t = 0; splits = [];
     hud.style.display = 'block'; renderHud();
     const startPose = opts.mp && opts.grid ? opts.grid : ch.start;
-    if (!(await placeCar(startPose.x, startPose.z, startPose.yaw))) return;
+    const token = ++placeToken, run = ch;
+    const samples = raceLoadPoints(run, startPose);
+    world.setRaceLoadPoints?.(samples);
+    const load = loading = createRaceLoadState({ sync });
+    onPlace();
+    car.pos.set(startPose.x, car.pos.y, startPose.z); car.vel.set(0, 0, 0); car._lastLoaded = null;
+    car.savePrev?.(); car.interpolate?.(0);
+    let compiled = false, compiling = false, status;
+    do {
+      if (token !== placeToken || loading !== load) return;
+      // Placement keeps ownership if a crash/remote control requests a respawn during the wait.
+      onPlace(); car.pos.x = startPose.x; car.pos.z = startPose.z; car.vel.set(0, 0, 0); car._lastLoaded = null;
+      car.savePrev?.(); car.interpolate?.(0);
+      barrierModel?.update();
+      // Only the prepared part of the course must be placed now; distant checkpoints stream normally during play.
+      for (const a of arches) if (!a.placed && world.loadedAt(a.grp.position.x, a.grp.position.z)) {
+        a.grp.position.y = world.heightAt(a.grp.position.x, a.grp.position.z) - .2; a.placed = true;
+      }
+      const ground = world.raceLoadProgress?.() ?? raceGroundProgress(world, samples);
+      const furniture = (!barrierModel || barrierModel.readyNear(samples)) && arches.every(a => a.placed ||
+        !samples.some(([x, z]) => Math.hypot(a.grp.position.x - x, a.grp.position.z - z) < 150));
+      if (ground === 1 && furniture && !compiling) {
+        compiling = true;
+        onPlace(); car.reset(startPose.x, startPose.z, startPose.yaw); car.safe = []; car._lastLoaded = null;
+        styleArches(); car.syncMesh?.(0);
+        // Compile the race scene (including the active vehicle, arches and new barrier material) with its real lights.
+        Promise.resolve().then(() => token === placeToken && compileRace()).then(() => { compiled = true; }).catch(e => console.warn('race loading compile:', e));
+      }
+      status = load.update({ ground, furniture, compiled });
+      loadingView.update(status);
+      if (status.phase !== 'done') await new Promise(r => setTimeout(r, 50));
+    } while (status.phase !== 'done');
+    if (token !== placeToken || loading !== load) return;
+    loading = null; loadingView.hide(); world.setRaceLoadPoints?.([]);
+    onPlace(); car.reset(startPose.x, startPose.z, startPose.yaw); car.safe = []; car._lastLoaded = null;
+    if (status.timedOut) { split.textContent = 'Course still loading — starting with available scenery'; split.style.opacity = 1; splitT = 6; }
     if (opts.mp && sync) car.ghostUntil = Math.max(car.ghostUntil || 0, sync.at + 3000);
     state = 'countdown'; cd = sync ? (sync.at - sync.now()) / 1000 : COUNTDOWN; styleArches();
     count.style.display = 'block'; count.textContent = String(sync ? Math.max(1, Math.ceil(cd)) : 3); blip(440, 0.15);
@@ -312,6 +352,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   function quit() {
     mpHook?.onQuit?.(); sync = null;
     ghost.stop();
+    loading?.cancel(); loading = null; loadingView.hide(); world.setRaceLoadPoints?.([]);
     returning = false; wrongWayTime = 0; placeToken++; state = 'idle'; ch = null; clearArches();
     if (vehicles) vehicles.jet.respawn = null;
     hud.style.display = 'none'; count.style.display = 'none'; done.style.display = 'none'; split.style.opacity = 0;
@@ -440,6 +481,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // last had in the menu (the first time: the race you last started). opts.filter: 'car' | 'bike' | 'jet' | 'all';
   // opts.from: the button that opened it (☰ Menu → Races): Esc / ✕ / a click outside give focus back there
   function openMenu(i = null, opts = {}) {
+    if (state === 'placing') return;
     if (!menuOpen) { if (!canOpenMenu()) return; onMenuOpen(); }
     const first = !raceMenu;
     menuOpen = true; done.style.display = 'none'; menuUI().show(i ?? (first ? sel : null), opts);
@@ -450,6 +492,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // capture phase: runs before the map's own Esc handler, so Esc with the full map open only closes the map
   addEventListener('keydown', e => {
     if (e.gameUI) return;
+    if (state === 'placing' && e.code !== 'Escape' && e.code !== 'KeyH') { e.preventDefault(); e.stopImmediatePropagation(); return; }
     // Let the focused finish action receive its native Enter/Space click instead of
     // interpreting every Enter as retry (or Space as a driving input).
     if (state === 'finished' && /^(Enter|NumpadEnter|Space)$/.test(e.code) && e.target?.closest?.('#ch-done button')) { e.gameUI = true; return; }
@@ -474,6 +517,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   }, true);
 
   return {
+    get blocked() { return state === 'placing'; },
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
     set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, track: ch.track, route: ch.route, next, state, t },
     dnf, rewards, medals, get raceMenu() { return menuUI(); }, markers, best: () => best, start, quit, openMenu, closeMenu, get result() { return result; },
