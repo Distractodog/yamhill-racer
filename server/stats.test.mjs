@@ -84,6 +84,7 @@ test('private route hides missing/wrong/unconfigured key and renders 30 rows and
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
   assert.equal((html.match(/<tr><td>\d{4}-/g) || []).length, 30);
   assert.ok(html.includes('30-day totals') && html.includes('<td>US</td><td>1</td>'));
+  assert.ok(html.includes('counted when at least two players are in the same game'));
 });
 
 test('hit enforces origin, input and size; allows safelisted beacon and OPTIONS', async () => {
@@ -122,7 +123,7 @@ test('client sends one beacon, keeps separate ID, skips tests/nostats, falls bac
   assert.doesNotThrow(() => countVisit(scope));
 });
 
-test('host acceptance counts once; repeat hello, guest, rejected host and hibernation do not count', async () => {
+test('counts once when a guest joins; survives later joins and hibernation; new room counts again', async () => {
   const f = fixture();
   let pending = [];
   const sockets = [];
@@ -136,20 +137,40 @@ test('host acceptance counts once; repeat hello, guest, rejected host and hibern
   relay.room.connect('000000000001', host);
   await relay.webSocketMessage(host, hello(true));
   await relay.webSocketMessage(host, hello(true));
+  assert.equal(f.data.get(dayKey())?.games ?? 0, 0);
   relay.room.connect('000000000002', guest);
   await relay.webSocketMessage(guest, hello(false));
+  await Promise.all(pending);
+  assert.equal(f.data.get(dayKey()).games, 1);
+  const second = socket();
+  relay.room.connect('000000000005', second);
+  await relay.webSocketMessage(second, hello(false));
+  await relay.webSocketClose(second);
+  const rejoin = socket();
+  relay.room.connect('000000000006', rejoin);
+  await relay.webSocketMessage(rejoin, hello(false));
   relay.room.connect('000000000003', rejected);
   await relay.webSocketMessage(rejected, hello(true));
   await Promise.all(pending);
   assert.equal(f.data.get(dayKey()).games, 1);
-  sockets.push(host, guest);
-  new RelayRoom(ctx, f.env);
+  sockets.push(host, guest, rejoin);
+  const restored = new RelayRoom(ctx, f.env);
   await ctx.blockConcurrencyWhile(async () => {});
-  assert.equal(pending.length, 1);
-  await relay.webSocketClose(host);
+  const another = socket();
+  restored.room.connect('000000000007', another);
+  await restored.webSocketMessage(another, hello(false));
+  await Promise.all(pending);
+  assert.equal(f.data.get(dayKey()).games, 1);
+  const freshSockets = [];
+  const fresh = new RelayRoom({ ...ctx, getWebSockets: () => freshSockets }, f.env);
+  await ctx.blockConcurrencyWhile(async () => {});
   const replacement = socket();
-  relay.room.connect('000000000004', replacement);
-  await relay.webSocketMessage(replacement, hello(true));
+  fresh.room.code = 'ABCDE';
+  fresh.room.connect('000000000004', replacement);
+  await fresh.webSocketMessage(replacement, hello(true));
+  const newGuest = socket();
+  fresh.room.connect('000000000008', newGuest);
+  await fresh.webSocketMessage(newGuest, hello(false));
   await Promise.all(pending);
   assert.equal(f.data.get(dayKey()).games, 2);
 });

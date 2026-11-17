@@ -109,7 +109,7 @@ export function renderStats(rows) {
 <h1>Yamhill Racer visits</h1><p>Last 30 UTC days. Unique visitors are counted per day; the total is visitor-days.</p>
 <table><thead><tr><th>Date (UTC)</th><th>Visits</th><th>Unique visitors</th><th>MP games</th></tr></thead><tbody>
 ${rows.map(row => `<tr><td>${row.day}</td>${cells(row)}</tr>`).join('')}
-</tbody><tfoot><tr><td>30-day totals</td>${cells(totals)}</tr></tfoot></table>
+</tbody><tfoot><tr><td>30-day totals</td>${cells(totals)}</tr></tfoot></table><p>counted when at least two players are in the same game</p>
 <h2>Top countries (visits)</h2><table><tr><th>Country</th><th>Visits</th></tr>
 ${Object.entries(totals.countries).sort((a, b) => b[1] - a[1]).map(([country, count]) => `<tr><td>${country}</td><td>${count}</td></tr>`).join('')}</table></html>`;
 }

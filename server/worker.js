@@ -24,6 +24,7 @@ export class RelayRoom {
     this.env = env;
     this.ctx = ctx;
     this.layoutStored = new Map();
+    this.counted = false;
     const sockets = ctx.getWebSockets();
     const first = sockets[0]?.deserializeAttachment();
     this.room = new Room(first?.code);
@@ -34,6 +35,7 @@ export class RelayRoom {
     }
     ctx.blockConcurrencyWhile(async () => {
       if (this.room.host) {
+        this.counted = (await ctx.storage.get('counted')) === true;
         this.room.world = (await ctx.storage.get('world')) ?? null;
         const layout = await ctx.storage.get('layout');
         if (layout) {
@@ -75,11 +77,15 @@ export class RelayRoom {
     const oldClients = [...this.room.clients.keys()];
     const hadHost = !!this.room.host;
     this.room.receive(ws, message);
-    if (!hadHost && this.room.host && this.env?.STATS) {
+    if (!this.counted && this.room.players.length >= 2) {
+      this.counted = true;
+      await this.ctx.storage.put('counted', true);
+      if (this.env?.STATS) {
       // Analytics cannot delay or reject room messages; waitUntil survives hibernation.
-      try {
-        this.ctx.waitUntil(statsObject(this.env).fetch(new Request('https://stats/game', { method: 'POST' })).catch(() => {}));
-      } catch { /* Stats unavailable; multiplayer keeps working. */ }
+        try {
+          this.ctx.waitUntil(statsObject(this.env).fetch(new Request('https://stats/game', { method: 'POST' })).catch(() => {}));
+        } catch { /* Stats unavailable; multiplayer keeps working. */ }
+      }
     }
     this.saveSession(ws);
     for (const peer of oldClients) {
@@ -110,6 +116,10 @@ export class RelayRoom {
     const oldWorld = this.room.world;
     const oldClients = [...this.room.clients.keys()];
     this.room.leave(ws);
+    if (!this.room.players.length && this.counted) {
+      this.counted = false;
+      await this.ctx.storage.delete('counted');
+    }
     for (const peer of oldClients) this.saveSession(peer);
     await this.saveWorld(oldWorld);
     await this.saveLayout();
