@@ -223,3 +223,12 @@ assert.equal(B.sent.length, nb2); assert.ok(B.core.accepted); B.ch.state = 'idle
 C.core.accept(); await flush();
 assert.deepEqual(A.core.active.players, ['A', 'B', 'C']); assert.ok(B.core.active);
 console.log('mp races state machine: OK');
+
+// A low-barrier escape is a final local DNF, relayed without ending the other player's run.
+reset(); A.core.invite('r1',['B']);await flush();B.core.accept();await flush();
+B.ch.state='finished';B.core.hook.onDnf();await flush();
+assert.equal(B.core.active.myDone,true);assert.equal(A.core.rows().find(r=>r.id==='B').status,'dnf');
+assert.equal(A.core.rows().find(r=>r.id==='A').status,'racing');
+const count=B.sent.length;B.core.hook.onDnf();B.core.hook.onFinish();assert.equal(B.sent.length,count,'DNF cannot finish or send twice');
+assert.match(B.core.resultsHtml(),/DNF/);reset();
+console.log('PASS multiplayer barrier DNF propagation, other racer continues, no late finish');

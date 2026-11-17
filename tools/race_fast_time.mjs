@@ -8,6 +8,7 @@ import { makeWorld, makeTileData } from '../game/src/data.js';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 import { readTileData } from '../game/src/tilepack.js';
 import { makeTrack } from '../game/src/track.js';
+import { makeRaceBarriers, raceBounds } from '../game/src/racebarriers.js';
 
 const id = process.argv[2] || 'hwy18-top-speed';
 const A = (process.env.YR_ASSETS || 'game/assets').replace(/\/?$/, '/');
@@ -25,7 +26,7 @@ for (const k of need) if (have.has(k)) {
   W.add(makeTileData(WJ, tx, tz, await readTileData(async f => ab(d + f), WJ.packed)));
 }
 const DT = 1 / 120, fw = new THREE.Vector3(), up = new THREE.Vector3();
-const R = c.track, track = makeTrack(R); W.setRamps(c.ramps);
+const R = c.track, track = makeTrack(R), bounds = raceBounds(track); W.setRaceBarriers(makeRaceBarriers(R, W));
 const car = new Car(W, { ...TUNING_DEFAULTS });
 const [sx, sz] = R[0]; car.reset(sx, sz, Math.atan2(R[3][0] - sx, R[3][1] - sz));
 const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false };
@@ -42,7 +43,8 @@ for (let i = 0; i < (c.length / 30 + 120) / DT && done === null; i++) {
   const want = Math.max(50, cap * (1 - turn * 1.2));
   inp.throttle = sp * 3.6 < want ? 1 : 0; inp.brake = sp * 3.6 > want + 25 ? 1 : 0;
   car.step(DT, inp);
-  const hit = track.constrain(car); if (hit > 0) hits++;
+  if (bounds.update(car, DT)) { console.error('Out of bounds — DNF'); process.exitCode = 1; break; }
+  const hit = car.hit; if (hit > 0) hits++;
   if (process.argv[4] === 'v' && (i % 120 === 0 || (hit > 0 && hits < 20))) console.log(`   ${t.toFixed(2)} s ${car.pos.x.toFixed(0)},${car.pos.z.toFixed(0)} y-h ${(car.pos.y - W.heightAt(car.pos.x, car.pos.z)).toFixed(1)} ` +
     `${(car.vel.length() * 3.6).toFixed(0)} km/h track ${track.index}/${R.length - 1} tgt ${tgt}${hit > 0 ? ` WALL ${hit.toFixed(1)}` : ''}${car.grounded ? '' : ' air'}`);
   top = Math.max(top, car.vel.length() * 3.6);

@@ -233,6 +233,12 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     if (noteFinish(mp.me.id, time, at)) mp.send({ t: 'race-finish', inviteId: active.inviteId, time });
     ui.results?.(rows());
   }
+  function onDnf() {
+    if (!active || active.myDone) return;
+    active.myDone = true; active.out.add(mp.me.id);
+    mp.send({ t: 'race-cancel', inviteId: active.inviteId });
+    ui.results?.(rows());
+  }
   function onGate() { sendProgress(); }
   // a click/Enter on a race row in the J menu: in a game with other players it opens the invite step instead
   function pick(i) {
@@ -272,7 +278,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
     'race-finish': onRaceFinish, 'race-cancel': onRaceCancel, left: onLeft,
     disconnected: () => reset(true), closed: () => reset(true) };
   for (const [k, fn] of Object.entries(handlers)) mp.on(k, fn);
-  const hook = { onLocalStart: leave, onQuit, onFinish, onGate, hudHtml, pick };
+  const hook = { onLocalStart: leave, onQuit, onFinish, onDnf, onGate, hudHtml, pick };
   return {
     hook, invite, cancelInvite, start: startOutgoing, accept: () => reply(true), decline: () => reply(false),
     rows, hudHtml, resultsHtml, lobbyData, reset,

@@ -12,7 +12,7 @@ async function nodeChecks() {
   const { Glider, BIKE_GLIDER } = await import('../game/src/glider.js');
   const { createChallenges } = await import('../game/src/challenges.js');
   const canvas = { fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, fill() {} };
-  const element = () => ({ style: {}, append() {}, querySelectorAll: () => [], getContext: () => canvas });
+  const element = () => ({ style: {}, append() {}, querySelectorAll: () => [], querySelector: () => ({addEventListener(){}}), getContext: () => canvas });
   globalThis.document = { createElement: element, head: element(), body: element() };
   globalThis.localStorage = { getItem: () => null, setItem() {} };
   let handler;
@@ -58,16 +58,17 @@ async function nodeChecks() {
     v.pos.set(0, 2000, 10); v.quat.identity(); v.grounded = false; v.airTime = 1;
     v.vel.set(150 / 3.6 / Math.sqrt(2), 0, 150 / 3.6 / Math.sqrt(2));
     let maxOutside = 0;
-    for (let i = 0; i < 1200; i++) {
+    for (let i = 0; i < 1200 && ch.state === 'running'; i++) {
       if (i % 30 === 0) pressG();
       v.step(1 / 120, { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false });
       ch.constrain();
       assert.equal(g.active, false);
       const outside = corridorOutside(v.pos, points);
       maxOutside = Math.max(maxOutside, outside);
-      assert(Number.isFinite(outside) && outside <= 1.5, `${kind} escaped corridor by ${outside} m`);
+      assert(Number.isFinite(outside));
     }
-    console.log(`PASS ${kind} shortcut bot: max outside ${maxOutside.toFixed(4)} m`);
+    assert.equal(ch.state, 'finished'); assert.equal(ch.result.dnf, true);
+    console.log(`PASS ${kind} shortcut bot DNF: max outside ${maxOutside.toFixed(4)} m`);
     ch.quit(); v.pos.y = 100; v.grounded = false; v.airTime = 1;
     assert.equal(pressG(), false); assert.equal(g.active, true, 'free-roam G must open');
     pressG(); assert.equal(g.active, false, 'free-roam G must fold');
@@ -132,7 +133,7 @@ async function browserChecks() {
         v.glide.deploy(); game.challenges.constrain();
         if (v.glide.active) throw new Error('Pre-existing wing remained active');
         let worst = 0;
-        for (let i = 0; i < 1200; i++) {
+        for (let i = 0; i < 1200 && game.challenges.state === 'running'; i++) {
           if (i % 30 === 0) {
             dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyG', key: 'g', cancelable: true }));
             dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyG', key: 'g' }));
@@ -146,9 +147,10 @@ async function browserChecks() {
             const t = Math.max(0, Math.min(1, ((v.pos.x - a[0]) * dx + (v.pos.z - a[1]) * dz) / (dx * dx + dz * dz)));
             best = Math.min(best, Math.hypot(v.pos.x - a[0] - dx * t, v.pos.z - a[1] - dz * t) - 8);
           }
-          if (!Number.isFinite(best) || best > 1.5) throw new Error(`Escaped corridor by ${best} m`);
+          if (!Number.isFinite(best)) throw new Error(`Nonfinite corridor distance`);
           worst = Math.max(worst, best);
         }
+        if (!game.challenges.result?.dnf) throw new Error('Shortcut must end as DNF');
         return worst;
       }, kind);
       console.log(`PASS browser ${kind} shortcut bot: max outside ${maxOutside.toFixed(4)} m`);

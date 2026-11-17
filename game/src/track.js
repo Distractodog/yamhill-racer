@@ -1,12 +1,4 @@
-// Invisible walls for challenge runs: the car must stay on the route's road/trail. The track is the route's centre
-// line every ~4 m with the road's half-width there (tools/challenge_routes.py). Each physics step the car's four body
-// corners are checked against that corridor (distance to the centre line, so curves get rounded walls); a corner past
-// the edge pushes the car back and takes away the speed going into the wall. Walls go all the way up: no shortcuts
-// through the air either. No rendering, so the headless test drives use the same code.
-
-const EDGE = 0.3;            // a body corner may hang this far past the road edge (tyres right on the edge line)
-const BOUNCE = 0.15;         // how much of the speed into the wall comes back out
-const BACK = 10;             // you may roll this far behind the start line
+// Route progress and corridor queries only. Solid, finite-height contacts live in racebarriers.js.
 
 export function makeTrack(points) {
   const n = points.length;
@@ -27,47 +19,47 @@ export function makeTrack(points) {
     return [best, bd];
   }
 
-  const cx = [0, 0, 0, 0], cz = [0, 0, 0, 0];
   return {
     get index() { return idx; },
     reset() { idx = 0; lastX = NaN; },
-    // keep the car inside; returns how hard it hit (m/s into the wall), 0 if no contact
-    constrain(car) {
-      const p = car.pos, v = car.vel, q = car.quat;
-      // follow progress along the route (a window around the last segment, so a route that passes near itself
-      // can't snap to the wrong part); after a teleport, search everything
-      if (!(Math.hypot(p.x - lastX, p.z - lastZ) < 30)) idx = nearestSeg(p.x, p.z, 0, n - 2)[0];
-      else idx = nearestSeg(p.x, p.z, idx - 6, idx + 12)[0];
-      lastX = p.x; lastZ = p.z;
-      // body corners on the ground plane (car box half-size 0.8 × 1.85, centred 0.1 m back)
-      const fx = 2 * (q.x * q.z + q.w * q.y), fz = 1 - 2 * (q.x * q.x + q.y * q.y);
-      const rx = 1 - 2 * (q.y * q.y + q.z * q.z), rz = 2 * (q.x * q.z - q.w * q.y);
-      let k = 0;
-      const h = car.half, hx = h ? h.x : 0.8, hf = h ? h.front : 1.75, hb = h ? h.back : -1.95;   // bike: narrower
-      for (const sx of [-hx, hx]) for (const sz of [hf, hb]) {
-        cx[k] = p.x + rx * sx + fx * sz; cz[k] = p.z + rz * sx + fz * sz; k++;
+    update(x, z) {
+      idx = Math.hypot(x - lastX, z - lastZ) < 30
+        ? nearestSeg(x, z, idx - 6, idx + 12)[0] : nearestSeg(x, z, 0, n - 2)[0];
+      lastX = x; lastZ = z;
+    },
+    outside(car) {
+      const h = car.half || { x: 0.8, front: 1.75, back: -1.95 };
+      const q = car.quat || { x: 0, y: 0, z: 0, w: 1 };
+      const yaw = Math.atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y));
+      const fx = Math.sin(yaw), fz = Math.cos(yaw), rx = fz, rz = -fx;
+      for (let i = Math.max(0, idx - 8); i <= Math.min(n - 2, idx + 12); i++) {
+        const [d2, t] = onSeg(i, car.pos.x, car.pos.z);
+        if (Math.sqrt(d2) <= HW[i] + (HW[i+1] - HW[i]) * t) return false;
       }
-      let worst = 0, nx = 0, nz = 0;
-      for (k = 0; k < 4; k++) {
-        const [i] = nearestSeg(cx[k], cz[k], idx - 3, idx + 3);
-        const [d2, t, px, pz] = onSeg(i, cx[k], cz[k]);
-        const d = Math.sqrt(d2), lim = HW[i] + (HW[i + 1] - HW[i]) * t + EDGE;
-        let over = d - lim;
-        let ux = d > 1e-6 ? (cx[k] - px) / d : 0, uz = d > 1e-6 ? (cz[k] - pz) / d : 0;
-        // start: behind the first point, the wall is a rounded cap BACK m behind the line
-        if (i === 0 && t === 0) {
-          const tx = X[1] - X[0], tz = Z[1] - Z[0], L = Math.hypot(tx, tz) || 1;
-          const behind = -((cx[k] - X[0]) * tx + (cz[k] - Z[0]) * tz) / L - BACK;
-          if (behind > over) { over = behind; ux = -tx / L; uz = -tz / L; }
+      // Distance from each tapered corridor segment to the oriented body rectangle. Test changes of closest
+      // rectangle feature and the stationary point beside each corner; this also catches a parked parallel car
+      // just beyond the wall, which a bounding circle would incorrectly keep in the race forever.
+      for (let i = Math.max(0, idx - 8); i <= Math.min(n - 2, idx + 12); i++) {
+        const ax = (X[i]-car.pos.x)*rx + (Z[i]-car.pos.z)*rz;
+        const az = (X[i]-car.pos.x)*fx + (Z[i]-car.pos.z)*fz;
+        const dx = (X[i+1]-X[i])*rx + (Z[i+1]-Z[i])*rz;
+        const dz = (X[i+1]-X[i])*fx + (Z[i+1]-Z[i])*fz;
+        const l2 = dx*dx + dz*dz, dh = HW[i+1]-HW[i];
+        const candidates = [0,1];
+        if (Math.abs(dx)>1e-9) candidates.push((-h.x-ax)/dx, (h.x-ax)/dx);
+        if (Math.abs(dz)>1e-9) candidates.push((h.back-az)/dz, (h.front-az)/dz);
+        if (l2>1e-9 && l2>dh*dh) for (const x of [-h.x,h.x]) for (const z of [h.back,h.front]) {
+          const along = ((x-ax)*dx+(z-az)*dz)/l2;
+          const across = Math.abs((x-ax)*dz-(z-az)*dx)/Math.sqrt(l2);
+          candidates.push(along + dh*across/Math.sqrt(l2*(l2-dh*dh)));
         }
-        if (over > worst) { worst = over; nx = ux; nz = uz; }
+        for (const u of candidates) if (u>=0 && u<=1) {
+          const x=ax+dx*u, z=az+dz*u;
+          const distance=Math.hypot(Math.max(0,Math.abs(x)-h.x), Math.max(0,h.back-z,z-h.front));
+          if (distance <= HW[i]+dh*u+0.16) return false;
+        }
       }
-      if (worst <= 0) return 0;
-      p.x -= nx * worst; p.z -= nz * worst;
-      const vn = v.x * nx + v.z * nz;                 // speed into the wall
-      if (vn > 0) { v.x -= nx * vn * (1 + BOUNCE); v.z -= nz * vn * (1 + BOUNCE); }
-      lastX = p.x; lastZ = p.z;
-      return Math.max(0, vn);
+      return true;
     },
   };
 }

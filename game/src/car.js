@@ -355,6 +355,7 @@ export class Car extends Vehicle {
     this.collideGround();
     this.collideTrees();
     this.collideBuildings();
+    W.collideRaceBarriers?.(this, dt);
     this.keepInBounds();
 
     // accelerations in the car's frame (body lean, camera, sound)

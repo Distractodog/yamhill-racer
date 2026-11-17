@@ -30,16 +30,13 @@ WILLAMINA = (-3640, 3330)
 ROAD = {'asphalt': 1.0, 'gravel': 1.6, 'trail': 8.0}
 TRAIL = {'trail': 1.0, 'gravel': 1.3, 'asphalt': 2.0}
 DIRT = {'trail': 1.0, 'gravel': 1.1, 'asphalt': 4.0}      # dirt bike: trails + gravel, keep off the tarmac
-# jump ramps: one per `ramp_every` m of route, on straights at least `run` m long (room to fly and land)
-class RAMP: up = 11; top = 2; down = 18          # same shape as RAMP in game/src/data.js
-RAMP_LEN = RAMP.up + RAMP.top + RAMP.down
 CHALLENGES = [
     dict(id='long-walk', name='Long Walk climb', desc='Main Building to the top of the Long Walk, on the trails.',
-         via=[MAIN_BUILDING, LONG_WALK_TOP], cost=TRAIL, gap=180, ramp_every=800, run=60, bend=0.45, gate_clear=35),
+         via=[MAIN_BUILDING, LONG_WALK_TOP], cost=TRAIL, gap=180),
     dict(id='sheridan', name='Sheridan sprint', desc='Campus to downtown Sheridan on the roads.',
-         via=[MAIN_BUILDING, SHERIDAN], cost=ROAD, gap=450, ramp_every=1400, run=300, bend=0.3, gate_clear=70),
+         via=[MAIN_BUILDING, SHERIDAN], cost=ROAD, gap=450),
     dict(id='willamina', name='Willamina run', desc='Campus to downtown Willamina on the roads.',
-         via=[MAIN_BUILDING, WILLAMINA], cost=ROAD, gap=450, ramp_every=1400, run=300, bend=0.3, gate_clear=70),
+         via=[MAIN_BUILDING, WILLAMINA], cost=ROAD, gap=450),
     # the long straight of Hwy 18 northeast of the map's fixed ramp (which stays behind the start): no ramps, flat out.
     # Waypoints on the highway's own 17 m strips: past (15484, -6837) a 14 m side road runs alongside at 140°, and a
     # finish on it gave a Z-shaped jog off the highway that is a wall at top speed. Medals from the race car's pace
@@ -49,32 +46,29 @@ CHALLENGES = [
     dict(id='mcminnville-downtown', name='McMinnville downtown sprint', desc='West down NE 3rd St through downtown McMinnville, then round the blocks to the north.',
          # (waypoints mid-street: one on a corner can snap past the junction and leave a U-turn on the same street)
          via=[(19900, -11035), (19400, -11035), (19092, -11230), (19350, -11429), (19600, -11429)], cost=ROAD,
-         gap=300, ramp_every=700, run=120, bend=0.3, gate_clear=50),
+         gap=300),
     dict(id='sheridan-river-loop', name='Sheridan river loop', desc='South over Sheridan Bridge, east through town, back across the South Yamhill on Hwy 18 and home along the river.',
          via=[(3300, 1325), (3594, 1345), (4300, 1700), (5150, 1810), (4600, 1520), (3800, 1300)], cost=ROAD,
-         gap=400, ramp_every=1200, run=250, bend=0.3, gate_clear=60),
-    # dirt bike: campus trails + gravel roads, jumps every few hundred metres
-    dict(id='bike-south-loop', vehicle='bike', name='South woods loop', desc='Round the trail loop south of campus, with jumps.',
-         via=[(-860, 440), (-760, 820), (-150, 640), (-110, 520), (-180, 400), (-310, 330)], cost=DIRT, gap=200,
-         ramp_every=350, run=45, bend=0.5, gate_clear=30),
-    dict(id='bike-north-scramble', vehicle='bike', name='North woods scramble', desc='Campus up through the north trails to the far ridge, jumps all the way.',
+         gap=400),
+    # dirt bike: campus trails + gravel roads
+    dict(id='bike-south-loop', vehicle='bike', name='South woods loop', desc='Round the trail loop south of campus.',
+         via=[(-860, 440), (-760, 820), (-150, 640), (-110, 520), (-180, 400), (-310, 330)], cost=DIRT, gap=200),
+    dict(id='bike-north-scramble', vehicle='bike', name='North woods scramble', desc='Campus up through the north trails to the far ridge.',
          via=[(-600, 40), (-1140, -380), (-1000, -820), (-560, -1000), (-260, -760)], cost=DIRT, gap=220,
-         ramp_every=330, run=45, bend=0.5, gate_clear=30,
          # The blanket 22 m hairpin opening here includes forest beside the trail.
          # Keep riders in the bend instead of allowing a high-speed orbit outside it.
          wall_caps=[dict(x=-20, z=-330, radius=70, half=6)]),
     dict(id='bike-gravel-run', vehicle='bike', name='Gravel run', desc='Campus out along the gravel roads to the northeast fields.',
-         via=[(-200, -60), (250, -280), (720, -1240), (1300, -1240)], cost={'gravel': 1.0, 'trail': 1.1, 'asphalt': 3.0}, gap=300,
-         ramp_every=450, run=70, bend=0.4, gate_clear=40),
+         via=[(-200, -60), (250, -280), (720, -1240), (1300, -1240)], cost={'gravel': 1.0, 'trail': 1.1, 'asphalt': 3.0}, gap=300),
     # trails named on the campus trail map (tools/mapdata.py): the Odyssey (blue) is the whole loop the South woods
     # loop mostly follows, here the other way round with its east lobe (its south-west S-bends are too tight for a car:
     # the walls bot can't get a car through them); Ripp's (yellow) with the Agony
-    dict(id='bike-odyssey', vehicle='bike', name='Odyssey', desc='The whole Odyssey trail loop round the south woods, clockwise, with jumps.',
+    dict(id='bike-odyssey', vehicle='bike', name='Odyssey', desc='The whole Odyssey trail loop round the south woods, clockwise.',
          via=[(-180, 400), (-110, 520), (-150, 640), (-430, 830), (-760, 820), (-860, 440), (-700, 405)], cost=DIRT,
-         gap=200, ramp_every=350, run=45, bend=0.5, gate_clear=30),
+         gap=200),
     dict(id='bike-ripps-ravine', vehicle='bike', name="Ripp's Ravine", desc="Down Ripp's trail into the ravine, up the Agony and round the west woods back to the top.",
          via=[(-812, -385), (-905, -200), (-1100, -200), (-1140, -420), (-1080, -452), (-1005, -345), (-850, -392)], cost=DIRT,
-         gap=160, ramp_every=350, run=45, bend=0.5, gate_clear=30),     # (no spot passes the ramp rules: steep + twisty)
+         gap=160),
 ]
 # Medal targets (seconds) from the race bot's time (tools/drive.mjs: the `walls` bots, the `jet` race bots):
 # gold ≈ bot × 1.02, silver × 1.15, bronze × 1.35. `BOT_TIMES` are measured with those bots (`node tools/drive.mjs walls`
@@ -272,64 +266,13 @@ for c in CHALLENGES:
     start = at(0)
     gate_s = [12] + [12 + (length - 12) * k / n_cp for k in range(1, n_cp)] + [length - 1]
 
-    # ---- ramps
+    # Ground races have no jump ramps. The always-on map ramps are baked separately in ramps.json.
     F = np.array(fine)
-    _, near = tree.query(F)
-    fy = np.array([ys[i] for i in near])
     fw = np.array([widths[strip_ids[i]] for i in stree.query(F)[1]])
     jpts = np.array([pts[n] for n, _ in juncs]); jtree = cKDTree(jpts)
-    def ok(s0):
-        i0, i1 = np.searchsorted(cum, [s0 - 30, s0 + c['run']])
-        if i0 < 0 or i1 >= len(F): return None
-        seg = F[i0:i1 + 1]; a, b = seg[0], seg[-1]; d = b - a; L = np.hypot(*d)
-        off = np.abs((seg[:, 0] - a[0]) * d[1] - (seg[:, 1] - a[1]) * d[0]) / L      # bend away from a straight line
-        w = fw[i0:i1 + 1].min()
-        if off.max() > w * c['bend']: return None
-        k = np.searchsorted(cum, s0)
-        # the road ahead may climb, but well under the ramp's own ~20% kick, or you'd fly into the hill
-        u = cum[k + 10:i1 + 1] - cum[k]
-        rise = (fy[k + 10:i1 + 1] - fy[k] - 0.10 * u).max()
-        if rise > 0.8: return None
-        if min(abs(s0 - g) for g in gate_s) < c['gate_clear']: return None
-        if jtree.query_ball_point(F[k:np.searchsorted(cum, s0 + RAMP_LEN + 15)], 22, return_length=True).max() > 0: return None
-        return off.max() + max(0, rise) * 2                                             # lower = better
-    n_r = max(1, round(length / c['ramp_every'])) if c.get('ramps', True) else 0
     ramps = []
-    for k in range(n_r):                      # best spot in each equal slice of the route (skipping its ends)
-        lo, hi = 150 + (length - 400) * k / n_r, 150 + (length - 400) * (k + 1) / n_r
-        cands = [(sc, s0) for s0 in np.arange(lo + 60, hi - 60, 5.0) if (sc := ok(s0)) is not None]
-        if not cands: continue
-        s0 = min(cands)[1]; g = at(s0)
-        i = np.searchsorted(cum, s0)
-        ramps.append(dict(x=g['x'], z=g['z'], yaw=g['yaw'], w=round(float(fw[i]) + 2, 1), s=round(float(s0))))
-    # ---- jumps that help: a dip in the road (down >= 3 m and back up within 30-140 m, straight across). Flying over
-    # it from a ramp at the lip beats driving down into it and back out. Kept clear of the other ramps.
-    dips = []
-    for s0 in np.arange(150, length - 250, 5.0) if n_r else []:
-        k = np.searchsorted(cum, s0 + RAMP.up)               # the lip
-        y0 = fy[k]
-        rim = None; low = 0
-        for j in range(k + 1, len(F)):
-            u = cum[j] - cum[k]
-            if u > 160: break
-            low = min(low, fy[j] - y0)
-            if u >= 30 and fy[j] - y0 >= -0.5 and low <= -3: rim = (j, u); break
-        if not rim or rim[1] > 140: continue
-        i0, i1 = np.searchsorted(cum, s0 - 30), min(len(F) - 1, rim[0] + 15)
-        seg = F[i0:i1 + 1]; a, b = seg[0], seg[-1]; d = b - a; L = np.hypot(*d)
-        off = np.abs((seg[:, 0] - a[0]) * d[1] - (seg[:, 1] - a[1]) * d[0]) / L
-        if off.max() > fw[i0:i1 + 1].min() * 0.5: continue           # flight stays inside the walls
-        if min(abs(s0 - g) for g in gate_s) < c['gate_clear']: continue
-        if jtree.query_ball_point(F[np.searchsorted(cum, s0):k + 8], 22, return_length=True).max() > 0: continue
-        dips.append((low, s0, rim[1]))
-    for low, s0, span in sorted(dips):                       # deepest dips first
-        if any(abs(s0 - r['s']) < 250 for r in ramps): continue
-        g = at(s0); i = np.searchsorted(cum, s0)
-        ramps.append(dict(x=g['x'], z=g['z'], yaw=g['yaw'], w=round(float(fw[i]) + 2, 1), s=round(float(s0)),
-                          dip=round(float(-low), 1), span=round(float(span))))
-    ramps.sort(key=lambda r: r['s'])
 
-    # ---- track edges for the invisible walls: centre line every 4 m with the half-width of the road there
+    # ---- track edges for the low racing barriers: centre line every 4 m with the half-width of the road there
     # at junctions the wall opens out to the whole junction piece (its ring radius), so hairpin turns have room
     jrad = np.minimum(np.array([r for _, r in juncs]), 14.0)     # ring radius can reach far down a road stub: cap it
     def half_width(j):

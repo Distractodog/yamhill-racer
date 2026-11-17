@@ -5,6 +5,8 @@
 import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
 import { makeTrack } from './track.js';
+import { makeRaceBarriers, raceBounds } from './racebarriers.js';
+import { buildRaceBarrierModel } from './racebarriermodel.js';
 import { gridTrack } from './mp/collide.js';
 import { createGhost } from './ghost.js';
 import { createRewards } from './rewards.js';
@@ -217,12 +219,15 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     } catch {}
   }
 
-  let track = null;     // invisible walls along the route (track.js) while a run is on
-  let ramps = [];       // { r, grp|null } — meshes built once the ground under them has streamed in
+  let track = null, bounds = null, barrierModel = null, barrierTick = 0;
+  function clearBarriers() {
+    world.setRaceBarriers?.(null);
+    if (barrierModel) { group.remove(barrierModel.mesh); barrierModel.dispose(); barrierModel = null; }
+    bounds = null;
+  }
   function clearArches() {
     for (const a of arches) group.remove(a.grp); arches = []; beam.visible = false;
-    for (const q of ramps) if (q.grp) { group.remove(q.grp); q.grp.traverse(o => o.geometry?.dispose()); }
-    ramps = []; world.setRamps?.([]); track = null;
+    clearBarriers(); track = null;
   }
 
   function buildArches() {
@@ -270,7 +275,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     if (ch !== run || state !== 'running' || placeToken !== token) return;
     returning = false;
     if (!placed) { split.textContent = 'Checkpoint is still loading — try R again'; split.style.opacity = 1; splitT = 2.5; return; }
-    track?.reset(); lastPos.set(car.pos.x, car.pos.z); curPos.copy(lastPos); lastY = curY = car.pos.y;
+    track?.reset(); bounds?.reset(); lastPos.set(car.pos.x, car.pos.z); curPos.copy(lastPos); lastY = curY = car.pos.y;
   }
 
   async function start(i, opts = {}) {
@@ -287,9 +292,14 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       const g = ch.gates[next - 1]; return [g.x, g.y, g.z, g.yaw, 450];
     } : null;
     buildArches();
-    ramps = (ch.ramps || []).map(r => ({ r, grp: null }));
-    track = ch.track ? makeTrack(opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track) : null;
-    world.setRamps?.(ch.ramps || []);
+    const points = ch.vehicle !== 'jet' && ch.track
+      ? (opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track) : null;
+    track = points ? makeTrack(points) : null;
+    if (track) {
+      const layer = makeRaceBarriers(points, world);
+      world.setRaceBarriers?.(layer); bounds = raceBounds(track);
+      barrierModel = buildRaceBarrierModel(layer); group.add(barrierModel.mesh); barrierTick = 0;
+    }
     state = 'placing'; next = 1; t = 0; splits = [];
     hud.style.display = 'block'; renderHud();
     const startPose = opts.mp && opts.grid ? opts.grid : ch.start;
@@ -338,7 +348,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   const nextRace = () => start(raceMenu ? raceMenu.nextAfter(sel) : (sel + 1) % list.length);
 
   function finish() {
-    state = 'finished';
+    state = 'finished'; clearBarriers();
     const prev = best[ch.id];
     const isBest = !prev || t < prev.time;
     ghost.finish(t, car, isBest);
@@ -364,18 +374,21 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     mpHook?.onFinish?.(t);
   }
 
-  // multiplayer: the winner's 60 s deadline passed — end my run as a DNF and show the results panel (mp/races.js fills it)
-  function dnf() {
+  // Barrier escape or multiplayer deadline: end the run as DNF, preserving free-roam driving control.
+  function dnf(reason = null) {
     if (state !== 'placing' && state !== 'countdown' && state !== 'running') return;
-    ghost.stop(); returning = false; wrongWayTime = 0; placeToken++; state = 'finished';
+    ghost.stop(); returning = false; wrongWayTime = 0; placeToken++; state = 'finished'; clearBarriers();
+    result = { dnf: true, reason };
     beam.visible = false; count.style.display = 'none'; minimap.setOverlay?.(null); split.style.opacity = 0; splitT = 0;
     done.innerHTML = `<h2>${ch.name}</h2>
       <div class="ch-big">DNF</div>
+      ${reason ? `<div class="ch-new">${reason}</div>` : ''}
       ${best[ch.id] ? `<div class="ch-pb">Personal best <b>${fmtTime(best[ch.id].time)}</b></div>` : ''}
       <div id="ch-mp-results"></div>
       ${ACTIONS}`;
     wireActions();
     done.style.display = 'block';
+    mpHook?.onDnf?.();
   }
 
   // ---- checkpoint crossing: the car's path this frame crosses the arch line between the posts
@@ -419,7 +432,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       if (returning) sub = 'Returning to checkpoint…';
       else if (wrongWayTime >= 1) sub += ' · WRONG WAY · turn around';
       const b = best[ch.id]; if (b) sub += ` · best ${fmtTime(b.time)}`;
-    } else if (state === 'finished') sub = 'Finished';
+    } else if (state === 'finished') sub = result?.dnf ? (result.reason || 'DNF') : 'Finished';
     hud.innerHTML = `<div class="ch-name">${ch.name}</div><div class="ch-time">${fmtTime(t)}</div><div class="ch-sub">${sub}</div>${mpHook?.hudHtml?.() || ''}`;
   }
 
@@ -464,14 +477,12 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
     set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, track: ch.track, route: ch.route, next, state, t },
     dnf, rewards, medals, get raceMenu() { return menuUI(); }, markers, best: () => best, start, quit, openMenu, closeMenu, get result() { return result; },
-    // walls: call after every physics step. Only during the countdown and the run (not after the finish)
-    constrain() {
+    // Race rules after each fixed physics step. Contacts are handled by the world collider layer.
+    constrain(dt = 1 / 120) {
       if (returning || (state !== 'countdown' && state !== 'running')) return;
       // Also fold a wing opened before the race or through another control path.
       if (car.glide?.active) { car.glide.cancel(); car.glide.say('No glider in races', 1.8); }
-      if (!track) return;
-      const hit = track.constrain(car);
-      if (hit > 0) car.hit = Math.max(car.hit || 0, hit * 0.5);
+      if (bounds?.update(car, dt)) dnf('Out of bounds — race over');
     },
     get track() { return track; },
     // hold the car on the line during the countdown (and while the menu is open)
@@ -486,12 +497,9 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
         const { x, z, yaw } = q.r, ex = x + Math.sin(yaw) * RAMP_LEN, ez = z + Math.cos(yaw) * RAMP_LEN;
         if (world.loadedAt(x, z) && world.loadedAt(ex, ez)) { q.grp = makeRamp(world, q.r); group.add(q.grp); }
       }
+      if (barrierModel && (barrierTick -= dt) <= 0) { barrierModel.update(); barrierTick = 0.25; }
       if (ch) {
         // drop arches onto the ground once their tile has streamed in
-        for (const q of ramps) if (!q.grp) {
-          const { x, z, yaw } = q.r, ex = x + Math.sin(yaw) * RAMP_LEN, ez = z + Math.cos(yaw) * RAMP_LEN;
-          if (world.loadedAt(x, z) && world.loadedAt(ex, ez)) { q.grp = makeRamp(world, q.r); group.add(q.grp); }
-        }
         for (const a of arches) if (!a.placed && world.loadedAt(a.grp.position.x, a.grp.position.z)) {
           a.grp.position.y = world.heightAt(a.grp.position.x, a.grp.position.z) - 0.2; a.placed = true;
           if (state === 'running' || state === 'countdown') styleArches();

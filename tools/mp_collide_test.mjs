@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 import { Bike } from '../game/src/bike.js';
 import { Jet } from '../game/src/jet.js';
-import { makeTrack } from '../game/src/track.js';
+import { makeRaceBarriers } from '../game/src/racebarriers.js';
 import { createCollisions, resolveCollision, gridPosition, gridTrack, SHAPES } from '../game/src/mp/collide.js';
 import { Track, parseState, predictedState } from '../game/src/mp/remotes.js';
 import { createRaceCore } from '../game/src/mp/racecore.js';
@@ -123,11 +123,11 @@ console.log('PASS bump-off/SP pass-through, reset/remote ghost expiry, air/glide
 // Grid stays separated and inside the extended corridor (16 slots, every vehicle, rotated start).
 for (const kind of GROUND) for (const yaw of [0, 0.8, Math.PI]) {
   const start = { x: 25, z: 40, yaw }, points = [[25, 40, 6], [25 + Math.sin(yaw) * 200, 40 + Math.cos(yaw) * 200, 6]];
-  const track = makeTrack(gridTrack(points, start, 16, kind));
+  const track = makeRaceBarriers(gridTrack(points, start, 16, kind), {groundAt:()=>0});
   const slots = Array.from({ length: 16 }, (_, i) => gridPosition(start, i, kind));
   for (let i = 0; i < 16; i++) {
     const p = slots[i], v = create(kind, p.x, p.z, yaw), before = v.pos.clone();
-    track.constrain(v); assert(v.pos.distanceTo(before) < 1e-6, `walls must not squash ${kind} ${yaw} slot ${i}: ${v.pos.distanceTo(before)}`);
+    track.collide(v, 1/120); assert(v.pos.distanceTo(before) < 1e-6, `walls must not squash ${kind} ${yaw} slot ${i}: ${v.pos.distanceTo(before)}`);
     assert((p.x - start.x) * Math.sin(yaw) + (p.z - start.z) * Math.cos(yaw) < 0, 'behind start');
     for (let j = 0; j < i; j++) assert(Math.hypot(p.x - slots[j].x, p.z - slots[j].z) >= 7.99);
   }

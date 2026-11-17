@@ -7,8 +7,18 @@ import { readTileData } from '../game/src/tilepack.js';
 const A = (process.env.YR_ASSETS || 'game/assets').replace(/\/?$/, '/');     // YR_ASSETS=dir tests another assets folder
 const WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
 const W = makeWorld(WJ);
+const which = process.argv[2] || 'all';
+// A focused barrier run needs only the race corridors, not every far-away tile in the expanded map.
+let raceTiles = null;
+if (which === 'walls') {
+  raceTiles = new Set(['0_0']);
+  for (const c of JSON.parse(fs.readFileSync(A + 'challenges.json')).filter(c => c.track && (!process.env.ONLY || c.id.includes(process.env.ONLY))))
+    for (const [x,z] of c.track) for (const dx of [-200,0,200]) for (const dz of [-200,0,200])
+      raceTiles.add(`${Math.floor((x+dx+WJ.tile/2)/WJ.tile)}_${Math.floor((z+dz+WJ.tile/2)/WJ.tile)}`);
+}
 const ab = f => { const b = fs.readFileSync(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
-for (const [tx, tz] of WJ.tiles) {            // one tile at a time (packed or plain files)
+for (const [tx, tz] of WJ.tiles) {
+  if (raceTiles && !raceTiles.has(`${tx}_${tz}`)) continue;            // one tile at a time (packed or plain files)
   const d = `${A}tiles/${tx}_${tz}/`;
   W.add(makeTileData(WJ, tx, tz, await readTileData(async f => ab(d + f), WJ.packed)));
 }
@@ -39,7 +49,6 @@ function run(name, x, z, yaw, secs, ctl, every = 0.5, make = () => new Car(W, tu
   if (process.env.V) console.log(rows.join('\n'));
   return { car, rows };
 }
-const which = process.argv[2] || 'all';
 const FIELD = [828, 480];        // open farm fields east of campus
 if (which === 'all' || which === 'accel') run('accel 30s on field', ...FIELD, Math.PI / 2, 30, (t, i) => { i.throttle = 1; }, 2);
 if (which === 'all' || which === 'turn') run('full lock at ~110 km/h', ...FIELD, Math.PI / 2, 9, (t, i, c) => {
@@ -103,51 +112,21 @@ if (which === 'all' || which === 'water') {
 }
 
 if (which === 'all' || which === 'ramps') {
-  // challenge jump ramps: drive along the route (steering to follow it) into a ramp at fixed speeds; judge the
-  // jump + 3 s after landing. Also hit one the wrong way at 100 km/h.
-  const CH = JSON.parse(fs.readFileSync(A + 'challenges.json'));
-  const picks = [['sheridan', 0], ['sheridan', 2], ['willamina', 3], ['long-walk', 0], ['long-walk', 2]];
-  for (const [id, k] of picks) {
-    const c = CH.find(c => c.id === id), r = c.ramps[k]; if (!r) continue;
-    W.setRamps(c.ramps);
-    const R = c.route;
-    let ri = 0, bd = 1e9; R.forEach(([x, z], i) => { const d = Math.hypot(x - r.x, z - r.z); if (d < bd) { bd = d; ri = i; } });
-    const cases = id === 'long-walk' ? [[80, 1], [150, 1], [80, -1]] : [[100, 1], [250, 1], [500, 1], [1000, 1], [100, -1]];
-    for (const [kmh, dir] of cases) {
-      // start 40 m before the ramp (forwards) or past its back end (wrong way), lined up with it; the placer
-      // keeps 30 m before a ramp straight
-      const fx = Math.sin(r.yaw), fz = Math.cos(r.yaw), back = dir > 0 ? -40 : 31 + 40;
-      const sx = r.x + fx * back, sz = r.z + fz * back, yaw = dir > 0 ? r.yaw : r.yaw + Math.PI;
-      const si = ri;
-      let top = 0, onRamp = false, passed = false, airStart = null, flown = 0, after = null, fl = 0, wasUp = true;
-      let tgt = si, steerOn = false;
-      const { car } = run(`ramp ${id}#${k} at ${kmh} km/h${dir < 0 ? ' (wrong way)' : ''}`, sx, sz, yaw, 40 / (kmh / 3.6) + 6, (t, i, c) => {
-        if (t === 0) c.vel.set(Math.sin(yaw) * kmh / 3.6, 0, Math.cos(yaw) * kmh / 3.6);
-        i.throttle = c.vel.length() * 3.6 < kmh ? 1 : 0;
-        if (W.rampAt(c.pos.x, c.pos.z) > 0) onRamp = true; else if (onRamp) passed = true;
-        if (onRamp) top = Math.max(top, c.pos.y - W.groundAt(c.pos.x, c.pos.z));
-        if (passed && !c.grounded && airStart === null) airStart = [c.pos.x, c.pos.z];
-        if (airStart && c.grounded && !flown) flown = Math.hypot(c.pos.x - airStart[0], c.pos.z - airStart[1]);
-        if (onRamp) { up.set(0, 1, 0).applyQuaternion(c.quat); if (wasUp && up.y < 0) fl++; wasUp = up.y > 0; }
-        // pure pursuit: aim at the route point ~25 m + 0.4 s ahead
-        const look = 25 + c.vel.length() * 0.4;
-        if (!steerOn) { if (onRamp) steerOn = true; else return; }      // hold straight until on the ramp
-        while (R[tgt + dir] && Math.hypot(R[tgt][0] - c.pos.x, R[tgt][1] - c.pos.z) < look) tgt += dir;
-        fw.set(0, 0, 1).applyQuaternion(c.quat);
-        let d = Math.atan2(R[tgt][0] - c.pos.x, R[tgt][1] - c.pos.z) - Math.atan2(fw.x, fw.z); d = Math.atan2(Math.sin(d), Math.cos(d));
-        i.steer = Math.max(-1, Math.min(1, -d * 3));      // +steer = right = smaller yaw
-      }, 0.5);
-      up.set(0, 1, 0).applyQuaternion(car.quat);
-      console.log(`   ${onRamp ? '' : 'MISSED THE RAMP · '}peak ${top.toFixed(1)} m above the road · flew ${flown.toFixed(0)} m · flips from the jump ${fl} · end ${(car.vel.length() * 3.6).toFixed(0)} km/h, upright ${up.y.toFixed(2)}, ${car.grounded ? 'on wheels' : 'in the air'}`);
-    }
-  }
-  W.setRamps([]);
+  const { default: assert } = await import('node:assert/strict');
+  const races = JSON.parse(fs.readFileSync(A + 'challenges.json'));
+  assert(races.every(c => c.ramps.length === 0), 'races must never place ramps');
+  const fixed = JSON.parse(fs.readFileSync(A + 'ramps.json')); W.setFixedRamps(fixed);
+  for (const r of fixed) assert(W.rampAt(r.x + Math.sin(r.yaw) * 5, r.z + Math.cos(r.yaw) * 5) > 0, 'map ramp remains solid');
+  W.setFixedRamps([]);
+  console.log(`PASS ramps: ${races.length} races without ramps; ${fixed.length} fixed map ramps preserved (jump drives below)`);
 }
 
 if (which === 'all' || which === 'walls') {
-  // challenge walls (game/src/track.js): steer hard into the edge, then a bot drives whole routes; the car's centre
-  // must never get further out than the road edge
+  // Low physical barriers: impact regressions, then every real route with the same collider and DNF rule.
   const { makeTrack } = await import('../game/src/track.js');
+  const { makeRaceBarriers, raceBounds } = await import('../game/src/racebarriers.js');
+  const { testRaceBarriers } = await import('./race_barrier_test.mjs');
+  testRaceBarriers();
   const CH = JSON.parse(fs.readFileSync(A + 'challenges.json'));
   const outside = (c, T) => {           // how far the car centre is past the road edge (m), ≤ 0 inside
     let best = Infinity;
@@ -159,32 +138,21 @@ if (which === 'all' || which === 'walls') {
     }
     return best;
   };
-  const sher = CH.find(c => c.id === 'sheridan'), T = sher.track;
-  // a straight bit: the first ramp's run-out
-  const r0 = sher.ramps[0], fx = Math.sin(r0.yaw), fz = Math.cos(r0.yaw);
-  for (const [kmh, ang] of [[100, 0.6], [300, 0.35], [600, 0.2]]) {
-    const track = makeTrack(T); let worst = -9, hits = 0, maxHit = 0;
-    const sx = r0.x + fx * 60, sz = r0.z + fz * 60, yaw = r0.yaw + ang;     // pointed at the left edge
-    const { car } = run(`wall: into the edge at ${kmh} km/h, ${Math.round(ang * 57.3)}°`, sx, sz, yaw, 4, (t, i, c) => {
-      if (t === 0) c.vel.set(Math.sin(yaw) * kmh / 3.6, 0, Math.cos(yaw) * kmh / 3.6);
-      i.throttle = 1; i.steer = 0;
-      const h = track.constrain(c); if (h > 0) { hits++; maxHit = Math.max(maxHit, h); }
-      worst = Math.max(worst, outside(c, T));
-    }, 0.5);
-    console.log(`   furthest past the edge ${worst.toFixed(2)} m · wall contacts ${hits} steps, hardest ${(maxHit * 3.6).toFixed(0)} km/h · end ${(car.vel.length() * 3.6).toFixed(0)} km/h`);
-  }
-  // bot drives each whole route with walls + ramps on: pure pursuit, speed capped on bends
   const { Bike } = await import('../game/src/bike.js');
   for (const c of CH.filter(c => c.track && (!process.env.ONLY || c.id.includes(process.env.ONLY)))) {           // car + dirt-bike races (jet races have no walls)
-    const track = makeTrack(c.track); W.setRamps(c.ramps);
+    const track = makeTrack(c.track), bounds = raceBounds(track);
+    W.setRaceBarriers(makeRaceBarriers(c.track, W));
+    let escaped = false;
     const isBike = c.vehicle === 'bike', R = c.track, cap = c.id === 'long-walk' ? 110 : isBike ? 90 : 260;
     let tgt = 0, worst = -9, hits = 0, done = false, tEnd = null, slowT = 0, backT = 0, backs = 0;
     const [sx, sz] = R[0], yaw = Math.atan2(R[3][0] - sx, R[3][1] - sz);
-    const { car } = run(`walls: bot drives ${c.name}`, sx, sz, yaw, c.length / (cap / 3.6) * 2 + 60, (t, i, k) => {
+    const { car } = run(`walls: bot drives ${c.name}`, sx, sz, yaw, c.length / (cap / 3.6) * 4 + 120, (t, i, k) => {
       if (done) { i.throttle = 0; i.brake = 1; return; }
-      const sp = k.vel.length(), look = 10 + sp * 0.5;
-      while (R[tgt + 1] && Math.hypot(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) < look) tgt++;
-      if (isBike) tgt = Math.min(R.length - 1, track.index + Math.ceil(Math.min(look, 8 + sp * 0.35) / 8));     // bike bot: follow the route itself, don't cut hairpins
+      track.update(k.pos.x, k.pos.z);
+      const sp = k.vel.length(), look = 5 + sp * 0.35;
+      // Follow the local centreline with a speed-dependent lookahead, including car hairpins.
+      tgt = track.index; let ahead = 0;
+      while (R[tgt + 1] && ahead < look) { ahead += Math.hypot(R[tgt+1][0]-R[tgt][0], R[tgt+1][1]-R[tgt][1]); tgt++; }
       fw.set(0, 0, 1).applyQuaternion(k.quat);
       let d = Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) - Math.atan2(fw.x, fw.z); d = Math.atan2(Math.sin(d), Math.cos(d));
       i.steer = Math.max(-1, Math.min(1, -d * 2.5));
@@ -193,21 +161,29 @@ if (which === 'all' || which === 'walls') {
         const lmax = k.t.maxLean * Math.min(1, Math.max(0.05, (sp - 2) / 14));
         i.steer = Math.max(-1, Math.min(1, lean / lmax + (lean - k.lean) * 0.8));
       }
-      // slow for what's coming: heading change over the next ~60 m
-      const a = R[Math.min(R.length - 1, tgt + 3)], b = R[Math.min(R.length - 1, tgt + 15)], a0 = R[tgt];
-      let turn = Math.atan2(b[0] - a[0], b[1] - a[1]) - Math.atan2(a[0] - a0[0], a[1] - a0[1]); turn = Math.abs(Math.atan2(Math.sin(turn), Math.cos(turn)));
-      const want = Math.max(50, cap * (1 - turn * 1.2));
-      i.throttle = sp * 3.6 < want ? 1 : 0; i.brake = sp * 3.6 > want + 25 ? 1 : 0;
+      // Brake before tight bends instead of relying on an infinite wall to redirect the bot.
+      let curvature = 0;
+      for (let j = track.index; j < Math.min(R.length - 2, track.index + 12); j++) {
+        const a=R[j], b=R[j+1], c=R[j+2];
+        const turn=Math.atan2(c[0]-b[0],c[1]-b[1])-Math.atan2(b[0]-a[0],b[1]-a[1]);
+        curvature=Math.max(curvature,Math.abs(Math.atan2(Math.sin(turn),Math.cos(turn)))/Math.max(2,Math.hypot(b[0]-a[0],b[1]-a[1])));
+      }
+      const want = Math.max(12, Math.min(cap, Math.sqrt((isBike ? 3 : 6) / Math.max(.001, curvature)) * 3.6));
+      i.throttle = sp * 3.6 < want ? 1 : 0; i.brake = sp * 3.6 > want + 4 ? 1 : 0;
       // stuck (wedged on a tight bend): back up for 1.5 s with the wheel the other way, like a person would
       slowT = sp < 1 ? slowT + DT : 0;
       if (slowT > 1 && backT <= 0) { backT = 1.5; backs++; if (process.env.WV) console.log('   stuck at', k.pos.x.toFixed(0), k.pos.z.toFixed(0), 'tgt', tgt, 'surf', k.surface, 'contacts', k.contacts, 'pitch', ((k.pitch || 0) * 57.3).toFixed(0), 'gp', ((k.groundPitch || 0) * 57.3).toFixed(0), 'ramp', W.rampAt(k.pos.x, k.pos.z).toFixed(2), 'h', W.heightAt(k.pos.x, k.pos.z).toFixed(1), 'h+3', W.heightAt(k.pos.x + Math.sin(k.heading()) * 3, k.pos.z + Math.cos(k.heading()) * 3).toFixed(1), 'kmh', (k.vel.length() * 3.6).toFixed(0), 'thr', i.throttle, 'steer', i.steer.toFixed(2)); }
       if (backT > 0) { backT -= DT; i.throttle = 0; i.brake = 1; i.steer = -i.steer; }
-      const wallHit = track.constrain(k); if (wallHit > 0) hits++;
+      track.update(k.pos.x, k.pos.z);
+      if (bounds.update(k, DT) && !escaped) { escaped = true; console.error('Out of bounds at', k.pos.x.toFixed(2), k.pos.z.toFixed(2), 'track', track.index, 'speed', (sp*3.6).toFixed(1)); }
+      const wallHit = k.hit; if (wallHit > 0) hits++;
       if (process.env.TR && Math.hypot(k.pos.x - +process.env.TR.split(',')[0], k.pos.z - +process.env.TR.split(',')[1]) < 15 && (Math.round(t * 120) % 15 === 0 || (t > 180.85 && t < 181.05))) console.log('   tr', 'hit', k.hit.toFixed(1), 'bail', k.msgT > 0 ? k.msg : '', 'water', k.waterDepth.toFixed(2), 'y-h', (k.pos.y - W.heightAt(k.pos.x, k.pos.z)).toFixed(2), 'pitch', (k.pitch*57.3).toFixed(0), 'gp', (k.groundPitch*57.3).toFixed(0), t.toFixed(2), k.pos.x.toFixed(1), k.pos.z.toFixed(1), 'hd', (k.heading() * 57.3).toFixed(0), 'tgtdir', (Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) * 57.3).toFixed(0), 'kmh', (k.vel.length() * 3.6).toFixed(1), 'thr', i.throttle, 'brk', i.brake, 'st', i.steer.toFixed(2), 'wall', wallHit.toFixed(2), 'vf', k.vel.dot(new THREE.Vector3(0,0,1).applyQuaternion(k.quat)).toFixed(2), 'yawRate', (k.yawRate||0).toFixed(2), 'contacts', k.contacts);
       worst = Math.max(worst, outside(k, R));
-      if (track.index >= R.length - 3) { done = true; tEnd = t; }
+      if (track.index >= R.length - 3) { done = true; tEnd = t; W.setRaceBarriers(null); }
     }, 30, isBike ? () => new Bike(W) : undefined);
     console.log(`   ${done ? `reached the finish in ${tEnd.toFixed(0)} s` : `DID NOT FINISH (got to ${(track.index / (R.length - 1) * 100).toFixed(0)}%)`} · furthest past the edge ${worst.toFixed(2)} m · wall contact ${hits} steps · backed up ${backs}×`);
+    if (!done || escaped) { console.error(`FAIL race barrier bot ${c.id}: finished=${done}, out of bounds=${escaped}`); process.exitCode = 1; }
+    W.setRaceBarriers(null);
   }
   W.setRamps([]);
 }
