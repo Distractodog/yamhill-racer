@@ -5,7 +5,7 @@ export const VISITOR_CAP = 10000;
 export const RECORD_CAP = 2000;
 export const RETENTION = 60;
 const date = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
-const empty = () => ({ visits: 0, unique: 0, games: 0, countries: {} });
+const empty = () => ({ visits: 0, unique: 0, countries: {} });
 export const statsObject = env => env.STATS.get(env.STATS.idFromName('Stats'));
 export const authorized = (request, key) => typeof key === 'string' && key.length > 0 && new URL(request.url).searchParams.get('key') === key;
 const hashOf = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), b => b.toString(16).padStart(2, '0')).join('');
@@ -34,18 +34,6 @@ export class Stats {
   constructor(ctx) { this.ctx = ctx; }
   fetch(request) { return this.ctx.blockConcurrencyWhile(() => this.handle(request)); }
   async records(prefix) { return [...(await this.ctx.storage.list({ prefix, limit: RECORD_CAP + 1 })).values()]; }
-  async migrateMpGames(today) {
-    const storage = this.ctx.storage, flag = 'migration:mp-reset-1';
-    if (await storage.get(flag)) return;
-    const days = await storage.list({ prefix: 'day:' });
-    const games = await this.records('game:');
-    const todayGames = games.filter(game => date(game.start) === today && game.maxPlayers >= 2).length;
-    for (const [key, row] of days) {
-      row.games = key === `day:${today}` ? todayGames : 0;
-      await storage.put(key, row);
-    }
-    await storage.put(flag, true);
-  }
   async trim(prefix, time, cap = RECORD_CAP) {
     const entries = [...await this.ctx.storage.list({ prefix })].sort((a, b) => time(a[1]) - time(b[1]));
     const expired = entries.filter(([, v], i) => time(v) < Date.now() - RETENTION * DAY || i < entries.length - cap);
@@ -53,7 +41,6 @@ export class Stats {
   }
   async handle(request) {
     const now = Date.now(), today = date(now), storage = this.ctx.storage;
-    await this.migrateMpGames(today);
     if (!await storage.getAlarm()) await storage.setAlarm(now + DAY);
     const path = new URL(request.url).pathname;
     if (path === '/stats') {
@@ -71,14 +58,15 @@ export class Stats {
     }
     const body = await request.json().catch(() => ({}));
     if (path === '/game') {
-      const key = `day:${today}`, row = await storage.get(key) || empty();
-      if (!body.id) { row.games++; await storage.put(key, row); }
-      else {
+      // Legacy ID-less reports cannot be reconciled with a game record.
+      if (str(body.id)) {
         const gameKey = `game:${body.id}`;
         let game = await storage.get(gameKey);
         if (!game) { await this.trim('game:', s => s.start, RECORD_CAP - 1); game = { id: str(body.id), code: str(body.code, 5), start: now, last: now, maxPlayers: 0, names: [] }; }
         const count = num(body.count, 16);
-        if (game.maxPlayers < 2 && count >= 2) { row.games++; await storage.put(key, row); }
+        // Preserve the only known day for older records before tracking daily presence.
+        game.mpDays ||= game.maxPlayers >= 2 ? [date(game.start)] : [];
+        if (count >= 2 && !game.mpDays.includes(today)) game.mpDays.push(today);
         game.maxPlayers = Math.max(game.maxPlayers, count);
         game.names = [...new Set([...game.names, ...(body.names || []).map(n => str(n))])].slice(0, 64);
         game.host = str(body.host) || game.host || '';
@@ -187,6 +175,8 @@ export async function hit(request, env) {
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const time = ms => ms == null ? '—' : new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ms));
+// Legacy records have only a lifetime peak; their start day is the best available date.
+const mpDays = game => game.mpDays ?? (game.maxPlayers >= 2 ? [date(game.start)] : []);
 const duration = ms => `${(Math.max(0, ms || 0) / 60000).toFixed(1)} min`;
 export function peakConcurrent(sessions, from, to) {
   const events = sessions.flatMap(s => (s.spans || [{ start: s.start, last: endOf(s) }]).flatMap(span => {
@@ -204,12 +194,13 @@ export function peakConcurrent(sessions, from, to) {
 export function renderStats(rows, sessions = [], games = [], now = Date.now()) {
   sessions = [...sessions].sort((a, b) => b.start - a.start);
   games = [...games].sort((a, b) => b.start - a.start);
+  const today = date(now), gameDays = new Map(games.map(g => [g, mpDays(g)]));
   const table = (headers, content) => `<div class="scroll"><table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${content || `<tr><td colspan="${headers.length}">No records yet</td></tr>`}</tbody></table></div>`;
   const tr = values => `<tr>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
   const periods = [[1, 'Today'], [7, '7 days'], [30, '30 days']];
   const cards = periods.map(([days, label]) => {
     const first = rows[Math.min(days - 1, rows.length - 1)]?.day || date(now);
-    const selected = sessions.filter(s => date(s.start) >= first), selectedGames = games.filter(g => date(g.start) >= first && g.maxPlayers >= 2);
+    const selected = sessions.filter(s => date(s.start) >= first), selectedGames = games.filter(g => gameDays.get(g).some(day => day >= first && day <= today));
     const play = sessions.reduce((sum, s) => sum + Object.entries(s.playByDay || { [date(s.start)]: s.activeMs }).filter(([day]) => day >= first).reduce((n, [, ms]) => n + ms, 0), 0);
     const from = dayStart(first);
     return `<section class="card"><h2>${label}</h2><dl>${[
@@ -218,19 +209,23 @@ export function renderStats(rows, sessions = [], games = [], now = Date.now()) {
       ['MP games with 2+ players', selectedGames.length], ['Peak concurrent players', peakConcurrent(sessions, from, now)],
     ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></section>`;
   }).join('');
-  const daily = rows.slice(0, 30).map(r => ({ ...r, play: sessions.reduce((sum, s) => sum + (s.playByDay?.[r.day] ?? (date(s.start) === r.day ? s.activeMs : 0)), 0) }));
+  const daily = rows.slice(0, 30).map(r => ({ ...r, games: games.filter(g => gameDays.get(g).includes(r.day)).length, play: sessions.reduce((sum, s) => sum + (s.playByDay?.[r.day] ?? (date(s.start) === r.day ? s.activeMs : 0)), 0) }));
   const chartRows = [...daily].reverse(), maxVisits = Math.max(1, ...daily.map(r => r.visits)), maxPlay = Math.max(60000, ...daily.map(r => r.play));
-  const chart = `<svg viewBox="0 0 960 220" role="img" aria-label="Daily visits (blue) and play minutes (green), each scaled to its own maximum"><title>Daily visits and play time</title>${chartRows.map((r, i) => {
+  const chart = `<svg viewBox="0 0 960 220" role="img" aria-label="Daily visits (yellow) and play minutes (green), each scaled to its own maximum"><title>Daily visits and play time</title>${chartRows.map((r, i) => {
     const x = 12 + i * 31, vh = r.visits / maxVisits * 155, ph = r.play / maxPlay * 155;
-    return `<g><title>${r.day}: ${r.visits} visits, ${duration(r.play)}</title><rect x="${x}" y="${175 - vh}" width="12" height="${vh}" fill="#3c70c8"/><rect x="${x + 13}" y="${175 - ph}" width="12" height="${ph}" fill="#168578"/>${i % 5 === 0 ? `<text x="${x}" y="200" font-size="12">${r.day.slice(5)}</text>` : ''}</g>`;
+    return `<g><title>${r.day}: ${r.visits} visits, ${duration(r.play)}</title><rect x="${x}" y="${175 - vh}" width="12" height="${vh}" class="visits-bar"/><rect x="${x + 13}" y="${175 - ph}" width="12" height="${ph}" class="play-bar"/>${i % 5 === 0 ? `<text x="${x}" y="200" font-size="12">${r.day.slice(5)}</text>` : ''}</g>`;
   }).join('')}</svg>`;
   const totals = daily.reduce((a, r) => ({ visits: a.visits + r.visits, unique: a.unique + r.unique, games: a.games + r.games, play: a.play + r.play }), { visits: 0, unique: 0, games: 0, play: 0 });
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Yamhill Racer private statistics</title>
-<style>body{font:15px system-ui;margin:32px auto;padding:0 24px;max-width:1500px;color:#172331;background:#f4f7fa}h1{margin-bottom:8px}h2{font-size:21px;margin-top:32px}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.card{background:white;border:1px solid #dae2ec;border-radius:12px;padding:20px}.card h2{margin:0 0 16px}dl{display:grid;grid-template-columns:1fr auto;gap:10px;margin:0}dd{margin:0;font-weight:650}.scroll{overflow:auto;background:white;border:1px solid #dae2ec;border-radius:8px}table{border-collapse:collapse;width:100%;white-space:nowrap}td,th{text-align:left;padding:12px;border-bottom:1px solid #e0e6ee;vertical-align:top}th{background:#eaf0f6}small{color:#526479}svg{width:100%;max-height:260px;background:white;border-radius:8px}p{color:#526479;line-height:1.5}.blue{color:#3c70c8}.green{color:#168578}@media(max-width:850px){.cards{grid-template-columns:1fr}body{padding:0 12px}}</style>
+<style>
+:root{color-scheme:dark;--bg:#0f1a14;--panel:#16241c;--text:#e8efe9;--muted:#9fb3a6;--accent:#ffd23f;--play:#78d6a1;--border:#304637;--head:#1f3327}
+@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f1f6f2;--panel:#ffffff;--text:#17291d;--muted:#4b6354;--accent:#806000;--play:#187448;--border:#cbd9cf;--head:#e3ede6}}
+body{font:15px system-ui;margin:32px auto;padding:0 24px;max-width:1500px;color:var(--text);background:var(--bg)}h1{margin-bottom:8px}h2{font-size:21px;margin-top:32px}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px}.card h2{margin:0 0 16px;color:var(--accent)}dl{display:grid;grid-template-columns:1fr auto;gap:10px;margin:0}dd{margin:0;font-weight:650}.scroll{overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:8px}table{border-collapse:collapse;width:100%;white-space:nowrap}td,th{text-align:left;padding:12px;border-bottom:1px solid var(--border);vertical-align:top}th{background:var(--head)}tbody tr:last-child td{border-bottom:0}small{color:var(--muted)}svg{width:100%;max-height:260px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-sizing:border-box}svg text{fill:var(--muted)}p{color:var(--muted);line-height:1.5}.yellow{color:var(--accent)}.green{color:var(--play)}.visits-bar{fill:var(--accent)}.play-bar{fill:var(--play)}@media(max-width:850px){.cards{grid-template-columns:1fr}body{padding:0 12px}}
+</style>
 <h1>Yamhill Racer private statistics</h1><p>All times Pacific (America/Los_Angeles). Anonymous estimates · last 60 days, up to ${RECORD_CAP.toLocaleString()} sessions and games.</p>
 <div class="cards">${cards}</div>
-<h2>Daily visits &amp; play time</h2><p><span class="blue">■ Visits (max ${maxVisits})</span> · <span class="green">■ Play time (max ${duration(maxPlay)})</span>. Bars use separate scales.</p>${chart}
-<h2>Sessions</h2><p>Newest first. End is the last report when no explicit end arrived. Duration includes hidden intervals; active minutes count visible time. Visitor and session counts use the Pacific start date; play time is credited on the day played. At most 500 records shown in each detail table.</p>
+<h2>Daily visits &amp; play time</h2><p><span class="yellow">■ Visits (max ${maxVisits})</span> · <span class="green">■ Play time (max ${duration(maxPlay)})</span>. Bars use separate scales.</p>${chart}
+<h2>Sessions</h2><p>Newest first. End is the last report when no explicit end arrived. Duration includes hidden intervals; active minutes count visible time. Visitor and session counts use the Pacific start date; play time is credited on the day played. At most 500 sessions shown. All retained game records are shown.</p>
 ${table(['Start', 'End', 'Duration / active', 'Country', 'Player', 'Vehicles', 'Races started / finished', 'Multiplayer game / peak', 'Settings'], sessions.slice(0, 500).map(s => tr([
   time(s.start), `${time(endOf(s))}${s.end == null ? ' <small>(last report)</small>' : ''}`, `${duration(endOf(s) - s.start)} / ${duration(s.activeMs)}`,
   esc(s.country), esc(s.nickname || `anonymous #${s.visitor.slice(-4)}`), s.vehicles.map(esc).join('<br>') || '—',
@@ -238,10 +233,10 @@ ${table(['Start', 'End', 'Duration / active', 'Country', 'Player', 'Vehicles', '
   s.mpGames.map(g => `${esc(g.code || g.id)} / ${g.maxPlayers}<br><small>${esc(g.id)}</small>`).join('<br>') || '—',
   `${esc(s.graphics)} graphics${s.builder ? '<br>Builder used' : ''}<br><small>${esc(s.browser)} · ${esc(s.screen)} · TZ offset ${esc(s.offset)} min west of UTC</small>`,
 ])).join(''))}
-<h2>Multiplayer games</h2>${table(['Start', 'End', 'Game', 'Host nickname', 'Max players', 'Player nicknames', 'Duration'], games.slice(0, 500).map(g => tr([
-  time(g.start), `${time(g.end ?? g.last)}${g.end == null ? ' <small>(last report)</small>' : ''}`, `${esc(g.code)}<br><small>${esc(g.id)}</small>`, esc(g.host || 'anonymous'), g.maxPlayers, g.names.map(esc).join(', '), duration((g.end ?? g.last) - g.start),
+<h2>Multiplayer games</h2>${table(['Start', 'End', 'Game', 'Host nickname', 'Max players', '2+ player days (Pacific)', 'Player nicknames', 'Duration'], games.map(g => tr([
+  time(g.start), `${time(g.end ?? g.last)}${g.end == null ? ' <small>(last report)</small>' : ''}`, `${esc(g.code)}<br><small>${esc(g.id)}</small>`, esc(g.host || 'anonymous'), g.maxPlayers, gameDays.get(g).map(esc).join('<br>') || '—', (g.names || []).map(esc).join(', '), duration((g.end ?? g.last) - g.start),
 ])).join(''))}
-<h2>Per day</h2><p>Visits are page loads; daily unique totals count visitor-days. MP games are counted when at least two players are in the same game. Daily counters survive detail-record caps.</p>
+<h2>Per day</h2><p>Visits are page loads; daily unique totals count visitor-days. MP games are counted when at least two players are in the same game: once per game per Pacific day, derived from the retained game records above. Summary cards count distinct games in each period. Older records use the start day when daily presence was unavailable. Only visit counters survive detail-record caps.</p>
 ${table(['Date (Pacific)', 'Visits', 'Unique visitors', 'MP games', 'Play time'], daily.map(r => tr([r.day, r.visits, r.unique, r.games, duration(r.play)])).join('') + tr(['30-day totals', totals.visits, totals.unique, totals.games, duration(totals.play)]))}
 <h2>Top countries (visits)</h2>${table(['Country', 'Visits'], Object.entries(daily.reduce((a, r) => { for (const [k, v] of Object.entries(r.countries)) a[k] = (a[k] || 0) + v; return a; }, {})).sort((a, b) => b[1] - a[1]).map(([k, v]) => tr([esc(k), v])).join(''))}
 <p>No IP addresses, exact screen sizes, full user agents, locations, or driving coordinates are stored. Clearing browser storage creates a new visitor.</p></html>`;
