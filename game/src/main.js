@@ -164,9 +164,9 @@ const pick = (o, ranges) => Object.fromEntries(Object.keys(ranges).map(k => [k, 
 const saveB = () => { try { localStorage.setItem('yr-tuning-bike-1', JSON.stringify(pick(bikeTuning, BIKE_RANGES))); localStorage.setItem('yr-tuning-jet-1', JSON.stringify(pick(jetTuning, JET_RANGES))); } catch {} };
 const fb = gui.addFolder('Bike'); for (const [k, r] of Object.entries(BIKE_RANGES)) fb.add(bikeTuning, k, ...r).onChange(saveB);
 const fj = gui.addFolder('Jet'); for (const [k, r] of Object.entries(JET_RANGES)) fj.add(jetTuning, k, ...r).onChange(saveB);
-fb.close(); fj.close();
 gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuning, JET); saveB(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'resetV').name('Reset bike + jet');
 gui.open();
+settings.bindTuning(gui);
 
 // H returns to the point chosen for this session.
 function goHome() { respawnHold.cancel(); sessionSpawn.goHome(); }

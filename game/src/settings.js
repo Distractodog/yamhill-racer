@@ -12,7 +12,7 @@ export function createSettings() {
   const closeButton = document.getElementById('settings-close');
   const unitsSelect = document.getElementById('units-select');
   let current = null, ready = false, changed = () => {}, beforeOpen = () => {}, returnFocus = null;
-  let external = null, refreshAtmosphere = () => {};
+  let external = null, refreshAtmosphere = () => {}, closeTuning = () => {};
   if (unitsSelect) {
     unitsSelect.value = getUnits();
     unitsSelect.addEventListener('change', () => setUnits(unitsSelect.value));
@@ -51,7 +51,7 @@ export function createSettings() {
     if (!ready) return;
     closeExternal();
     if (current === view) { close(); return; }
-    if (view === 'tuning') document.querySelectorAll('#tuning-controls .folder').forEach(folder => folder.close?.());
+    if (view === 'tuning') closeTuning();
     menu.close(); beforeOpen(); returnFocus = trigger?.closest('#menu-panel') ? document.getElementById('menu-button') : trigger; current = view;
     title.textContent = view === 'tuning' ? 'Settings' : 'How to play';
     tuning.hidden = view !== 'tuning'; help.hidden = view !== 'help'; panel.hidden = false;
@@ -107,6 +107,10 @@ export function createSettings() {
     get open() { return current !== null || welcomeOpen || external !== null || menu.open; }, close() { menu.close(); close(); closeExternal(); }, showWelcome, closeWelcome,
     openExternal(panel, onClose) { menu.close(); closeExternal(); closeWelcome(); close(); beforeOpen(); external = { panel, close: onClose }; changed(); },
     get welcomeOpen() { return welcomeOpen; },
+    bindTuning(gui) {
+      closeTuning = () => gui.foldersRecursive().forEach(folder => folder.close());
+      closeTuning();
+    },
     // Settings → Time of day & weather (atmosphere.js): cycle on/off, jump the clock, weather, or one fixed look
     bindAtmosphere(atmosphere, presets = atmosphere.presets) {
       const cycle = document.getElementById('atmo-cycle'), options = document.getElementById('atmo-cycle-options');

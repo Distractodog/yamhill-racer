@@ -35,6 +35,8 @@
     --focus-color: #ffffff30; --number-color: #ffd76a; --font-size: 12px; }
   #settings-panel .lil-gui.root > .title { display: none; }
   #settings-help { margin-top: 16px; }
+  .units-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+  #units-select { font: inherit; color: #fff; background: #1d2c20; border: 1px solid #ffffff35; border-radius: 6px; padding: 5px 8px; }
   .sound-row { display: grid; grid-template-columns: 70px 1fr 42px; align-items: center; gap: 10px; margin: 6px 0; }
   .sound-row input { width: 100%; accent-color: #ffd76a; margin: 0; }
   .sound-row output { text-align: right; color: #ffd76a; font-variant-numeric: tabular-nums; }
@@ -122,7 +124,7 @@
 <section id="settings-panel" role="dialog" aria-labelledby="settings-title" hidden>
   <header class="panel-heading"><h2 id="settings-title">Settings</h2><button id="settings-close" aria-label="Close panel">×</button></header>
   <div id="tuning-content">
-    <div class="sound-row"><label for="units-select">Units</label><select id="units-select"><option value="metric">km/h</option><option value="imperial">mph</option></select></div>
+    <div class="units-row"><label for="units-select">Units:</label><select id="units-select"><option value="metric">km/h</option><option value="imperial">mph</option></select></div>
     <section id="atmosphere-content" aria-labelledby="atmosphere-heading">
       <h3 id="atmosphere-heading">Time of day &amp; weather</h3>
       <div id="atmosphere-controls">
