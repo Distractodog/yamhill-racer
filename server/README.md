@@ -34,7 +34,17 @@ npx wrangler deploy --config server/wrangler.toml
 
 Wrangler creates the `ROOMS` Durable Object binding and the SQLite-backed
 `RelayRoom` namespace using migration `v1`. Keep that migration for subsequent
-deploys. No secrets or database provisioning are needed. To inspect logs:
+deploys. Migration `v2` adds the separate SQLite-backed `Stats` namespace and
+`STATS` binding; keep both migrations. Set the private stats key before deploying:
+
+```sh
+npx wrangler secret put STATS_KEY --config server/wrangler.toml
+npx wrangler deploy --config server/wrangler.toml
+```
+
+Enter a long random secret at the prompt; never put it in source, shell arguments,
+or a committed URL. The director runs these commands; no manual database provisioning
+is needed. To inspect logs:
 
 ```sh
 npx wrangler tail --config server/wrangler.toml
@@ -100,3 +110,48 @@ node --check server/worker.js
 Tests use fake clients and storage, never bind ports, and cover room protocol,
 Worker routing, and hibernation restoration. Deployment, actual socket upgrades,
 and a two-browser game session still need the director's integration check.
+
+## Private visitor statistics
+
+Open `https://yamhill-racer-relay.yamhill-racer.workers.dev/stats?key=<SECRET>`
+with the secret entered privately. Missing, wrong, or unconfigured keys return 404.
+The HTML has no external resources, is not cached, and suppresses referrers. Keep
+this URL private (it contains the key, including in your browser history).
+
+The page shows 30 UTC days, totals for that window, and country counts by visits.
+The unique total is **visitor-days**, not a distinct count across the whole month.
+An MP game means an accepted host hello opening a room, including a room with no
+guests; reconnecting as a new host counts again. Repeated hello, guest joins and
+hibernation restoration do not increment it. Stats failures never reject MP messages.
+The local Node relay intentionally remains a multiplayer-only stand-in.
+
+The game sends one nonblocking POST `/hit` per page load with its own random
+`yr-visitor-1` localStorage ID and pathname. It skips localhost, 127.0.0.1, IPv6
+loopback, and any URL containing `?nostats` (also works alongside other parameters).
+It uses a text/plain sendBeacon, falling back to credential-free keepalive fetch
+if unavailable/refused. Storage and network failures are ignored. Existing Cloudflare
+Web Analytics stays enabled.
+
+Only the GitHub Pages origin `https://distractodog.github.io` is accepted for hits.
+There are no cookies and no IP addresses stored by this implementation. The path
+is validated then discarded. Visitor IDs are SHA-256 hashed with the UTC date
+before storage; only daily hashes and hit counts persist. Cloudflare country codes
+are aggregated; unavailable country is `XX`. At most 30 hits per visitor/day count.
+To bound storage, each day accepts at most 10,000 distinct visitor hashes; further
+new visitors that day are dropped, while already tracked visitors retain their
+30-hit allowance. A daily Durable Object alarm deletes counters and hashes older
+than the 35-day window even if no hits arrive. These are anonymous approximate
+analytics, not abuse-proof traffic auditing: clearing storage creates a new ID.
+
+Deploy the relay with migration `v2` before publishing the updated game. Then load
+the published game once, check the private table increments, reload and check the
+unique count stays fixed, and open a host room to check MP games increments. Test
+with uBlock enabled. Workers Free request/storage quotas still apply; this uses
+one shared Stats object and does no per-frame work. No live deploy was performed
+by the worker implementing this feature.
+
+```sh
+node --test server/relay.test.mjs server/stats.test.mjs
+node --check game/src/visits.js
+node --check server/stats.mjs
+```
