@@ -34,6 +34,18 @@ export class Stats {
   constructor(ctx) { this.ctx = ctx; }
   fetch(request) { return this.ctx.blockConcurrencyWhile(() => this.handle(request)); }
   async records(prefix) { return [...(await this.ctx.storage.list({ prefix, limit: RECORD_CAP + 1 })).values()]; }
+  async migrateMpGames(today) {
+    const storage = this.ctx.storage, flag = 'migration:mp-reset-1';
+    if (await storage.get(flag)) return;
+    const days = await storage.list({ prefix: 'day:' });
+    const games = await this.records('game:');
+    const todayGames = games.filter(game => date(game.start) === today && game.maxPlayers >= 2).length;
+    for (const [key, row] of days) {
+      row.games = key === `day:${today}` ? todayGames : 0;
+      await storage.put(key, row);
+    }
+    await storage.put(flag, true);
+  }
   async trim(prefix, time, cap = RECORD_CAP) {
     const entries = [...await this.ctx.storage.list({ prefix })].sort((a, b) => time(a[1]) - time(b[1]));
     const expired = entries.filter(([, v], i) => time(v) < Date.now() - RETENTION * DAY || i < entries.length - cap);
@@ -41,6 +53,7 @@ export class Stats {
   }
   async handle(request) {
     const now = Date.now(), today = date(now), storage = this.ctx.storage;
+    await this.migrateMpGames(today);
     if (!await storage.getAlarm()) await storage.setAlarm(now + DAY);
     const path = new URL(request.url).pathname;
     if (path === '/stats') {

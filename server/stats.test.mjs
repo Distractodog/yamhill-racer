@@ -16,7 +16,10 @@ function fixture() {
       get: async key => structuredClone(data.get(key)),
       put: async (key, value) => { for (const [k, v] of typeof key === 'string' ? [[key, value]] : Object.entries(key)) data.set(k, structuredClone(v)); },
       getAlarm: async () => alarm, setAlarm: async value => { alarm = value; },
-      list: async ({ prefix, end, limit }) => new Map([...data].filter(([k]) => k.startsWith(prefix) && (!end || k < end)).sort().slice(0, limit)),
+      list: async ({ prefix, end, limit }) => {
+        const entries = [...data].filter(([k]) => k.startsWith(prefix) && (!end || k < end)).sort();
+        return new Map(limit == null ? entries : entries.slice(0, limit));
+      },
       delete: async keys => { for (const k of Array.isArray(keys) ? keys : [keys]) data.delete(k); },
     },
   };
@@ -64,7 +67,7 @@ test('Pacific rollover resets limit; daily alarm retains 60 days even with no vi
     assert.equal([...f.data.keys()].filter(k => k.startsWith('visitor:')).length, 62); // two real retained hashes
     now += 65 * DAY;
     await f.stats.alarm();
-    assert.equal(f.data.size, 0);
+    assert.deepEqual([...f.data.keys()], ['migration:mp-reset-1']);
   } finally { Date.now = realNow; }
 });
 
@@ -72,8 +75,32 @@ test('bounded visitor storage stops accepting new IDs at daily cap', async () =>
   const f = fixture();
   f.data.set(dayKey(), { visits: VISITOR_CAP, unique: VISITOR_CAP, games: 0, countries: {} });
   await f.hit();
-  assert.equal(f.data.size, 1);
+  assert.equal(f.data.size, 2); // daily row and one-time migration flag
   assert.equal(f.data.get(dayKey()).visits, VISITOR_CAP);
+});
+
+test('multiplayer game counter migration resets old days, rebuilds today once, and preserves other stats', async () => {
+  const realNow = Date.now;
+  Date.now = () => Date.parse('2026-11-17T20:00:00Z');
+  try {
+    const f = fixture();
+    f.data.set('day:2026-11-16', { visits: 12, unique: 8, games: 5, countries: { US: 12 } });
+    f.data.set('day:2026-11-17', { visits: 7, unique: 6, games: 5, countries: { CA: 7 } });
+    f.data.set('game:joined-a', { start: Date.now() - 1000, maxPlayers: 2 });
+    f.data.set('game:joined-b', { start: Date.now() - 2000, maxPlayers: 4 });
+    f.data.set('game:solo', { start: Date.now() - 3000, maxPlayers: 1 });
+    f.data.set('game:yesterday', { start: Date.parse('2026-11-16T20:00:00Z'), maxPlayers: 2 });
+
+    await f.stats.fetch(new Request('https://stats/unknown'));
+    assert.deepEqual(f.data.get('day:2026-11-16'), { visits: 12, unique: 8, games: 0, countries: { US: 12 } });
+    assert.deepEqual(f.data.get('day:2026-11-17'), { visits: 7, unique: 6, games: 2, countries: { CA: 7 } });
+    assert.equal(f.data.get('migration:mp-reset-1'), true);
+
+    f.data.get('day:2026-11-16').games = 9;
+    await f.stats.fetch(new Request('https://stats/game', { method: 'POST', body: '{}' }));
+    assert.equal(f.data.get('day:2026-11-16').games, 9);
+    assert.equal(f.data.get('day:2026-11-17').games, 3);
+  } finally { Date.now = realNow; }
 });
 
 test('private route hides missing/wrong/unconfigured key and renders 30 rows and totals', async () => {
