@@ -24,7 +24,7 @@ const BOX = 0.75;     // loft sides: a boxy cabin
 export function buildPropPlaneModel() {
   const root = new THREE.Group(); root.name = 'jet-prop';
   const white = material(0xf3f3ef, 'body'), stripe = material(0x1f5fae, 'trim'), dark = material(0x2a2e36), metal = material(0x9aa0a8);
-  const glass = material(0x24425a, null, { emissive: 0x0a1a28 }), tyre = material(0x1d1e22), lamp = material(0xfff2c9, null, { emissive: 0x6a6040 });
+  const glass = material(0x24425a, null, { emissive: 0x0a1a28 }), tyre = material(0x1d1e22);
   // fuselage, cabin glass, cheat line and the window frames
   put(root, loft(BODY, BOX), white);
   const canopy = put(root, loft(CABIN, BOX), glass);
@@ -69,15 +69,11 @@ export function buildPropPlaneModel() {
     pant(w.holder, white, r, 0.16);
     wheels.push(w);
   }
-  // lights: landing light in the left wing's leading edge, nav lights on the tips, white tail light, strobe on the fin
-  put(root, new THREE.BoxGeometry(0.34, 0.08, 0.04), lamp, 2.2, 1.06 + 2.2 * 0.025, 1.43);
-  const ly = 1.06 + 2.2 * 0.025;          // the lit lens (lights.js) on the lamp box's front face
-  const lights = { head: [new THREE.Vector3(2.2, ly, 1.45)], tail: [],
-    lens: { head: [[[2.03, ly - .04, 1.45], [2.37, ly - .04, 1.45], [2.37, ly + .04, 1.45], [2.03, ly + .04, 1.45]]] }, nav: {
+  // Navigation lights on the tips, white tail light, strobe on the fin
+  const lights = { head: [], tail: [], nav: {
     left: new THREE.Vector3(5.7, 1.2, 0.8), right: new THREE.Vector3(-5.7, 1.2, 0.8),
     tail: new THREE.Vector3(0, 0.62, -5.12), strobe: new THREE.Vector3(0, 1.88, -4.6),
   } };
-  lights.landing = lights.head;
   // wreck: blackened, crumpled, canopy gone, controls and propeller bent (kept attached)
   const mats = [white, stripe];
   let wrecked = false, base = [];          // paint is snapshotted on entering the wreck (Garage colours), restored on leaving
@@ -96,7 +92,7 @@ export function buildPropPlaneModel() {
   const setSpeedBrake = speedBrakePanels(root, stripe, [-1, 1].map(s => ({ x: s * 2.7, y: 1.23, z: .35, w: 1.7, d: .48 })));
   root.userData = { setSpeedBrake,
     wheels, setGear: () => {}, noseWheel: wheels[0].holder, elevator, rudder, aileronL, aileronR, wreck, canopy, propeller: prop,
-    wreckMats: mats, wreckColor: WRECK, blob: [11.2, 8.6], lights, landingLight: true,
+    wreckMats: mats, wreckColor: WRECK, blob: [11.2, 8.6], lights,
     // Garage liveries / scuffs on top of the wings (cosmetics.js)
     decalSpots: [[1.3, 1.05, 3.6, deck + 3.6 * 0.025 + 0.01, 0.55, -Math.PI / 2], [1.3, 1.05, -3.6, deck + 3.6 * 0.025 + 0.01, 0.55, -Math.PI / 2]],
     animate(v, dt) {

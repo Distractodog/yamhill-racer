@@ -94,7 +94,6 @@ export function buildStealthModel() {
     wheels.push({ leg, holder, spin, r: .35, front: i === 0 });
   }
   const setGear = k => { for (const w of wheels) { w.leg.scale.y = Math.max(.05,k); w.leg.visible = k > .06; } };
-  box(root, mat('#fff2c9'), .16, .03, .1, 0, -.33, 4.15);       // landing light under the nose
   const wreckMats = [body,trim], wreckColor = 0x292b2f;
   let wrecked = false, paint = [];
   const wreck = on => {
@@ -124,10 +123,9 @@ export function buildStealthModel() {
     x: s * .72, y: .61, z: -1.9, w: .69, d: 1.5, axis: 'z', side: -s, angle: -s * 1.15,
   })));
   root.userData = { setSpeedBrake, wheels, noseWheel: wheels[0].holder, setGear, flame, elevator, rudder, aileronL, aileronR,
-    canopy, wreck, wreckMats, wreckColor, blob: [9.8,13], landingLight: true,
+    canopy, wreck, wreckMats, wreckColor, blob: [9.8,13],
     decalPanels: [[.9,.65,2.4,.065,-.9,-Math.PI/2],[.9,.65,-2.4,.065,-.9,-Math.PI/2]],
-    lights: { head: [new THREE.Vector3(0,-.345,4.15)], tail: [],
-      lens: { head: [[[-.08,-.345,4.1],[.08,-.345,4.1],[.08,-.345,4.2],[-.08,-.345,4.2]]] }, nav: {
+    lights: { head: [], tail: [], nav: {
       left: new THREE.Vector3(4.87,.1,-1.25), right: new THREE.Vector3(-4.87,.1,-1.25),
       tail: new THREE.Vector3(0,.1,-5.55), strobe: new THREE.Vector3(0,.65,-1),
     } },

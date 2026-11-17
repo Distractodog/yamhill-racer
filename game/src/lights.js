@@ -106,6 +106,7 @@ export function createVehicleLightLenses(mesh, kind = 'car') {
     if (role === 'head' || role === 'tail') geometries.push(geometry = lensGeometry(position, outline, role));
     const material = materialFor(color);
     const lens = new THREE.Mesh(geometry, material); lens.position.copy(position);
+    if (kind === 'jet' && !['head', 'tail'].includes(role)) lens.scale.setScalar(.3);
     lens.name = `vehicle-light-${role}`;
     (role === 'head' ? headGroup : group).add(lens); lamps.push({ lens, material, role, color: new THREE.Color(color) });
     return lens;
@@ -139,7 +140,7 @@ export function createVehicleLightLenses(mesh, kind = 'car') {
         if (role === 'strobe') lens.visible = on && time % 1.2 < .09;
         // Keep the running tail below display clipping so brakes visibly brighten it.
         material.emissive.copy(color);
-        material.emissiveIntensity = role === 'tail' ? (stopping ? 1 : .2) : 1;
+        material.emissiveIntensity = role === 'tail' ? (stopping ? 1 : .2) : kind === 'jet' ? .35 : 1;
       }
     },
     dispose() {
@@ -299,7 +300,8 @@ export function createVehicleLights(scene = null) {
         spot.angle = shape.angle; spot.penumbra = shape.penumbra; spot.distance = shape.distance; spot.color.set(shape.color);
         level = Math.min(1, spot.intensity / shape.intensity);       // carry on from the same strength (no pop)
       }
-      beam = on && mesh.visible && (vehicle.kind !== 'jet' || !!mesh.userData.landingLight) && lenses.anchors.head?.length > 0;     // aircraft: only a landing light casts a beam
+      const aircraft = vehicle.kind === 'jet';
+      beam = !aircraft && on && mesh.visible && lenses.anchors.head?.length > 0;
       // `level` (0..1) eases; the intensity follows the current mesh's strength, so a switch fades without a pop
       const want = beam ? 1 : 0;
       level += (want - level) * Math.min(1, dt * HEADLIGHT_FADE);
