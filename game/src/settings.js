@@ -1,3 +1,4 @@
+import { getSwitchPlacement, setSwitchPlacement } from './switchplacement.js';
 import { createGameMenu } from './gamemenu.js';
 import { getUnits, setUnits, onUnits } from './units.js';
 
@@ -17,6 +18,11 @@ export function createSettings() {
     unitsSelect.value = getUnits();
     unitsSelect.addEventListener('change', () => setUnits(unitsSelect.value));
     onUnits(units => { unitsSelect.value = units; });
+  }
+  const placement = document.getElementById('switch-placement');
+  if (placement) {
+    placement.value = getSwitchPlacement();
+    placement.addEventListener('change', () => setSwitchPlacement(placement.value));
   }
   const menu = createGameMenu({
     onOpen: () => { close(); closeExternal(); closeWelcome(); beforeOpen(); },
