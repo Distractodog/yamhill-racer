@@ -2,7 +2,7 @@
 // two-blade main rotor and tail rotor that spin with rotor power, skids. Low-poly, flat shaded. +z forward, +x left,
 // origin = the centre the physics moves (heli.js), HELI_SKID_H above the bottom of the skids.
 // Paint roles: body (white), trim (orange stripes, fin, blade tips). userData: wheels (skid ends, for dust and tyre
-// shadows), lights (nav left/right/tail, strobe, landing light as head), wreck(on), syncMesh (shared with mp/remotes.js).
+// shadows), lights (nav left/right/tail, strobe), wreck(on), syncMesh (shared with mp/remotes.js).
 import * as THREE from 'three';
 
 export const HELI_SKID_H = 1.6;
@@ -53,7 +53,7 @@ function fin(parent, material, pts, th, x = 0) {
 export function buildHeliModel() {
   const root = new THREE.Group(); root.name = 'heli';
   const paint = M('#eef0f2', 'body'), trim = M('#ff6a1a', 'trim'), dark = M('#2a2e36'), metal = M('#9aa0a8'),
-    blade = M('#30343a'), glass = M('#1b3550', null, { emissive: 0x0a1a2a }), lamp = M('#fff2c9');
+    blade = M('#30343a'), glass = M('#1b3550', null, { emissive: 0x0a1a2a });
   // ---- fuselage: lower body, glass bubble on the front, cabin roof and rear fairing into the boom
   loft(root, paint, [[2.55, .3, -.6, -.15], [2.2, .74, -.86, .05], [1.3, .93, -.95, .05], [-.9, .93, -.92, .05], [-1.85, .6, -.6, .1], [-2.45, .3, .3, .45]]);
   const canopy = loft(root, glass, [[2.5, .32, -.15, .0], [2.2, .74, .05, .5], [1.35, .93, .05, .9], [.35, .93, .05, .96]]);
@@ -72,7 +72,6 @@ export function buildHeliModel() {
   add(root, new THREE.BoxGeometry(.7, .2, 1.2), paint, 0, 1.38, -.65);
   add(root, new THREE.CylinderGeometry(.13, .15, .5, 8).rotateX(-1.1), dark, 0, 1.25, -1.55);
   add(root, new THREE.CylinderGeometry(.08, .1, .3, 6), dark, HUB[0], 1.48, HUB[2]);
-  add(root, new THREE.BoxGeometry(.1, .06, .25), lamp, 0, -.92, 2.2);                       // landing light
   // ---- tail boom, stabiliser with end plates, fin, tail-rotor gearbox
   add(root, new THREE.CylinderGeometry(.27, .14, 4.4, 8).rotateX(Math.PI / 2), paint, 0, .55, -4.55);
   add(root, new THREE.BoxGeometry(.03, .08, 4), trim, .21, .55, -4.4); add(root, new THREE.BoxGeometry(.03, .08, 4), trim, -.21, .55, -4.4);
@@ -140,12 +139,11 @@ export function buildHeliModel() {
     ud.head.rotation.z += ((J.roll || 0) * .1 - ud.head.rotation.z) * Math.min(1, dt * 8);
   }
   root.userData = { wheels, mainRotor, head, tailRotor, disc, tailDisc, blades, spin: 0, syncMesh, wreck, setGear() {}, canopy,
-    wreckMats: mats, wreckColor: WRECK, blob: [3.2, 8.5], landingLight: true,
+    wreckMats: mats, wreckColor: WRECK, blob: [3.2, 8.5],
     // livery number boards and scuffs on the cabin sides (cosmetics.js)
     decalSpots: [[.62, .52, 1.0, -.45, -.25, 0, Math.PI / 2], [.62, .52, -1.0, -.45, -.25, 0, -Math.PI / 2]],
-    // landing light: the lit lens (lights.js) on the lamp's underside, shining down and ahead
-    lights: { head: [new THREE.Vector3(0, -.95, 2.2)], tail: [], aim: new THREE.Vector3(0, -.5, .87),
-      lens: { head: [[[-.05, -.95, 2.075], [.05, -.95, 2.075], [.05, -.95, 2.325], [-.05, -.95, 2.325]]] }, nav: {
+    // Subtle navigation lights only
+    lights: { head: [], tail: [], nav: {
       left: new THREE.Vector3(1.1, .62, -5.4), right: new THREE.Vector3(-1.1, .62, -5.4),
       tail: new THREE.Vector3(0, 1.62, -6.75), strobe: new THREE.Vector3(0, 1.52, -.95),
     } } };

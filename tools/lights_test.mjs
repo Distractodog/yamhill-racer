@@ -116,13 +116,15 @@ const ray = new THREE.Raycaster(), lensReport = [];
 const models = Object.entries(VEHICLE_TYPES).flatMap(([kind, list]) => list.map(t => [kind, t.id, buildVehicleTypeModel(kind, t.id)]));
 for (const [kind, id, mesh] of models) {
   const a = mesh.userData.lights; assert(a, `${kind} ${mesh.name}: own light anchors`);
-  if (kind === 'jet') {           // aircraft types: nav { left (port, +x, red), right, tail }; landing lights forward; a beam only from a landing light
+  if (kind === 'jet') {           // aircraft types: subtle nav / strobe dots only; no landing lights or beam
     assert(['left', 'right', 'tail'].every(k => a.nav?.[k]?.isVector3) && a.nav.left.x > 0 && a.nav.right.x < 0 && a.nav.tail.z < 0, `${mesh.name}: nav lights`);
-    assert(a.head.every(p => p.isVector3 && p.z > 0), `${mesh.name}: landing light forward`);
+    assert.deepEqual(a.head, [], `${mesh.name}: no landing-light anchor`);
+    assert.equal(mesh.userData.landingLight, undefined, `${mesh.name}: no landingLight flag`);
     const l = createVehicleLightLenses(mesh, kind); l.update({ on: true });
     assert.equal(l.group.getObjectByName('vehicle-light-left').material.emissive.getHexString(), 'ff1828', `${mesh.name}: port light is red`);
     l.dispose();
-    local.update(.01, { mesh, kind }, 1); assert.equal(local.beam, !!mesh.userData.landingLight, `${mesh.name}: landing light beam`);
+    local.update(.01, { mesh, kind }, 1); assert.equal(local.beam, false, `${mesh.name}: no aircraft beam`);
+    assert.equal(local.spot.intensity, 0, `${mesh.name}: shared spotlight immediately off`);
     assert.equal(lightCount(), 1);
   } else {
     assert(a.head.length >= 1 && a.tail.length >= 1, `${kind} ${mesh.name}: head + tail`);
@@ -156,7 +158,8 @@ for (const [kind, id, mesh] of models) {
   }
   // a glow on every beam lamp of a ground vehicle or landing light
   const glows = []; fresh.traverse(o => { if (o.name === 'vehicle-glow') glows.push(o); });
-  if (kind !== 'jet' || mesh.userData.landingLight) assert.equal(glows.length, (a.mounts?.head ? a.head : a.beam || a.head).length, `${mesh.name}: glows`);
+  if (kind === 'jet') assert.equal(glows.length, 0, `${mesh.name}: no landing-light glow`);
+  else assert.equal(glows.length, (a.mounts?.head ? a.head : a.beam || a.head).length, `${mesh.name}: glows`);
   lenses.dispose();
 }
 if (process.env.V) console.log(lensReport.join('\n'));

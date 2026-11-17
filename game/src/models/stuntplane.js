@@ -24,7 +24,7 @@ const LE = x => 1.25 - 0.1175 * x;      // wing leading edge (z) at span x
 export function buildStuntPlaneModel() {
   const root = new THREE.Group(); root.name = 'jet-stunt';
   const white = material(0xf4f2ec, 'body'), stripe = material(0xd8262e, 'trim'), dark = material(0x24272e), metal = material(0x9aa0a8);
-  const glass = material(0x2a4a63, null, { emissive: 0x0b1c2a }), tyre = material(0x1d1e22), lamp = material(0xfff2c9, null, { emissive: 0x6a6040 });
+  const glass = material(0x2a4a63, null, { emissive: 0x0b1c2a }), tyre = material(0x1d1e22);
   // fuselage, bubble canopy, bold side stripes
   put(root, loft(BODY, K), white);
   const canopy = put(root, loft(BUBBLE), glass);
@@ -72,16 +72,11 @@ export function buildStuntPlaneModel() {
     if (i) pant(w.holder, white, r, 0.15);
     wheels.push(w);
   }
-  // lights: landing light in the left wing root, nav lights on the tips, tail light, strobe on the fin
-  const ly = WY + 1.8 * DIH;
-  put(root, new THREE.BoxGeometry(0.3, 0.08, 0.04), lamp, 1.8, ly, LE(1.8) + 0.01);
-  const lz = LE(1.8) + 0.03;               // the lit lens (lights.js) on the lamp box's front face
-  const lights = { head: [new THREE.Vector3(1.8, ly, lz)], tail: [],
-    lens: { head: [[[1.65, ly - .04, lz], [1.95, ly - .04, lz], [1.95, ly + .04, lz], [1.65, ly + .04, lz]]] }, nav: {
+  // Navigation lights on the tips, tail light, strobe on the fin
+  const lights = { head: [], tail: [], nav: {
     left: new THREE.Vector3(4.18, WY + 4.1 * DIH, 0.45), right: new THREE.Vector3(-4.18, WY + 4.1 * DIH, 0.45),
     tail: new THREE.Vector3(0, 0.36, -5.0), strobe: new THREE.Vector3(0, 1.4, -4.55),
   } };
-  lights.landing = lights.head;
   const mats = [white, stripe];
   let wrecked = false, base = [];          // paint is snapshotted on entering the wreck (Garage colours), restored on leaving
   const wreck = on => {
@@ -101,7 +96,7 @@ export function buildStuntPlaneModel() {
   const setSpeedBrake = speedBrakePanels(root, stripe, [-1, 1].map(s => ({ x: s * 2.3, y: -.20, z: .25, w: 1.5, d: .42 })));
   root.userData = { setSpeedBrake,
     wheels, setGear: () => {}, noseWheel: wheels[0].holder, elevator, rudder, aileronL, aileronR, wreck, canopy, propeller: prop,
-    wreckMats: mats, wreckColor: WRECK, blob: [8.2, 7.9], lights, landingLight: true,
+    wreckMats: mats, wreckColor: WRECK, blob: [8.2, 7.9], lights,
     decalSpots: [[0.6, 0.32, 0.287, 0.07, -2.65, 0, Math.PI / 2 + tilt], [0.6, 0.32, -0.287, 0.07, -2.65, 0, -Math.PI / 2 - tilt]],
     animate(v, dt) {
       prop.spin(v, dt);
