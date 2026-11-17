@@ -274,8 +274,18 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   console.log(`16 remotes: update ${(total / N).toFixed(3)} ms avg, ${worst.toFixed(3)} ms worst; 16 states + update ${per15.toFixed(3)} ms; ${nearN} near / ${16 - nearN} far; ${calls16} visible meshes+tags`);
   assert.equal(vis.filter(r => r.visible).length, 16);
   assert.ok(total / N < 0.5, 'update well under 1 ms per frame in Node');
-  // animated up close: car / bike = body + wheels (5), jet = body, 4 control surfaces, 3 legs, 3 wheels, flame (12)
-  assert.ok(calls16 <= 16 * 8 + 4, `draw calls stay small (${calls16})`);
+  // Car/bike: body + wheels (5). Fighter: body, 4 control surfaces, 3 legs, 3 wheels,
+  // nose steering assembly, 3 speed-brake panels and flame (16); retracted gear draws fewer.
+  // Budget each model separately so an expensive type cannot hide behind cheaper neighbours.
+  let meshBudget = 4; // shared particle meshes
+  for (const r of vis) {
+    const limit = r.far ? 1 : (r.kind === 'jet' ? 16 : 5) + (r.glide ? 1 : 0);
+    let meshes = 0;
+    R2.model(r.id)?.traverseVisible(o => { if (o.isMesh || o.isSprite) meshes++; });
+    assert.ok(meshes <= limit, `${r.id} ${r.kind}: ${meshes} meshes exceed ${limit}`);
+    meshBudget += limit + 1; // one name tag per player
+  }
+  assert.ok(calls16 <= meshBudget, `draw calls stay within model budgets (${calls16}/${meshBudget})`);
   R2.dispose();
 }
 // ---------------------------------------------------------------- every aircraft type: its own model, animated

@@ -115,7 +115,7 @@ settings.bindSound(audio);              // Settings → Sound: master / engines 
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 // a race placing the car (start, J, Backspace restart, multiplayer start, checkpoint R) drops a waiting respawn hold
-const challenges = await createChallenges({ scene, world, car, minimap, vehicles, onPlace: () => respawnHold.cancel() });
+const challenges = await createChallenges({ scene, world, car, minimap, vehicles, audio, onPlace: () => respawnHold.cancel() });
 import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 const remotes = await createRemotes({ scene, camera, minimap, world, audio, night: () => atmosphere.night });   // other players' vehicles, tags and map dots (multiplayer)
@@ -467,7 +467,7 @@ function frame(now) {
   garage.update(dt);
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
-  audio.update(car, input, dt);
+  audio.update(car, input, dt, atmosphere);
   updateCamera(dt);
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
