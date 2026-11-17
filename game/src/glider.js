@@ -1,3 +1,4 @@
+import { driftAir } from './wind.js';
 // Glider: G opens a hang-glider wing over the car and switches it to a flying mode until you touch down (or press G
 // again, which folds it and drops you). Arcade aerodynamics, tuned to be gentle:
 //   * lift and drag from airspeed² and angle of attack; drag grows with lift (≈ 9:1 glide at trim, ~100 km/h)
@@ -177,6 +178,7 @@ export class Glider {
     _a.addScaledVector(_lt, -vL * 0.6);                                 // side area resists slipping sideways
 
     c.vel.addScaledVector(_a, dt);
+    driftAir(c, dt, 1);
     c.pos.addScaledVector(c.vel, dt);
     const am = c.ang.length();
     if (am > 1e-6) { _q.setFromAxisAngle(_v.copy(c.ang).divideScalar(am), am * dt); c.quat.premultiply(_q).normalize(); }

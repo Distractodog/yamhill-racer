@@ -1,5 +1,5 @@
 // The world controller is DOM-free so its lifecycle can be tested with a fake Net.
-export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}, lock = () => {}, timers = globalThis }) {
+export function createWorldSettings({ mp, tuning, atmosphere, wind, refresh = () => {}, lock = () => {}, timers = globalThis }) {
   let mode = 'host', bump = true, snapshot = null, last = '', pending = null, sinceClock = 0;
   const CLOCK_SEND = 30000;
   const listeners = [];
@@ -28,6 +28,7 @@ export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}
     if (!mp.inGame || !mp.isHost) return;
     const settings = read(); last = JSON.stringify(settings); sinceClock = 0;
     if (atmosphere.clock) settings.atmosphere = { ...settings.atmosphere, ...atmosphere.clock() };
+    if (wind) settings.wind = wind.clock();
     mp.send({ t: 'world', mode, settings });
   }
   on('connected', () => { mode = 'host'; bump = true; if (mp.isHost) publish(); });
@@ -35,16 +36,17 @@ export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}
     if (!mp.inGame || mp.isHost || !['host', 'own'].includes(message.mode)) return;
     // Only the roster's host may supply world settings.
     if (message.from && !mp.players.get(message.from)?.host) return;
+    wind?.follow(message.settings?.wind);
     mode = message.mode; bump = message.settings?.bump !== false;
     if (mode === 'host') { snapshot ||= read(); apply(message.settings); lock(true); }
     else restore();
   });
-  for (const event of ['disconnected', 'kicked', 'closed']) on(event, () => { restore(); mode = 'host'; bump = true; timers.clearTimeout(pending); pending = null; });
+  for (const event of ['disconnected', 'kicked', 'closed']) on(event, () => { restore(); wind?.unfollow(); mode = 'host'; bump = true; timers.clearTimeout(pending); pending = null; });
   const interval = timers.setInterval(() => {
     if (!mp.inGame || !mp.isHost) return;
     const next = JSON.stringify(read());
     if (next === last) {
-      if (atmosphere.clock && mode === 'host' && (sinceClock += 100) >= CLOCK_SEND) publish();
+      if ((wind || (atmosphere.clock && mode === 'host')) && (sinceClock += 100) >= CLOCK_SEND) publish();
       return;
     }
     last = next; timers.clearTimeout(pending);
@@ -56,11 +58,11 @@ export function createWorldSettings({ mp, tuning, atmosphere, refresh = () => {}
     setBump(next) { if (!mp.inGame || !mp.isHost) return; bump = !!next; publish(); },
     setMode(next) { if (!mp.inGame || !mp.isHost || !['host', 'own'].includes(next)) return; mode = next; publish(); },
     restore,
-    dispose() { restore(); timers.clearInterval(interval); timers.clearTimeout(pending); for (const [type, fn] of listeners) mp.off(type, fn); },
+    dispose() { restore(); wind?.unfollow(); timers.clearInterval(interval); timers.clearTimeout(pending); for (const [type, fn] of listeners) mp.off(type, fn); },
   };
 }
 
-export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen = () => {} }) {
+export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, beforeOpen = () => {} }) {
   const button = document.getElementById('mp-button');
   const panel = document.createElement('section');
   panel.id = 'mp-panel'; panel.hidden = true; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-labelledby', 'mp-title');
@@ -84,7 +86,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, gui, beforeOpen
     for (const id of ['tuning-controls', 'atmosphere-controls']) { const el = document.getElementById(id); el.inert = locked; el.setAttribute('aria-disabled', String(locked)); }
     for (const controller of gui.controllersRecursive()) controller.disable(locked);
   }
-  const world = createWorldSettings({ mp, tuning, atmosphere, lock, refresh: () => {
+  const world = createWorldSettings({ mp, tuning, atmosphere, wind, lock, refresh: () => {
     gui.controllersRecursive().forEach(c => c.updateDisplay());
     settings.refreshAtmosphere?.();
   } });

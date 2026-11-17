@@ -1,3 +1,4 @@
+import { driftAir } from './wind.js';
 // Jet. Fixed 120 Hz step. Local axes: +z forward (nose), +y up, +x = left wing.
 //
 // Two modes:
@@ -349,6 +350,7 @@ export class Jet extends Vehicle {
     this.gLoad = L / g;
     this.vel.addScaledVector(_a, dt);
     this._acc.copy(_a);
+    driftAir(this, dt, this.type === 'prop' || this.type === 'stunt' ? 1 : 0.025);
     this.pos.addScaledVector(this.vel, dt);
     this.edgeTurn();
     const am = this.ang.length();
