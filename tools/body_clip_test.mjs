@@ -7,9 +7,11 @@
 // downforce, pitch, roll, launches, landings) is the real physics. Also prints the physics chassis (the car's ground
 // box, the bike's body floor) so physics and drawing can be told apart.
 //   node tools/body_clip_test.mjs            all types, asserts (run through the heavy gate: several minutes)
-//   node tools/body_clip_test.mjs suv flat   only these types / places (race sports hatch suv truck dirt sport; flat hwy ramp)
+//   node tools/body_clip_test.mjs suv flat   only these types / places (race sports hatch suv truck dirt sport; flat hwy ramp jitter)
+//   node tools/body_clip_test.mjs flat jitter --quick   all types, 100/300 km/h + standing start, 60 Hz lift jitter
 //   REPORT=1 ...                             print the table without failing
 import fs from 'fs';
+import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { makeWorld, makeTileData } from '../game/src/data.js';
 import { readTileData } from '../game/src/tilepack.js';
@@ -20,7 +22,9 @@ import { buildCarModel } from '../game/src/carmodel.js';
 import { keepBodyAboveGround } from '../game/src/bodyclearance.js';
 
 const DT = 1 / 120, SPEEDS = [100, 300, 600, 1000];
-const args = process.argv.slice(2), PLACES = ['flat', 'hwy', 'ramp'];
+// --quick limits speed coverage; jitter checks 60 Hz drawing on real campus/town asphalt and open fields.
+const args = process.argv.slice(2).filter(a => a !== '--quick'), PLACES = ['flat', 'hwy', 'ramp', 'jitter'];
+if (process.argv.includes('--quick')) SPEEDS.splice(2);
 const onlyPlaces = args.filter(a => PLACES.includes(a)), onlyTypes = args.filter(a => !PLACES.includes(a));
 const place = p => !onlyPlaces.length || onlyPlaces.includes(p);
 const A = (process.env.YR_ASSETS || 'game/assets').replace(/\/?$/, '/');
@@ -54,6 +58,22 @@ if (place('hwy')) {
 const rampLine = [], RF = [Math.sin(RAMP0.yaw), Math.cos(RAMP0.yaw)];
 for (let s = -700; s <= 2600; s += 100) rampLine.push([RAMP0.x + RF[0] * s, RAMP0.z + RF[1] * s]);
 if (place('ramp')) await load(rampLine, 300);
+
+// Real routes for lift jitter: choose the nearby asphalt strip with enough run-up and coverage.
+const JITTER = [];
+if (place('jitter')) {
+  for (const [name, x, z] of [['campus', WJ.spawn[0], WJ.spawn[1]], ['town', 19451, -11032]]) {
+    const td = await readTile(tileOf(x), tileOf(z));
+    const paths = td.tile.physPaths.filter(p => p.kind === 'asphalt' && p.pts.length > 1)
+      .map(p => ({ pts: p.pts, length: p.pts.slice(1).reduce((n, v, i) => n + Math.hypot(v[0] - p.pts[i][0], v[1] - p.pts[i][1]), 0),
+        dist: Math.min(...p.pts.map(p => Math.hypot(p[0] - x, p[1] - z))) }))
+      .filter(p => p.length > 350).sort((a, b) => a.dist - b.dist);
+    if (!paths.length) throw new Error(`No jitter route for ${name}`);
+    JITTER.push([name, paths[0].pts]);
+  }
+  JITTER.push(['off-road', [[828, 480], [1228, 480]]]);
+  for (const [, points] of JITTER) await load(points, 300);
+}
 
 // a polyline as a rail: arc-length table, position and heading at a distance along it
 function rail(points) {
@@ -189,7 +209,7 @@ function hold(v, yaw, kmh, x, z) {
   const hs = kmh === null ? Math.hypot(v.vel.x, v.vel.z) : kmh / 3.6;
   v.vel.x = Math.sin(yaw) * hs; v.vel.z = Math.cos(yaw) * hs;
 }
-function stats() { return { body: Infinity, where: '', chassis: Infinity, tyre: Infinity, comp: 0, frames: 0, air: 0 }; }
+function stats() { return { body: Infinity, where: '', chassis: Infinity, tyre: Infinity, checkTyres: true, comp: 0, frames: 0, air: 0 }; }
 function sample(v, s) {
   v.interpolate(1); v.syncMesh(DT);
   const [b, where] = bodyClearance(v);
@@ -248,10 +268,56 @@ function ramp(kind, id, kmh) {
   return s;
 }
 
+// 120 Hz physics, 60 Hz drawing: p95 absolute frame-to-frame lift change, including immediate safety rises.
+// Keep measuring tyres on every route, but apply the road tolerance only on asphalt. On the field route, the dirt
+// bike's tyre edge dips 32 mm into uneven ground even with the original guard (no lift in either version): report
+// that existing wheel-contact limitation explicitly, without confusing it with body clipping or lift jitter.
+function jitter(kind, id, name, points, kmh) {
+  const R = rail(points), v = make(kind, id, W), s = stats(), changes = [], lifts = [];
+  s.checkTyres = name !== 'off-road';
+  v.reset(...R.at(0), R.yaw(0));
+  for (let i = 0, d = 0; d < Math.min(R.length - 20, 350); i++) {
+    v.step(DT, input({ throttle: 1 }));
+    d += kmh / 3.6 * DT;
+    hold(v, R.yaw(d), kmh, ...R.at(d));
+    if (i % 2) continue;
+    v.interpolate(1); v.syncMesh(2 * DT);
+    const lift = v.mesh.userData.bodyLift;
+    // Ignore spawn settling (first second), but include air/landing and every later frame.
+    if (i * DT >= 1) {
+      if (lifts.length) changes.push(Math.abs(lift - lifts.at(-1)));
+      lifts.push(lift);
+      const [b, where] = bodyClearance(v);
+      if (b < s.body) { s.body = b; s.where = where; }
+      s.tyre = Math.min(s.tyre, tyreClearance(v));
+      s.frames++;
+    }
+  }
+  if (changes.length < 60 || lifts.some(n => !Number.isFinite(n)) || !Number.isFinite(s.body) || !Number.isFinite(s.tyre))
+    throw new Error('Incomplete jitter coverage');
+  const percentile = (a, p) => [...a].sort((a, b) => a - b)[Math.floor((a.length - 1) * p)];
+  s.jitter = percentile(changes, 0.95); s.lift = percentile(lifts, 0.95);
+  return s;
+}
+
 // ---------------------------------------------------------------- run
 const rows = [], fails = [];
 const cm = x => Number.isFinite(x) ? (x * 100).toFixed(1).padStart(6) : '     –';
 const BIKES = new Set(VEHICLE_TYPES.bike.map(t => t.id)), BIKE_TYRE = 0.015;
+// Falling lift must survive the cheap clear-ground exit and release in seconds, independently of drawing rate.
+for (const hz of [30, 60, 120]) {
+  const model = buildCarModel(), pivot = model.userData.bodyPivot;
+  model.position.y = 0.12;
+  const initial = keepBodyAboveGround(model, pivot, () => 0.2, false, 1 / hz);
+  assert.ok(initial > 0.1, 'ground penetration is corrected immediately');
+  let lift;
+  for (let frame = 0; frame < hz * 0.4; frame++) lift = keepBodyAboveGround(model, pivot, () => -10, false, 1 / hz);
+  assert.ok(Math.abs(lift - initial / Math.E) < 1e-8, `${hz} Hz: release time is 0.4 s, including clear-ground frames`);
+  const other = buildCarModel(); other.position.y = 1;
+  assert.equal(keepBodyAboveGround(other, other.userData.bodyPivot, () => 0), 0, 'a different model has no retained lift');
+  assert.equal(keepBodyAboveGround(model, pivot, null), 0, 'missing ground clears stale lift');
+}
+console.log('guard: immediate rise, 0.4 s release at 30/60/120 Hz, independent models, missing-ground reset');
 // the guard itself (bodyclearance.js), a pitched race car on a slope: lifting along the tilted up moves every point's
 // x / z, so the ground must be looked up again where the points end up (review repro)
 for (const slope of [0.2, 0.4]) {
@@ -274,10 +340,13 @@ for (const slope of [0.2, 0.4]) {
 }
 function report(type, name, s) {
   rows.push(`${type.padEnd(7)}${name.padEnd(26)}body${cm(s.body)} cm  chassis${cm(s.chassis)} cm  tyre${cm(s.tyre)} cm  comp ${(s.comp * 100).toFixed(0).padStart(3)}%  air ${s.air.toFixed(1)}s  ${s.body < 0 ? '<< UNDER: ' + s.where : ''}`);
+  if (s.jitter !== undefined) rows[rows.length - 1] += ` lift p95 ${(s.lift * 1000).toFixed(1)} mm  change p95 ${(s.jitter * 1000).toFixed(1)} mm`;
+  if (!s.checkTyres) rows[rows.length - 1] += ' (rough-ground tyre diagnostic only)';
   console.log(rows.at(-1));
+  if (s.jitter >= 0.01) fails.push(`${type} ${name}: lift jitter p95 ${(s.jitter * 1000).toFixed(1)} mm >= 10 mm`);
   if (!(s.body >= 0)) fails.push(`${type} ${name}: drawn body ${cm(s.body)} cm under the ground (${s.where})`);
   // bikes' tyres too (held on the road under the hub: a round tyre on a ramp's slope can dip ~1 cm beside it)
-  if (BIKES.has(type) && !(s.tyre >= -BIKE_TYRE)) fails.push(`${type} ${name}: drawn tyre ${cm(s.tyre)} cm in the road`);
+  if (BIKES.has(type) && s.checkTyres && !(s.tyre >= -BIKE_TYRE)) fails.push(`${type} ${name}: drawn tyre ${cm(s.tyre)} cm in the road`);
   if (s.flew === false || s.landed === false) fails.push(`${type} ${name}: ramp jump must fly and land`);
 }
 const R = place('hwy') ? rail(ROUTE) : null, F = R ? features(R, 3) : null;
@@ -297,6 +366,7 @@ for (const [kind, types] of Object.entries(VEHICLE_TYPES).filter(([k]) => k !== 
     }
     report(id, `Hwy 18 crests+dips ${kmh}`, s);
   }
+  if (place('jitter')) for (const [name, points] of JITTER) for (const kmh of [100, 300]) report(id, `${name} jitter ${kmh}`, jitter(kind, id, name, points, kmh));
   if (place('ramp')) for (const kmh of SPEEDS) report(id, `Hwy 18 ramp ${kmh} km/h`, ramp(kind, id, kmh));
 }
 console.log(`\n${rows.length} runs in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
