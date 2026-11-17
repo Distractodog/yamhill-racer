@@ -1,6 +1,8 @@
 // Vehicle garage and switching paths used by the V picker and Garage.
 // `player` is a stand-in that always points at the vehicle you're in, so code that was handed "the car" once
 // (challenges, pin guide, effects, sound, camera) follows a switch without knowing about it.
+import { nearestBank } from './water.js';
+import { nearestRoadSpawn } from './roadspawn.js';
 import { Car } from './car.js';
 import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
@@ -16,7 +18,7 @@ export const VEHICLES = [
 ];
 export const vehicleInfo = kind => VEHICLES.find(v => v.kind === kind) || VEHICLES[0];
 
-export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE }, jetTuning = { ...JET }, canSwitch = () => true }) {
+export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE }, jetTuning = { ...JET }, canSwitch = () => true, roadPlacementAllowed = () => true }) {
   const car = new Car(world, tuning), bike = new Bike(world, bikeTuning), jet = new Jet(world, jetTuning);
   const all = { car, bike, jet };
   // Obsolete saved selections no longer choose a vehicle on startup.
@@ -45,11 +47,30 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     if (place) {
       if (kind === 'jet' && air) keepFlying(next, p, cur.vel, yaw);
       else if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
-      else { next.pos.copy(p); next.vel.set(0, 0, 0); next.reset(p.x, p.z, yaw); }   // from this height: on a roof, stays on it
+      else if (!placeGround(next, p, yaw)) { next.pos.copy(p); next.vel.set(0, 0, 0); next.reset(p.x, p.z, yaw); }
     }
     scene.add(next.mesh);
     cur = next;
     listeners.forEach(f => f(next));
+    return true;
+  }
+
+  let roadHold = null;
+  function placeGround(v, p, yaw) {
+    if (!roadPlacementAllowed() || v.kind === 'jet') return false;
+    let spot;
+    if (v.kind === 'bike' && v.type !== 'sport') {
+      const unsafe = Number.isFinite(cur.world.roofUnder?.(p.x, p.z, p.y)) || world.waterLevelAt(p.x, p.z) > world.heightAt(p.x, p.z);
+      if (!unsafe) return false;
+      const bank = nearestBank(world, p.x, p.z);
+      spot = bank && { x: bank[0], z: bank[1], yaw };
+    } else spot = nearestRoadSpawn(world, p.x, p.z, yaw);
+    if (!spot) return false;
+    // Start below roofs so reset asks for the road, even when the old vehicle was flying.
+    v.pos.set(spot.x, world.heightAt(spot.x, spot.z), spot.z);
+    v.reset(spot.x, spot.z, spot.yaw);
+    v._lastLoaded = null;
+    roadHold?.(v);
     return true;
   }
 
@@ -72,7 +93,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     try { return setType(kind, id, options); } finally { flight = null; }
   };
   types.onTypeChange(kind => {
-    if (kind !== 'jet') return;
+    if (kind !== 'jet') { if (cur === all[kind]) placeGround(cur, cur.pos, cur.heading()); return; }
     const next = jetFor(types.getType('jet')), was = all.jet;
     if (next !== was) {
       all.jet = next; next.respawn = was.respawn; was.respawn = null;
@@ -93,6 +114,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   }
 
   const api = {
+    setRoadHold(fn) { roadHold = fn; },
     player, all, car, bike, get jet() { return all.jet; }, heli, aircraft: [jet, heli], switchTo, choose, ...types,
     vehicleFor: (kind, id) => kind === 'jet' ? jetFor(id) : all[kind],     // the vehicle that drives a type
     get current() { return cur; },

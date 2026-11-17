@@ -91,7 +91,7 @@ const BIKE_RANGES = { accel: [5, 40, 0.5], topSpeed: [80, 500, 5], cornerGrip: [
 const JET_RANGES = { thrust: [6, 40, 0.5], liftK: [0.001, 0.005, 0.0001], rollRate: [0.5, 5, 0.1], maxG: [3, 12, 0.5], gravity: [9.8, 30, 0.2] };
 loadSaved('yr-tuning-bike-1', bikeTuning, BIKE, BIKE_RANGES);
 loadSaved('yr-tuning-jet-1', jetTuning, JET, JET_RANGES);
-const vehicles = createVehicles({ scene, world, tuning, bikeTuning, jetTuning, canSwitch: kind => {
+const vehicles = createVehicles({ scene, world, tuning, bikeTuning, jetTuning, roadPlacementAllowed: () => challenges.state === 'idle', canSwitch: kind => {
   // switching vehicle mid-race ends the race (each race belongs to one vehicle)
   if (challenges.state !== 'idle' && challenges.vehicle !== kind) challenges.quit();
   return true;
@@ -125,6 +125,7 @@ const gliderColors = createGliderColors({ car: glider, bike: bikeGlider });
 const warmup = createWarmup({ renderer, scene, camera, vehicles, cosmetics, lights: vehicleLights });
 // R / crash respawns onto ground that hasn't streamed in wait there until it has (respawnhold.js)
 const respawnHold = createRespawnHold({ world, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft], current: () => vehicles.current });
+vehicles.setRoadHold(v => respawnHold.request(v));
 mp.setVehicleSource(() => ({ vehicle: car, kind: vehicles.current.kind,
   colors: cosmetics.get(vehicles.current.kind), glider: gliderColors.get(vehicles.current.kind) || {} }));
 const garage = createGarage({ cosmetics, vehicles, gliderColors, rewards: challenges.rewards,

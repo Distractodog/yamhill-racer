@@ -260,6 +260,7 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
 
 // ---------------------------------------------------------------- the whole world: routes queries to tiles
 export function makeWorld(W) {
+  const knownRoadTiles = new Map();
   const T = W.tile, tiles = new Map(), [EX0, EZ0, EX1, EZ1] = W.extent;
   const key = (tx, tz) => tx * 1000 + tz;
   const tileIndex = (x, z) => [Math.floor((x + T / 2) / T), Math.floor((z + T / 2) / T)];
@@ -347,10 +348,14 @@ export function makeWorld(W) {
     return [best[0], best[1], yaw];
   }
   return {
-    W, tiles, extent: W.extent, spawn: W.spawn, tileIndex, tileAt, key, mapContains,
+    W, tiles, knownRoadTiles, extent: W.extent, spawn: W.spawn, tileIndex, tileAt, key, mapContains,
     wetness: 0,
     setWetness(value) { this.wetness = Math.max(0, Math.min(1, Number(value) || 0)); },
-    add(t) { tiles.set(key(t.tx, t.tz), t); last = null; },
+    add(t) {
+      // Retain only placement metadata after a streamed tile's physics/render data is released.
+      knownRoadTiles.set(key(t.tx, t.tz), { sourcePaths: (t.sourcePaths || []).filter(p => p.kind === 'asphalt'), sourceJunctions: t.sourceJunctions });
+      tiles.set(key(t.tx, t.tz), t); last = null;
+    },
     remove(tx, tz) { tiles.delete(key(tx, tz)); last = null; },
     has: (tx, tz) => tiles.has(key(tx, tz)),
     loadedAt: (x, z) => !!tileAt(x, z),
