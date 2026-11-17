@@ -248,7 +248,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     ghost.stop();
     ch = list[i]; sel = i; result = null; returning = false; wrongWayTime = 0;
     closeMenu(); done.style.display = 'none';
-    vehicles?.switchTo(ch.vehicle || 'car');
+    vehicles?.switchTo(ch.vehicle || 'car', { place: false });
     car.glide?.cancel();
     // jet races: a crash (or R) puts you back in the air at the last ring you flew through
     if (vehicles) vehicles.jet.respawn = ch.vehicle === 'jet' ? () => {

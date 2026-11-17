@@ -58,6 +58,7 @@ export function createRespawnHold({ world, vehicles, current = () => null, timeo
     };
   }
   return {
+    request(v) { check(v, null, null); },
     get blocked() { return !!hold; },
     get holding() { return hold && { x: hold.x, z: hold.z, air: hold.air, t: hold.t, vehicle: hold.v }; },
     cancel() { if (hold) hold.v.say?.('', 0); hold = null; },
