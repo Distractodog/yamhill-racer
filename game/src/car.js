@@ -12,7 +12,7 @@ import { wetGrip, wetBraking } from './wetgrip.js';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
-import { keepBodyAboveGround } from './bodyclearance.js';
+import { keepBodyAboveGround, bodyLiftCap } from './bodyclearance.js';
 import { collideBuilding } from './roofs.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
@@ -63,6 +63,7 @@ const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _n = new THREE.Vector3
   _fw = new THREE.Vector3(), _lt = new THREE.Vector3(), _q = new THREE.Quaternion(), _nAvg = new THREE.Vector3(),
   _vp = new THREE.Vector3(), _hp = new THREE.Vector3(), _bu = new THREE.Vector3();
 const DIST = [0, 0, 0, 0];             // syncMesh: each wheel mount's height over the road, as drawn
+const DROP = [0, 0, 0, 0];             // syncMesh: each wheel's drawn drop below its mount (0 … restLength)
 
 export class Car extends Vehicle {
   constructor(world, tuning) {
@@ -465,14 +466,21 @@ export class Car extends Vehicle {
     const pitch = THREE.MathUtils.clamp(-this.lonAcc * 0.0028 * lean, -0.06 * lean, 0.06 * lean);
     ud.bodyPivot.rotation.z += (roll - ud.bodyPivot.rotation.z) * Math.min(1, dt * 10);
     ud.bodyPivot.rotation.x += (pitch - ud.bodyPivot.rotation.x) * Math.min(1, dt * 10);
-    // ...but never into the road, nor an arch onto a tyre on it (bodyclearance.js)
-    // (exactly, while landing or tumbling: moving fast along its own up, or far from upright)
-    ud.bodyLift = keepBodyAboveGround(m, ud.bodyPivot, W ? (x, z) => W.heightAt(x, z, ref) : null, Math.abs(this.vel?.dot(_bu) ?? 0) > 4 || _bu.y < 0.9, dt);
+    // each wheel's drop below its mount (a remote puppet keeps the springs as sent: only the rise above is from the road)
+    let maxDrop = 0;
     this.wheels.forEach((wh, i) => {
-      const g = ud.wheels[i];
-      // (a remote puppet keeps the springs as sent: only the rise above is from the road)
-      const drop = onRoad && wh.mount ? Math.min(this.t.restLength, Math.max(0, DIST[i] + rise - RADIUS))
+      DROP[i] = onRoad && wh.mount ? Math.min(this.t.restLength, Math.max(0, DIST[i] + rise - RADIUS))
         : wh.contact ? (this.t.restLength - wh.comp) : this.t.restLength;
+      maxDrop = Math.max(maxDrop, DROP[i]);
+    });
+    // ...but never into the road, nor an arch onto a tyre on it (bodyclearance.js)
+    // (exactly, while landing or tumbling: moving fast along its own up, or far from upright), and lifted off the wheels
+    // no further than the springs have left to extend (where downforce or a landing squashed them: what the lift is for),
+    // or the type's small cap (a crest under the parked body): a bank beside the road meets the body's edge instead
+    ud.bodyLift = keepBodyAboveGround(m, ud.bodyPivot, W ? (x, z) => W.heightAt(x, z, ref) : null, Math.abs(this.vel?.dot(_bu) ?? 0) > 4 || _bu.y < 0.9, dt,
+      Math.max(this.t.restLength - maxDrop, bodyLiftCap(m)));
+    this.wheels.forEach((wh, i) => {
+      const g = ud.wheels[i], drop = DROP[i];
       g.holder.rotation.y = wh.front ? -this.steer * this.t.steerLock * 0.9 : 0;
       g.holder.position.y = drawnWheelY(m, i, g.restY + 0.3 - drop - (RADIUS - g.r));
       g.spin.rotation.x = wh.spin;

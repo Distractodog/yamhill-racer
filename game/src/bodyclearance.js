@@ -8,6 +8,14 @@
 // Per frame: the ground on a 3 × 4 grid under the body (exact heights), interpolated with a margin that bounds how far a
 // crease between the grid points can rise above it; the exact height is looked up only under points that come within
 // 1 cm of the limit on that estimate.
+// Upright, the body is never lifted further off its wheels than the caller allows (maxLift: a car's springs' travel left,
+// at least its type's small cap, bodyLiftCap: from its ride height, 12–25 cm); any more (a ramp's face or a landing slope
+// under the nose) lifts the whole model, wheels and all, as a wreck far from upright is. And only ground near the plane
+// through the wheels' contacts counts: a bank or cutting rising steeply beside the road would otherwise lift the body
+// metres off its wheels (the race car's arms drawn as long sticks). Ground up to `reach` (the cap plus the ride height)
+// above that plane counts in full (past the axles, a ramp-like slope more), then less, and none from twice that: the
+// bank meets the body's edge instead. Landing or tumbling all the ground counts, as before (the excess over maxLift
+// then lifts the whole model).
 import * as THREE from 'three';
 import { ConvexHull } from 'three/addons/math/ConvexHull.js';
 import { wheelArch } from './wheeltravel.js';
@@ -16,6 +24,11 @@ export const BODY_CLEAR = 0.003;              // only reserve a few mm above the
 const FALL_TIME = 0.4;                       // seconds: immediate rise, exponential release
 const CELL = 0.4, STEP = 0.3, NEAR = 0.01;      // m: NEAR = how close to the limit (estimated) a point is looked up
 const GX = 3, GZ = 4;
+const CAP_MIN = 0.12, CAP_MAX = 0.25;          // m: an upright body's largest lift (half its ride height + 8 cm, within these)
+const FOOT_SIDE = 0.4;                          // m: a bike's two contacts are widened sideways to span a plane
+const UPRIGHT_MAX = 1;                          // m: driving (not landing), a vehicle is never drawn higher than this
+const AHEAD_SLOPE = 0.35;                       // rise per m past the axles that still counts (ramps 0.2; banks: steeper)
+const TILT_OFF = 0.35;                          // rise per m the wheels' ground may tilt off the physics' stance
 const RESAMPLE = 0.25;   // m: points this close to the limit get their ground again after the body moved (≤ a few cm sideways)
 // tilts (rise per m of x, per m of z) a cell's candidates must be lowest for: a car's roll and pitch, a bike's lean
 const CAR_TILTS = [[0, 0], [-0.3, 0], [0.3, 0], [0, -0.3], [0, 0.3]];
@@ -71,6 +84,7 @@ function build(model, pivot) {
       }
     }
   });
+  let bodyLow = Infinity;
   const sets = out.map(({ root, best }) => {
     const pts = [];
     for (let c = 0; c < best.length; c += 4 * T) {               // each cell's distinct lowest points
@@ -78,6 +92,7 @@ function build(model, pivot) {
       for (let i = c; i < c + 4 * T; i += 4) {
         const k = `${best[i + 1]},${best[i + 2]},${best[i + 3]}`;
         if (!seen.has(k)) { seen.add(k); pts.push(best[i + 1], best[i + 2], best[i + 3]); }
+        if (root === pivot) bodyLow = Math.min(bodyLow, best[i + 2]);
       }
     }
     // a car's wheels hang from the model and its arches tilt with the body: an arch must stay a tyre (and drawnWheelY's
@@ -110,8 +125,76 @@ function build(model, pivot) {
       for (let c = 0; c < 3; c++) { box[c] = Math.min(box[c], _v.getComponent(c) - pad); box[c + 3] = Math.max(box[c + 3], _v.getComponent(c) + pad); }
     }
   }
+  // the wheels' contacts (level pivot frame: a car's wheels hang from the model, a bike's lean with the body) and the
+  // ride height, the body's lowest point over the parked tyres' bottoms: the lift cap and how far ground above the
+  // wheels' plane still counts
+  const feet = [];
+  let tyreLow = Infinity, axleBack = Infinity, axleFront = -Infinity;
+  for (const w of ud.wheels || []) {
+    if (isUnder(w.holder, pivot)) _m.copy(pivot.matrixWorld).invert().multiply(w.holder.matrixWorld);
+    else _m.copy(model.matrixWorld).invert().multiply(w.holder.matrixWorld);
+    _v.setFromMatrixPosition(_m);
+    if (!isUnder(w.holder, pivot)) _v.sub(pivot.position);
+    tyreLow = Math.min(tyreLow, _v.y - w.r);
+    axleBack = Math.min(axleBack, _v.z); axleFront = Math.max(axleFront, _v.z);
+    for (const s of ud.wheels.length < 3 ? [-FOOT_SIDE, 0, FOOT_SIDE] : [0]) feet.push(_v.x + s, _v.y - w.r, _v.z);
+  }
+  const ride = Number.isFinite(tyreLow) && Number.isFinite(bodyLow) ? Math.max(0, bodyLow - tyreLow) : 0;
+  const cap = Math.min(CAP_MAX, Math.max(CAP_MIN, ride / 2 + 0.08));
   return { base: pivot.position.y, sets, box, grid: [x0 - pad, x1 + pad, z0 - pad, z1 + pad], gh: new Float32Array(GX * GZ),
-    rise: new Float32Array((GX - 1) * (GZ - 1)), cand: new Float32Array(n * 4) };
+    rise: new Float32Array((GX - 1) * (GZ - 1)), cand: new Float32Array(n * 4),
+    feet: feet.length >= 9 ? new Float32Array(feet) : null, cap, reach: cap + ride, axles: [axleBack, axleFront] };
+}
+// the most an upright body is drawn lifted off its wheels (m)
+export function bodyLiftCap(model, pivot = model.userData.bodyPivot || model.userData.lean) {
+  let entry = cache.get(pivot);
+  if (!entry) cache.set(pivot, entry = build(model, pivot));
+  return entry.cap;
+}
+// The wheels' plane (world): h = a + b·(x − cx) + c·(z − cz), fitted to the ground under the wheels' contacts. A contact
+// whose ground is more than `reach` above the median (offsets from the parked tyres' bottoms at the model's pose) is
+// left out: a wheel pressed into a cutting's wall, the ground under its centre the bank's top. If fewer than three are
+// left, or the fitted tilt is more than TILT_OFF from how the physics stands (wheels pushed into a wall), the plane is
+// tilted as the physics stands, at the second lowest offset.
+const plane = { a: 0, b: 0, c: 0, cx: 0, cz: 0 };
+let _fp = new Float64Array(0), _fo = new Float64Array(0), _fs = new Float64Array(0);
+function fitPlane(P, n, Y, use) {         // least squares through P[3i], P[3i + Y], P[3i + 2] where use(i): false if < 3
+  let k = 0, cx = 0, cz = 0, a = 0;
+  for (let i = 0; i < n; i++) if (use(i)) { cx += P[3 * i]; cz += P[3 * i + 2]; a += P[3 * i + Y]; k++; }
+  if (k < 3) return false;
+  cx /= k; cz /= k; a /= k;
+  let xx = 0, xz = 0, zz = 0, xy = 0, zy = 0;
+  for (let i = 0; i < n; i++) if (use(i)) {
+    const x = P[3 * i] - cx, z = P[3 * i + 2] - cz, y = P[3 * i + Y] - a;
+    xx += x * x; xz += x * z; zz += z * z; xy += x * y; zy += z * y;
+  }
+  const det = xx * zz - xz * xz;
+  if (!(det > 1e-6)) return false;
+  plane.a = a; plane.cx = cx; plane.cz = cz; plane.b = (xy * zz - zy * xz) / det; plane.c = (zy * xx - xy * xz) / det;
+  return true;
+}
+function wheelPlane(entry, m, ground) {
+  const f = entry.feet, e = m.elements, n = f.length / 3;
+  if (_fp.length < f.length) { _fp = new Float64Array(f.length); _fo = new Float64Array(n); }
+  const P = _fp, O = _fo;                // per contact: x, y (the stance, then the ground under it), z; ground − stance
+  for (let j = 0, i = 0; j < f.length; j += 3, i++) {
+    const x = P[j] = e[0] * f[j] + e[4] * f[j + 1] + e[8] * f[j + 2] + e[12], y = P[j + 1] = e[1] * f[j] + e[5] * f[j + 1] + e[9] * f[j + 2] + e[13];
+    const z = P[j + 2] = e[2] * f[j] + e[6] * f[j + 1] + e[10] * f[j + 2] + e[14];
+    O[i] = ground(x, z) - y;
+  }
+  const S = _fs.length < n ? (_fs = new Float64Array(n)) : _fs;
+  for (let i = 0; i < n; i++) S[i] = O[i];
+  const sorted = S.subarray(0, n).sort(), lo2 = sorted[1], mid = (sorted[(n - 1) >> 1] + sorted[n >> 1]) / 2;
+  if (!Number.isFinite(lo2) || !Number.isFinite(mid)) return false;
+  // as the physics stands
+  if (!fitPlane(P, n, 1, () => true)) { plane.b = plane.c = 0; plane.cx = P[0]; plane.cz = P[2]; plane.a = P[1]; }
+  const sb = plane.b, sc = plane.c, sa = plane.a, scx = plane.cx, scz = plane.cz;
+  // the ground under the contacts (stance y + offset), but those far above the rest
+  for (let i = 0; i < n; i++) P[3 * i + 1] += O[i];
+  const used = i => O[i] <= mid + entry.reach;
+  if (fitPlane(P, n, 1, used) && Math.hypot(plane.b - sb, plane.c - sc) <= TILT_OFF) return true;
+  plane.b = sb; plane.c = sc; plane.a = sa + lo2; plane.cx = scx; plane.cz = scz;
+  return true;
 }
 // how far the ground can rise above the bilinear estimate inside each grid cell: for ground made of flat pieces a
 // crease in a cell lifts it above the chord by at most the convex second difference at either neighbouring grid point
@@ -148,10 +231,12 @@ function gridGround(entry, x, z) {
 }
 
 // pivot's rotation.x / .z are the wanted show pose; ground(x, z) = the road height (world). Sets the pivot's rotation
-// (scaled back) and position.y (its parked height + any lift), or raises model.position when it's far from upright.
-// Returns how far the body was lifted (m), 0 normally. exact: landing or tumbling (the grid estimate assumes a body
-// over the road, level-ish): every point near the road gets its exact ground.
-export function keepBodyAboveGround(model, pivot, ground, exact = false, dt = 1 / 60) {
+// (scaled back) and position.y (its parked height + any lift up to maxLift), and raises model.position by the rest (all
+// of it when far from upright). Returns how far the body was lifted in all (m), 0 normally. exact: landing or tumbling
+// (the grid estimate assumes a body over the road, level-ish): every point near the road gets its exact ground.
+// maxLift: the most an upright body may be lifted off its wheels (m; car.js: what its springs have left to extend, at
+// least bodyLiftCap; bike.js: bodyLiftCap); what's needed beyond it raises model.position too.
+export function keepBodyAboveGround(model, pivot, ground, exact = false, dt = 1 / 60, maxLift = Infinity) {
   let entry = cache.get(pivot);
   if (!entry) cache.set(pivot, entry = build(model, pivot));
   pivot.position.y = entry.base;
@@ -165,14 +250,33 @@ export function keepBodyAboveGround(model, pivot, ground, exact = false, dt = 1 
   if (retained < 1e-5) retained = 0;
   let lifted = 0;
   entry.whole = whole;
+  // upright, the body is lifted off its wheels up to maxLift; the rest (a ramp's face or a landing under the nose) lifts
+  // the whole model, wheels and all, so the suspension is never drawn longer than it is
+  const cap = whole ? 0 : Math.max(0, maxLift);
   const lift = need => {
-    if (whole) { model.position.y += need; model.updateMatrix(); } else pivot.position.y += need / upY;
+    if (!whole && !exact) need = Math.min(need, UPRIGHT_MAX - lifted);
+    if (!(need > 0)) return;
+    const body = Math.min(need, Math.max(0, cap - lifted));
+    if (body > 0) pivot.position.y += body / upY;
+    if (need > body) { model.position.y += need - body; model.updateMatrix(); }
     entry.lift = lifted += need;
   };
   entry.lift = 0;
   lift(retained);
   const rx = pivot.rotation.x, rz = pivot.rotation.z;
   pose(_p1, model, pivot, rx, rz); pose(_p0, model, pivot, 0, 0);
+  // driving (not landing or tumbling: then all of it), the ground counts by how far it is above the wheels' plane: in
+  // full up to `reach` (and ahead of the front axle or behind the rear one, AHEAD_SLOPE more per m: a ramp's face under
+  // the nose), then less (continuous, so a bank coming under the body's edge doesn't pop it), and from twice that not at all
+  if (!whole && !exact && entry.feet && wheelPlane(entry, _p0, ground)) {
+    const raw = ground, { a, b, c, cx, cz } = plane, reach = entry.reach, [back, front] = entry.axles, e = _p0.elements;
+    const fl = Math.hypot(e[8], e[10]) || 1, fx = e[8] / fl, fz = e[10] / fl, oz = (e[14] * fz + e[12] * fx);
+    ground = (x, z) => {
+      const along = x * fx + z * fz - oz, beyond = Math.max(0, along - front, back - along);
+      const g = raw(x, z), over = g - (a + b * (x - cx) + c * (z - cz)) - reach - AHEAD_SLOPE * beyond;
+      return over > 0 ? g - 2 * over : g;
+    };
+  }
   // the coarse ground: GX × GZ exact heights under the level body's footprint
   const [x0, x1, z0, z1] = entry.grid;
   _a.set(x0, 0, z0).applyMatrix4(_p0); gox = _a.x; goz = _a.z;
@@ -227,8 +331,7 @@ export function keepBodyAboveGround(model, pivot, ground, exact = false, dt = 1 
       low = Math.min(low, wy - C[j + 3]);
     }
     if (!(low < BODY_CLEAR - 1e-4)) break;
-    const need = BODY_CLEAR - low;
-    lift(need);
+    lift(BODY_CLEAR - low);
   }
   return lifted;
 }

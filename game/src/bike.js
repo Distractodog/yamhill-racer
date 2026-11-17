@@ -19,7 +19,7 @@ import * as THREE from 'three';
 import { wetGrip, wetBraking } from './wetgrip.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
-import { keepBodyAboveGround } from './bodyclearance.js';
+import { keepBodyAboveGround, bodyLiftCap } from './bodyclearance.js';
 import { planeHold, planeGrip, planeDamp, skimRelief, floodRate, bedGrip, nearestBank, UNDER_SECS, BOG_SECS } from './water.js';
 
 export const BIKE = {
@@ -400,10 +400,11 @@ export class Bike extends Vehicle {
     ud.lean.rotation.z = this.lean;
     ud.bars.rotation.y = -this.steer * 0.45;
     ud.rider.rotation.x = this.sunk ? -0.35 : clamp(-this.pitchRate * 0.05 + (this.wheelie ? -0.15 : 0.12), -0.35, 0.35);
-    // the drawn lean stops short of putting a fairing or the rider's knee into the road (bodyclearance.js)
+    // the drawn lean stops short of putting a fairing or the rider's knee into the road (bodyclearance.js); a bank beside
+    // the road doesn't lift it (only ground near its wheels' plane counts)
     const W = this.world, ref = this.renderPos.y + 1;
     ud.bodyLift = keepBodyAboveGround(m, ud.lean, W?.heightAt ? (x, z) => W.heightAt(x, z, ref) : null,
-      Math.abs(this.vel?.dot(_v.set(0, 1, 0).applyQuaternion(this.renderQuat)) ?? 0) > 4, dt);     // exactly while landing
+      Math.abs(this.vel?.dot(_v.set(0, 1, 0).applyQuaternion(this.renderQuat)) ?? 0) > 4, dt, bodyLiftCap(m));     // exactly while landing
     // Tyres on the road where the bike is drawn: the springs' compression is from the start of the step (landings, crests
     // at speed) and a leaned tyre's edge dips below its contact. The lowest point of each tyre, as drawn, is held on the
     // road under it: the wheel rides up toward its arch, and what the arch can't take lifts the whole bike. Drawing only.

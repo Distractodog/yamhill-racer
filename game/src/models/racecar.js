@@ -18,6 +18,8 @@ import { Shape, lodBody } from './shapedbody.js';
 import { measureWheelArch } from '../wheeltravel.js';
 
 export const FAR_AT = 70;
+// the suspension arms' limits: swing about the chassis hinge (rad) and stretch along themselves (× their built length)
+export const ARM_SWING = 0.6, ARM_STRETCH = 1.2;
 // Garage palette (cosmetics.js matches these exact vertex colours) and the fixed colours
 export const PAINT = '#e8402f', TRIM = '#ffffff', HELMET = '#ffd23a';
 const CARBON = '#1b1c20', CARBON2 = '#2a2c31', DARK = '#0b0c0e', VISOR = '#1c2a3a', MIRROR = '#5a6b78',
@@ -430,7 +432,8 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
     for (const k of [0, 3]) rod(far, ...bars[k], .04, .02, CARBON);
     // the bars' outer ends: on the upright, `inset` inboard of the hub (the holder only moves, so they move with it)
     const inset = Math.sign(W.hub[0]) * (W.w / 2 - .008);
-    return { pivot, inset, from, to: near.p.length / 3, reach: Math.abs(W.hub[0] - inset - pivot[0]), wheel: wheels[i], angle: 0, stretch: 1 };
+    return { pivot, inset, from, to: near.p.length / 3, reach: Math.abs(W.hub[0] - inset - pivot[0]), wheel: wheels[i], angle: 0, stretch: 1,
+      wantAngle: 0, wantStretch: 1 };
   });
   const armEnd = near.p.length / 3;
   const nearMeshes = near.meshes({ fixed }), farMeshes = far.meshes({ fixed });
@@ -454,7 +457,11 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
       for (const L of links) {
         hub.copy(L.wheel.holder.position).applyMatrix4(inv);
         const dx = hub.x - L.inset - L.pivot[0], dy = hub.y - L.pivot[1], sx = Math.sign(dx) || 1;
-        const angle = Math.atan2(dy * sx, dx * sx), stretch = Math.hypot(dx, dy) / L.reach;
+        // within real lengths, whatever the drawing asks: a wishbone's swing and stretch (bodyclearance.js caps the
+        // body's lift off the wheels, so this is only a backstop)
+        L.wantAngle = Math.atan2(dy * sx, dx * sx); L.wantStretch = Math.hypot(dx, dy) / L.reach;
+        const angle = THREE.MathUtils.clamp(L.wantAngle, -ARM_SWING, ARM_SWING);
+        const stretch = THREE.MathUtils.clamp(L.wantStretch, 1 / ARM_STRETCH, ARM_STRETCH);
         if (pos === posed && Math.abs(angle - L.angle) < 1e-4 && Math.abs(stretch - L.stretch) < 1e-4) continue;
         L.angle = angle; L.stretch = stretch; moved = true;
         const c = Math.cos(angle), s = Math.sin(angle), [px, py] = L.pivot, a = pos.array;
@@ -466,6 +473,15 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
       if (!moved) return;
       posed = pos;                       // (a baked copy, mp/remotes.js, is a new buffer: posed in full once)
       pos.clearUpdateRanges(); pos.addUpdateRange(armStart * 3, (armEnd - armStart) * 3); pos.needsUpdate = true;
+    },
+    // the arms' largest |swing| (rad) and stretch as last drawn, and as the wheels asked (tests)
+    extent() {
+      let swing = 0, stretch = 0, wantSwing = 0, wantStretch = 0;
+      for (const L of links) {
+        swing = Math.max(swing, Math.abs(L.angle)); stretch = Math.max(stretch, L.stretch);
+        wantSwing = Math.max(wantSwing, Math.abs(L.wantAngle)); wantStretch = Math.max(wantStretch, L.wantStretch);
+      }
+      return { swing, stretch, wantSwing, wantStretch };
     },
   };
   // lenses (lights.js) on the drawn lamps: the endplate lamps, the rain light, the endplate LED strips
