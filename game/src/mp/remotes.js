@@ -54,7 +54,7 @@ const ANIM_NUM = Object.keys(ANIM_RANGE);
 const surfOf = x => Number.isInteger(x) && x >= 0 && x < 8 ? x : 0;
 export function parseAnim(msg) {
   if (!Array.isArray(msg?.w) || !msg.w.length) return null;
-  const a = { hb: !!msg.hb, dr: !!msg.dr, ow: !!msg.ow, wl: !!msg.wl, sf: surfOf(msg.sf),
+  const a = { ab: msg.ab === 1, hb: !!msg.hb, dr: !!msg.dr, ow: !!msg.ow, wl: !!msg.wl, sf: surfOf(msg.sf),
     md: ['g', 'a', 'c'].includes(msg.md) ? msg.md : 'g', jc: [0, 0, 0] };
   for (const k of ANIM_NUM) a[k] = fin(msg[k]) ? clamp(msg[k], ...ANIM_RANGE[k]) : 0;
   a.w = msg.w.slice(0, 4).map(x => fin(x) && x >= 0 ? Math.min(x, 100) : -1);
@@ -132,7 +132,7 @@ export function animAt(buf, t, out = { w: [], ws: [], jc: [0, 0, 0] }) {
   if (!a || !b) { a = b = a || b; u = 0; }
   const near = u < 0.5 ? a : b;
   for (const k of ANIM_NUM) out[k] = a[k] + (b[k] - a[k]) * u;
-  for (const k of ['hb', 'dr', 'ow', 'wl', 'sf', 'md']) out[k] = near[k];
+  for (const k of ['ab', 'hb', 'dr', 'ow', 'wl', 'sf', 'md']) out[k] = near[k];
   out.w.length = out.ws.length = near.w.length;
   for (let i = 0; i < near.w.length; i++) {
     const x = a.w[i] ?? -1, y = b.w[i] ?? -1;
@@ -200,6 +200,10 @@ export function animate(pz, a, r, V, F, dt, moving = true) {
     inp.throttle = pz.lonAcc > 1 ? 1 : 0; inp.brake = pz.lonAcc < -8 ? 1 : 0;
     pz.lean += (clamp(-Math.atan(speed * r.yawRate / 17), -1, 1) - pz.lean) * k;   // lean = atan(v·ω / g)
     pz.throttle = speed < 3 ? 0 : clamp(speed / 250, 0.05, 1); pz.gear = speed < 85 ? 1 : 0; pz.mode = speed > 60 ? 'air' : 'ground';
+  }
+  if (kind === 'jet') {
+    const brake = a?.ab && pz.mode !== 'crashed' ? 1 : 0;
+    pz.speedBrake = (pz.speedBrake || 0) + clamp(brake - (pz.speedBrake || 0), -dt * 3, dt * 3);
   }
   r.vf = vf;
   if (!moving) { pz.latAcc = pz.lonAcc = 0; inp.throttle = 0; }

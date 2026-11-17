@@ -12,6 +12,7 @@
 //     then back to the last safe spot (or the challenge's respawn point) after 3 s.
 // World queries only: heightAt / surfaceAt / normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt).
 import * as THREE from 'three';
+import { speedBrakePanels, speedBrakeDrag } from './speedbrakes.js';
 import { Vehicle } from './vehicle.js';
 import { wetBraking } from './wetgrip.js';
 import { LEDGE, onRoofAt, roofLedge } from './roofs.js';
@@ -56,6 +57,7 @@ export class Jet extends Vehicle {
   constructor(world, tuning = JET) {
     super(world, 'jet');
     this.name = 'Jet'; this.t = tuning;
+    this.speedBrake = 0; this.braking = false;
     this.mode = 'ground'; this.throttle = 0; this.yaw = 0; this.v = 0; this.rot = 0; this.vy = 0;
     this.alpha = 0; this.bank = 0; this.gLoad = 1; this.stall = false; this.stallT = 0; this.agl = 0;
     this.pullUp = false; this.crashT = 0; this.crashReason = null; this.gear = 1; this.respawn = null;
@@ -104,6 +106,8 @@ export class Jet extends Vehicle {
   // y: the height the spot was recorded at (a respawn's safe spot), so ground above it (a bridge deck) doesn't count
   reset(x, z, yaw, y) {
     this.sit = this.air.tail;
+    this.speedBrake = 0; this.braking = false;
+    this.mesh.userData.setSpeedBrake?.(0);
     this.mode = 'ground'; this.yaw = yaw; this.v = 0; this.rot = 0; this.vy = 0; this.throttle = 0;
     this.crashT = 0; this.crashReason = null; this.stall = false; this.gear = 1; this.mesh.userData.wreck(false);
     // the ground queries (roofs) go by where the aircraft is: reset where it stands (a vehicle switch, F, a type change)
@@ -166,6 +170,8 @@ export class Jet extends Vehicle {
     this._prevVel.copy(this.vel);
     this.throttle = clamp(this.throttle + J.thr * this.t.throttleRate * dt, 0, 1);
     this.hit = 0;
+    this.braking = this.mode !== 'crashed' && !!(input.handbrake || J.brake);
+    this.speedBrake += clamp((this.braking ? 1 : 0) - this.speedBrake, -dt * 3, dt * 3);
     if (this.grace > 0 && this.mode !== 'crashed') this.grace -= dt;
     if (this.mode === 'crashed') {
       this.stepWreck(dt);
@@ -198,13 +204,15 @@ export class Jet extends Vehicle {
     // lift from the wings at the rotation angle (takes weight off the wheels; enough of it = take-off)
     const q = this.v * this.v;
     const cl = t.cl0 + t.clA * (this.rot + 0.035);
-    const L = this.v > 0 ? t.liftK * q * cl : 0;
+    const L = this.v > 0 ? t.liftK * q * cl * (1 - 0.65 * this.speedBrake) : 0;
     const load = Math.max(0, 1 - L / g);
     let a = this.throttle * t.thrust - t.liftK * q * (t.cd0 + t.cdK * cl * cl + 0.012) * Math.sign(this.v);
+    // Spoilers dump lift, add drag, and let the wheel brakes use more of the aircraft's weight.
+    a -= this.speedBrake * speedBrakeDrag(t, Math.abs(this.v), false) * Math.sign(this.v);
     a -= worstRoll * load * Math.sign(this.v) * Math.min(1, Math.abs(this.v));
     if (J.hold) { this.v = 0; a = 0; }                          // race countdown: held on the brakes
     else if (input.handbrake || J.brake) {
-      if (Math.abs(this.v) < 1.5 && this.throttle < 0.9) { this.v = 0; a = 0; } else a -= t.brakes * wetBraking(W, this.surface) * Math.sign(this.v) * Math.min(1, Math.abs(this.v));
+      if (Math.abs(this.v) < 1.5 && this.throttle < 0.9) { this.v = 0; a = 0; } else a -= t.brakes * (1 + 0.3 * this.speedBrake) * wetBraking(W, this.surface) * Math.sign(this.v) * Math.min(1, Math.abs(this.v));
     } else if (!this.throttle && Math.abs(this.v) < 0.5) { this.v = 0; a = 0; }
     this.v += a * dt;
     // nose-wheel steering (A/D) + rudder at speed
@@ -297,7 +305,9 @@ export class Jet extends Vehicle {
     const clNeed = nCmd * g / (t.liftK * Math.max(q, 100));
     // alpha limiter just below the stall, unless you yank the stick all the way back
     const aMax = J.pitch > 0.9 ? t.stallA + 0.14 : t.stallA - 0.03;
-    let alphaT = clamp((clNeed - t.cl0) / t.clA, -0.3, aMax);
+    const brakeDrag = this.speedBrake * speedBrakeDrag(t, s);
+    const brakePitch = 0.006 * this.speedBrake * Math.min(1, brakeDrag / 3);
+    let alphaT = clamp((clNeed - t.cl0) / t.clA + brakePitch, -0.3, aMax);
     // stalled: past the stall angle, or too slow to make the lift asked for even at the limit (mushing)
     const clMax0 = t.cl0 + t.clA * t.stallA;
     this.stall = alpha > t.stallA || (clNeed > clMax0 && nCmd > 0.5 && alpha > aMax - 0.05 && s < Math.sqrt(g / (t.liftK * clMax0)) * 1.05);
@@ -332,7 +342,7 @@ export class Jet extends Vehicle {
     if (s > 0.5) {
       _w.crossVectors(_v, _lt); const wl = _w.length();
       if (wl > 1e-3) _a.addScaledVector(_w, L / wl);
-      _a.addScaledVector(_v, -D);
+      _a.addScaledVector(_v, -D - brakeDrag);
     }
     _a.addScaledVector(_fw, this.throttle * t.thrust);
     _a.addScaledVector(_lt, -vL * 0.8);
@@ -459,6 +469,7 @@ export class Jet extends Vehicle {
   crash(why) {
     if (this.mode === 'crashed') return;
     if (this.grace > 0) { this.recover(); return; }      // just respawned: never a wreck (no respawn loop)
+    this.speedBrake = 0; this.braking = false;
     this.mode = 'crashed'; this.crashReason = why; this.crashT = 0; this.burning = true; this.grounded = false;
     this.hit = Math.max(this.hit, 40); this.landing = 1;
     // Keep position and attitude at impact rather than teleporting to a flat wreck on the ground.
@@ -484,7 +495,7 @@ export class Jet extends Vehicle {
 
   hudInfo() {
     if (this.mode === 'crashed') return '';
-    const thr = `THR ${Math.round(this.throttle * 100)}%`;
+    const thr = `THR ${Math.round(this.throttle * 100)}%${this.braking ? ' · AIR BRAKE' : ''}`;
     if (this.mode === 'ground') {
       const hint = this.v * 3.6 > this.t.rotateKmh ? ' · ↓ to lift the nose' : this.throttle < 0.3 && this.v < 3 ? ' · hold W to throttle up' : '';
       return `${thr} · on the ground${hint} · `;
@@ -498,6 +509,7 @@ export class Jet extends Vehicle {
     const m = this.mesh, ud = m.userData;
     m.position.copy(this.renderPos); m.quaternion.copy(this.renderQuat);
     ud.setGear(this.gear);
+    ud.setSpeedBrake?.(this.speedBrake || 0);
     if (ud.flame) {
       ud.flame.scale.set(1, 1, 0.3 + this.throttle * 1.4);
       ud.flame.material.opacity = 0.25 + this.throttle * 0.6;
@@ -569,6 +581,11 @@ export function buildJetModel() {
   const setGear = k => {
     for (const w of wheels) { w.leg.scale.y = Math.max(0.05, k); w.leg.visible = k > 0.06; }
   };
+  const setSpeedBrake = speedBrakePanels(root, orange, [
+    { x: 0, y: 0.78, z: -1.8, w: 1.05, d: 1.8 },
+    { x: 1.25, y: 0.14, z: -4.9, w: 0.85, d: 0.7 },
+    { x: -1.25, y: 0.14, z: -4.9, w: 0.85, d: 0.7 },
+  ]);
   // wreck look: blackened and the flame out
   const mats = [white, orange], WRECK = 0x3a3a3a;
   let wrecked = false, base = [];          // paint is snapshotted on entering the wreck (Garage colours), restored on leaving
@@ -585,7 +602,7 @@ export function buildJetModel() {
     aileronR.rotation.z = on ? -0.7 : 0;
   };
   // wreckMats / wreckColor / canopy: what wreck() changes, for copies with merged paint (mp/remotes.js)
-  root.userData = { wheels, setGear, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, canopy, wreckMats: mats, wreckColor: WRECK, blob: [9.8, 13], lights: { head: [], tail: [], nav: {
+  root.userData = { wheels, setGear, setSpeedBrake, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, canopy, wreckMats: mats, wreckColor: WRECK, blob: [9.8, 13], lights: { head: [], tail: [], nav: {
     left: new THREE.Vector3(5.02, 0, -1.6), right: new THREE.Vector3(-5.02, 0, -1.6),     // on the tip caps' ends
     tail: new THREE.Vector3(0, .58, -5.82), strobe: new THREE.Vector3(0, .82, -.6),
   } } };
