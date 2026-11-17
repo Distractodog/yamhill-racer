@@ -1,0 +1,102 @@
+<!doctype html>
+<!-- Tyre effects on their own (effects.js), no game / map / network: the real car or bike physics and model on a flat
+     world, three.js from node_modules. open tools/tyrefx_preview.html?s=drift-side
+     s = drift-side | drift-behind | burnout | dirt | gravel | grass | water | marks | blur | night | bike
+     t = seconds simulated before the shot (default per scene); type = car type (race, sports, hatch, suv, truck)
+     The title reads "ready <scene> <stats>" once the picture is drawn. -->
+<html lang="en"><head><meta charset="utf-8"><title>tyre fx preview</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#9cc3df}canvas{display:block}</style>
+<script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
+import { Bike, BIKE } from '../game/src/bike.js';
+import { Effects } from '../game/src/effects.js';
+import { applyVehicleType } from '../game/src/vehicletypes.js';
+
+const q = new URLSearchParams(location.search), scene0 = q.get('s') || 'drift-side';
+const SURF = { dirt: 2, gravel: 4, grass: 0 }[scene0] ?? 3, night = scene0 === 'night', water = scene0 === 'water';
+const GROUND = { 0: '#5f8a3c', 2: '#a07a52', 3: '#4a4c50', 4: '#9a9184' }[SURF];
+const flat = { heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0, surfaceAt: () => SURF,
+  normalAt: (x, z, out = new THREE.Vector3()) => out.set(0, 1, 0), waterLevelAt: () => water ? 0 : -Infinity,
+  treesNear: () => {}, buildingsNear: () => [], loadedAt: () => true, extent: [-1e7, -1e7, 1e7, 1e7] };
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(1); document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(night ? '#141e36' : '#a9cbe3');
+scene.fog = new THREE.Fog(scene.background, 250, 1500);
+const hemi = new THREE.HemisphereLight(night ? 0xa4b9e3 : 0xdfefff, night ? 0x343b48 : 0x4a5a3a, night ? 0.95 * 0.45 : 1.4); scene.add(hemi);
+const sun = new THREE.DirectionalLight(night ? 0xc4d7ff : 0xfff1d6, night ? 0.35 : 2.4); sun.position.set(-45, 80, 35); scene.add(sun, sun.target);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 3000);
+
+// ground: a lined asphalt / dirt / gravel / grass field (water: a blue sheet)
+const c = document.createElement('canvas'); c.width = c.height = 256; const g2 = c.getContext('2d');
+g2.fillStyle = water ? '#3f6f86' : GROUND; g2.fillRect(0, 0, 256, 256);
+for (let i = 0; i < 2600; i++) { g2.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},${Math.random() * 0.08})`; g2.fillRect(Math.random() * 256, Math.random() * 256, 2, 2); }
+if (SURF === 3) { g2.fillStyle = 'rgba(240,240,220,0.7)'; g2.fillRect(126, 0, 4, 120); }
+const gt = new THREE.CanvasTexture(c); gt.wrapS = gt.wrapT = THREE.RepeatWrapping; gt.repeat.set(60, 60); gt.colorSpace = THREE.SRGBColorSpace;
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: gt }));
+scene.add(ground);
+
+const kind = scene0 === 'bike' ? 'bike' : 'car';
+const v = kind === 'car' ? new Car(flat, { ...TUNING_DEFAULTS }) : new Bike(flat, { ...BIKE });
+if (q.get('type')) applyVehicleType(v, q.get('type'));
+scene.add(v.mesh); v.reset(0, 0, 0);
+const fx = new Effects(scene), input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false }; v.input = input;
+let spot = null;
+if (night) { spot = new THREE.SpotLight(0xfff4e8, 18, 60, 0.7, 0.55, 0); scene.add(spot, spot.target); }
+
+const STEP = 1 / 120, FRAME = 1 / 60;
+// per scene: what the driver does at time t (s) and when the picture is taken
+const speedTo = (s, i) => { i.throttle = v.vel.length() < s ? 1 : 0; i.brake = 0; i.steer = 0; i.handbrake = false; };
+const driftAt = (t0, i, t, steer = 0.85) => { if (t < t0) return speedTo(28, i); i.throttle = 1; i.steer = steer; i.handbrake = t < t0 + 0.5; i.brake = 0; };
+const SCENES = {
+  'drift-side': { T: 5.6, drive: (t, i) => driftAt(4.2, i, t) },
+  'drift-behind': { T: 5.6, drive: (t, i) => driftAt(4.2, i, t) },
+  night: { T: 5.6, drive: (t, i) => driftAt(4.2, i, t) },
+  burnout: { T: 1.6, drive: (t, i) => { i.throttle = 1; i.brake = 1; i.steer = 0; } },
+  dirt: { T: 5, drive: (t, i) => driftAt(3.8, i, t) }, gravel: { T: 5, drive: (t, i) => driftAt(3.8, i, t) },
+  grass: { T: 5, drive: (t, i) => driftAt(3.8, i, t) },
+  water: { T: 3.6, drive: (t, i) => speedTo(25, i) },
+  marks: { T: 14, drive: (t, i) => { if (t < 3) return speedTo(26, i); i.throttle = 1; i.steer = t < 8 ? 0.9 : -0.9; i.handbrake = (t > 3 && t < 3.4) || (t > 8 && t < 8.4); i.brake = 0; if (t > 12.5) { i.throttle = 0; i.brake = 1; i.steer = 0; } } },
+  blur: { T: 14, drive: (t, i) => speedTo(200 / 3.6, i) },
+  bike: { T: 5, drive: (t, i) => { if (t < 3.6) return speedTo(24, i); i.throttle = 1; i.steer = 0.6; i.handbrake = true; } },
+};
+const S = SCENES[scene0] || SCENES['drift-side'], T = +(q.get('t') || S.T);
+const fwd = new THREE.Vector3(), left = new THREE.Vector3();
+let t = 0;
+for (; t < T; t += FRAME) {
+  S.drive(t, input);
+  for (let k = 0; k < 2; k++) { v.savePrev?.(); v.step(STEP, input); }
+  v.interpolate?.(1); v.syncMesh(FRAME); v.mesh.updateMatrixWorld(true);
+  if (water && t > 2.4) {                                    // ploughing into water: the tyres on its surface
+    v.onWater = true; v.waterDepth = 0.25; v.wheels.forEach(w => { w.surf = 5; w.contact = true; });
+  }
+  if (spot) {
+    fwd.set(0, 0, 1).applyQuaternion(v.quat);
+    spot.position.copy(v.pos).addScaledVector(fwd, 2.4).setY(0.8); spot.target.position.copy(spot.position).addScaledVector(fwd, 30).setY(0);
+  }
+  fx.update(FRAME, v);
+}
+// the picture: from the side, behind, above, close to the wheels
+const p = v.renderPos; fwd.set(0, 0, 1).applyQuaternion(v.quat); fwd.y = 0; fwd.normalize(); left.set(fwd.z, 0, -fwd.x);
+const travel = v.vel.clone().setY(0); if (travel.lengthSq() < 1) travel.copy(fwd); travel.normalize();
+const look = p.clone(); let at;
+switch (scene0) {
+  case 'drift-behind': case 'night': at = p.clone().addScaledVector(travel, -11).setY(3.2); look.addScaledVector(travel, 4); break;
+  case 'burnout': at = p.clone().addScaledVector(fwd, -7).addScaledVector(left, 4).setY(2.2); look.addScaledVector(fwd, -1.5); break;
+  case 'marks': at = p.clone().addScaledVector(fwd, -6).setY(55); look.addScaledVector(fwd, -30); break;
+  case 'blur': at = p.clone().addScaledVector(left, -4.2).addScaledVector(fwd, 0.4).setY(0.9); look.setY(0.45); break;
+  default: at = p.clone().addScaledVector(left, -13).addScaledVector(travel, -4).setY(3.5); look.addScaledVector(travel, -3);
+}
+camera.position.copy(at); look.y = Math.max(look.y, 0.6); if (scene0 !== 'blur') camera.lookAt(look); else camera.lookAt(look.x, 0.45, look.z);
+camera.updateMatrixWorld();
+fx.cam.copy(camera.position); fx.drive(FRAME, v); fx.advance(FRAME);   // one more effects frame, sorted for this camera
+renderer.render(scene, camera);
+const st = fx.stats();
+document.title = `ready ${scene0} t=${t.toFixed(1)} v=${(v.vel.length() * 3.6).toFixed(0)}km/h drift=${!!v.drifting} puffs=${st.puffs} chips=${st.chips} marks=${st.marks} discs=${st.discs} programs=${renderer.info.programs.length}`;
+console.warn(document.title);
+(function loop() { renderer.render(scene, camera); requestAnimationFrame(loop); })();
+</script>
+</body></html>
