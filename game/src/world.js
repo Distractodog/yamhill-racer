@@ -1,5 +1,6 @@
 // Streams the tiled world (tools/build_tiles.py): loads tiles around the camera and builds their meshes.
 // World space: metres, x = east, z = south, y = up. Origin = centre of the map.
+import { nightAttribute, nightMaterial, nightUniform } from './nightlights.js';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
@@ -52,8 +53,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         #endif`);
   };
   let sceneryTime = 0, nightAmount = 0;
-  const buildingMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const campusMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const buildingMat = nightMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const campusMat = nightMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
   const waterUniforms = { time: { value: 0 } };
   const waterMat = new THREE.MeshLambertMaterial({ color: 0x3d8fc4, transparent: true, opacity: 0.8, flatShading: true });
   waterMat.onBeforeCompile = sh => {
@@ -65,7 +66,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   };
   const propGeos = propGeometries();
   const campusItemGeos = campusItemGeometries();
-  const propMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const propMat = nightMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
   const SHARED = new Set([conifer, broadleaf, coniferFar, broadFar, ...Object.values(propGeos), ...Object.values(campusItemGeos)]);
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
@@ -275,7 +276,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       yield 'buildings';
     }
     if (cGeos.length) {
-      const cm = new THREE.Mesh(mergeGeometries(cGeos), campusMat); cm.name = 'campus'; cm.castShadow = cm.receiveShadow = true; g.add(cm);
+      const cm = new THREE.Mesh(mergeGeometries(cGeos.map(g => nightAttribute(g))), campusMat); cm.name = 'campus'; cm.castShadow = cm.receiveShadow = true; g.add(cm);
       cGeos.forEach(x => x.dispose());
     }
     const [tcx, tcz] = TRACK.c;      // the running track north of the gym (campustrack.js)
@@ -286,6 +287,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     yield* addProps(g, out.propLods, td, propGeos, propMat);
     yield* addCampusItems(g, out.campusItemLods, td, campusItemGeos, propMat);
+    out.nightPools = g.children.filter(m => m.name === 'night-lamp-pools');
     out.scenery = createTileScenery(td); g.add(out.scenery.group);
     out.textures.push(...out.scenery.textures); out.materials.push(...out.scenery.materials);
     yield 'scenery';
@@ -395,6 +397,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   function updateLOD(cam, vel, extraMs = 0) {
     update(cam, vel, extraMs);
     for (const v of vis.values()) {
+      for (const pool of v.nightPools || []) pool.visible = nightAmount > 0;
       v.scenery?.update(cam, sceneryTime, nightAmount);
       for (const c of v.chunks) {
         const d = Math.hypot(c.cx - cam.x, c.cz - cam.z);
@@ -421,7 +424,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     notePerf();
   }
-  return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); },
+  return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); nightUniform.value = nightAmount; },
     tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
     loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep });
 }

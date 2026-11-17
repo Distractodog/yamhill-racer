@@ -1,6 +1,7 @@
 // Entrance dressing that is not a wall: the raised plaza and walks (drivable, so they are
 // only a flat picture), the name over the doors, and lamp posts. Flagpoles and steps are
 // real footprints in campus.js. Lamp posts are not.
+import { nightAttribute, nightMaterial, addLampPools } from './nightlights.js';
 import * as THREE from 'three';
 import { ENTRANCE } from './campus.js';
 
@@ -57,6 +58,8 @@ function lampGeometry() {
   });
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  nightAttribute(geo);
+  for (let i = 0; i < n; i++) if (pos[i * 3 + 1] > 3.0 && Math.hypot(pos[i * 3], pos[i * 3 + 2]) < .15) geo.attributes.nightStart.array[i] = .15;
   geo.computeVertexNormals();
   return geo;
 }
@@ -108,11 +111,12 @@ function nameSign(ground) {
   return mesh;
 }
 
-function lamps(ground) {
+function lamps(ground, group) {
   const { at, N, U } = ENTRANCE;
   const geo = lampGeometry();
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const mat = nightMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }));
   const spots = [add(at, N, 5.2, U, -4.2), add(at, N, 5.2, U, 4.2)];
+  addLampPools(group, spots.map(p => ({ x: p[0], z: p[1] })), ground);
   const mesh = new THREE.InstancedMesh(geo, mat, spots.length);
   mesh.name = 'entrance-lamps'; mesh.castShadow = false; mesh.frustumCulled = false;
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
@@ -126,5 +130,5 @@ function lamps(ground) {
 export function addEntranceDressing(group, ground) {
   group.add(groundDressing(ground));
   const sign = nameSign(ground); if (sign) group.add(sign);
-  group.add(lamps(ground));
+  group.add(lamps(ground, group));
 }

@@ -1,6 +1,7 @@
 // Instanced street props for one tile. One mesh per type. Only the ones within PROP_R
 // of the camera are copied into the mesh, and that copy waits until the camera has
 // moved, so a parked bench does not rebuild them every frame.
+import { nightAttribute, addLampPools } from './nightlights.js';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { placeProps } from './props.js';
@@ -21,8 +22,9 @@ function paint(g, hex) {
   for (let i = 0; i < a.length; i += 3) { a[i] = c.r; a[i + 1] = c.g; a[i + 2] = c.b; }
   g.setAttribute('color', new THREE.BufferAttribute(a, 3));
   g.deleteAttribute('uv');
-  return g;
+  return nightAttribute(g);
 }
+const lit = g => { g.attributes.nightStart.array.fill(.15); return g; };
 const box = (w, h, d, y, z, hex) => {
   const g = new THREE.BoxGeometry(w, h, d); g.translate(0, y, z); return paint(g, hex);
 };
@@ -34,7 +36,7 @@ export function propGeometries() {
   const light = mergeGeometries([
     pole(0.05, 0.07, 7.4, 0x3c3f46),
     box(0.08, 0.08, 1.25, 7.25, 0.62, 0x3c3f46),
-    box(0.52, 0.1, 0.28, 7.12, 1.22, 0xf2d48a),
+    lit(box(0.52, 0.1, 0.28, 7.12, 1.22, 0xf2d48a)),
   ]);
   const power = mergeGeometries([
     pole(0.09, 0.13, 10.2, 0x6b4a32),
@@ -100,6 +102,7 @@ function pack(group, mat, geo, name, items, yAt) {
 export function* addProps(group, lods, td, geos, mat) {
   const placed = placeProps({ paths: td.sourcePaths, junctions: td.sourceJunctions, buildings: td.buildings });
   const yAt = (x, z) => td.terrainAt(x, z);
+  addLampPools(group, placed.lights, (x, z) => (td.heightAt || td.terrainAt)(x, z), 6, 1.22);
   const types = [];
   for (const name of ['light', 'pole', 'line', 'stop', 'mail', 'fence']) {
     const key = name === 'mail' ? 'mailboxes' : name === 'light' ? 'lights' : name === 'pole' ? 'poles' : name === 'line' ? 'lines' : name === 'stop' ? 'stops' : 'fences';

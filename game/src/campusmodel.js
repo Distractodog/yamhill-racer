@@ -2,6 +2,7 @@
 // parapet, gable / hip roofs with eaves, rows of windows per storey, doors, porch roofs on posts, boxes (towers' stone
 // faces, rooftop units, stairs). One flat-shaded, vertex-coloured BufferGeometry per building.
 import * as THREE from 'three';
+import { buildingSeed, windowThreshold } from './nightwindows.js';
 import { partPts } from './campus.js';
 import { addEntranceDressing } from './campusprops.js';
 import { addCourtyardDressing } from './campuscourt.js';
@@ -13,7 +14,8 @@ const _c = new THREE.Color(), _lin = new Map();
 const lin = col => { const key = col.join(); let v = _lin.get(key); if (!v) { _c.setRGB(col[0], col[1], col[2], THREE.SRGBColorSpace); _lin.set(key, v = [_c.r, _c.g, _c.b]); } return v; };
 
 class Mesh {
-  constructor() { this.p = []; this.c = []; }
+  constructor(seed) { this.p = []; this.c = []; this.n = []; this.seed = seed; this.glow = -1; }
+  pane(a) { this.glow = windowThreshold(this.seed, ...a); }
   // triangle facing `want` (any vector on the side it should face)
   tri(a, b, c, col, want) {
     if (want) {
@@ -21,12 +23,14 @@ class Mesh {
       const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
       if (nx * want[0] + ny * want[1] + nz * want[2] < 0) { const t = b; b = c; c = t; }
     }
+    this.n.push(this.glow, this.glow, this.glow);
     const k = lin(col); this.p.push(...a, ...b, ...c); this.c.push(k[0], k[1], k[2], k[0], k[1], k[2], k[0], k[1], k[2]);
   }
   quad(a, b, c, d, col, want) { this.tri(a, b, c, col, want); this.tri(a, c, d, col, want); }
   geometry() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
+    g.setAttribute('nightStart', new THREE.Float32BufferAttribute(this.n, 1));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
     g.computeVertexNormals();          // not indexed: every triangle keeps its own face normal (flat shading)
     return g;
@@ -149,7 +153,9 @@ function baysOn(m, edge, part, floor, ground, top) {
     for (let r = 0; r < w.rows; r++) {
       const yb = floor + r * w.sh + w.sill, yt = yb + winH;
       if (yt > top - 0.35 || yb < gnd + 0.3) continue;
+      m.pane(at(s, yb, off));
       m.quad(at(s - winW / 2, yb, off), at(s + winW / 2, yb, off), at(s + winW / 2, yt, off), at(s - winW / 2, yt, off), w.color, face);
+      m.glow = -1;
       m.quad(at(s - winW / 2 - 0.08, yb - 0.14, off + 0.05), at(s + winW / 2 + 0.08, yb - 0.14, off + 0.05),
         at(s + winW / 2 + 0.08, yb, off + 0.05), at(s - winW / 2 - 0.08, yb, off + 0.05), sill, face);
       const yNext = r + 1 < w.rows ? floor + (r + 1) * w.sh + w.sill : top - 0.15;
@@ -180,8 +186,10 @@ function pointedOn(m, e, w, floor, top, fixed) {
     const spring = yb + hh * 0.66, o = 0.04;
     const at = (ds, y) => [e.p[0] + e.ux * (s + ds) + e.ox * o, y, e.p[1] + e.uz * (s + ds) + e.oz * o];
     const col = ARCH_GLASS[i % ARCH_GLASS.length];
+    m.pane(at(0, yb));
     m.quad(at(-ww / 2, yb), at(ww / 2, yb), at(ww / 2, spring), at(-ww / 2, spring), col, face);
     m.tri(at(-ww / 2, spring), at(ww / 2, spring), at(0, yt), col, face);
+    m.glow = -1;
   }
 }
 
@@ -207,7 +215,9 @@ function windowsOn(m, pts, part, floor, ground, top, far) {
         const yb = floor + r * w.sh + w.sill, yt = yb + w.h;
         if (yt > top - 0.4 || yb < gnd + 0.3) continue;
         const ax = cx - e.ux * w.w / 2, az = cz - e.uz * w.w / 2, bx = cx + e.ux * w.w / 2, bz = cz + e.uz * w.w / 2;
+        m.pane([cx, yb, cz]);
         m.quad([ax, yb, az], [bx, yb, bz], [bx, yt, bz], [ax, yt, az], w.color, [e.ox, 0, e.oz]);
+        m.glow = -1;
       }
     }
   }
@@ -288,7 +298,7 @@ function porch(m, pts, P, floor, ground) {
 // b: a campus.js building with b.floor set (applyCampus); ground(x, z) = terrain height.
 // far = the plain window grid, used past ~250 m.
 export function buildCampusGeometry(b, ground, far = false) {
-  const m = new Mesh();
+  const m = new Mesh(buildingSeed(b.parts.flatMap(partPts)));
   for (const part of b.parts) {
     const pts = partPts(part), floor = b.floor + (part.dy || 0);
     let lo = Infinity; for (const [x, z] of pts) lo = Math.min(lo, ground(x, z));
