@@ -55,7 +55,6 @@ export function createRaceLoadingView({ fmtTime, base }) {
 #race-loading.fading{opacity:0}
 #race-loading .rl-panel{width:min(520px,100%);max-height:90dvh;overflow:auto;background:#12251ff7;border:1px solid #eac17c55;border-radius:20px;box-shadow:0 24px 80px #0009;padding:22px;box-sizing:border-box}
 #race-loading h2{font-size:24px;margin:4px 0 16px}
-#race-loading .rl-label{color:#e7c68a;font-size:12px;text-transform:uppercase;letter-spacing:.12em}
 #race-loading canvas{width:100%;height:auto;border-radius:10px;background:#21402f;display:block}
 #race-loading .rl-facts{color:#e7c68a;margin:12px 0}
 #race-loading .rl-targets{display:flex;flex-wrap:wrap;gap:12px;font-variant-numeric:tabular-nums}
@@ -65,7 +64,7 @@ export function createRaceLoadingView({ fmtTime, base }) {
   document.head.append(style);
   const root = document.createElement('section'); root.id = 'race-loading'; root.hidden = true;
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-labelledby', 'rl-title');
-  root.innerHTML = `<div class="rl-panel"><div class="rl-label">Preparing race</div><h2 id="rl-title"></h2><canvas width="704" height="396" aria-label="Race route"></canvas><p class="rl-facts"></p><div class="rl-targets"></div><progress max="1" value="0" aria-label="Race loading progress"></progress><p class="rl-status" role="status" aria-live="polite"></p></div>`;
+  root.innerHTML = `<div class="rl-panel"><h2 id="rl-title"></h2><canvas width="704" height="396" aria-label="Race route"></canvas><p class="rl-facts"></p><div class="rl-targets"></div><progress max="1" value="0" aria-label="Race loading progress"></progress><p class="rl-status" role="status" aria-live="polite"></p></div>`;
   document.body.append(root);
   let revision = 0;
   return {
