@@ -25,7 +25,7 @@ export function defaultRelay(win = globalThis.window) {
 // zeros left out:
 //   st steer · th throttle (the jet: its lever) · br brake · hb handbrake · dr drifting · sl slip · la / lo sideways /
 //   forward acceleration (body roll / pitch) · sf surface · w per-wheel spring compression in cm (-1 = in the air) ·
-//   ws per-wheel surface (only when one differs from sf) · ow skimming water · wd water depth ·
+//   hi impact speed / ld landing strength (sound effects) · ws per-wheel surface (only when one differs from sf) · ow skimming water · wd water depth ·
 //   bike: ln lean · pr pitch rate · wl wheelie · jet: md mode g|a|c · gr gear out 0..1 · ab air-brake flag · jc [pitch, roll, yaw] stick
 const r1 = x => Math.round(x * 10) / 10, r2 = x => Math.round(x * 100) / 100;
 export function animState(v) {
@@ -36,6 +36,7 @@ export function animState(v) {
   put('th', kind === 'jet' ? v.throttle : inp.throttle);
   if (kind !== 'jet') { put('br', inp.brake); if (inp.handbrake) a.hb = 1; }
   if (v.drifting) a.dr = 1;
+  put('hi', v.hit, r1); put('ld', v.landing);
   put('sl', v.slip); put('la', v.latAcc, r1); put('lo', v.lonAcc, r1);
   put('sf', v.surface, Math.round);
   if (Array.isArray(v.wheels) && v.wheels.length) {

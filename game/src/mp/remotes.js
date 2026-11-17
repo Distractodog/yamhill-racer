@@ -48,7 +48,7 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 // ---------------------------------------------------------------- smoothing maths (pure, tested in Node)
 // The animation fields of a state (see net.js animState), range-checked, or null for an older client without them.
-const ANIM_RANGE = { st: [-1, 1], th: [0, 1], br: [0, 1], sl: [-3, 3], la: [-300, 300], lo: [-300, 300], wd: [0, 5],
+const ANIM_RANGE = { hi: [0, 1000], ld: [0, 1], st: [-1, 1], th: [0, 1], br: [0, 1], sl: [-3, 3], la: [-300, 300], lo: [-300, 300], wd: [0, 5],
   ln: [-1.2, 1.2], pr: [-30, 30], gr: [0, 1] };
 const ANIM_NUM = Object.keys(ANIM_RANGE);
 const surfOf = x => Number.isInteger(x) && x >= 0 && x < 8 ? x : 0;
@@ -132,7 +132,8 @@ export function animAt(buf, t, out = { w: [], ws: [], jc: [0, 0, 0] }) {
   if (!a || !b) { a = b = a || b; u = 0; }
   const near = u < 0.5 ? a : b;
   for (const k of ANIM_NUM) out[k] = a[k] + (b[k] - a[k]) * u;
-  for (const k of ['ab', 'hb', 'dr', 'ow', 'wl', 'sf', 'md']) out[k] = near[k];
+  // Impact/landing strengths are event peaks: interpolation can hide their onset at high frame rates.
+  for (const k of ['ab', 'hb', 'dr', 'ow', 'wl', 'sf', 'md', 'hi', 'ld']) out[k] = near[k];
   out.w.length = out.ws.length = near.w.length;
   for (let i = 0; i < near.w.length; i++) {
     const x = a.w[i] ?? -1, y = b.w[i] ?? -1;
@@ -185,6 +186,7 @@ export function animate(pz, a, r, V, F, dt, moving = true) {
   if (a) {
     pz.steer = a.st; inp.throttle = a.th; inp.brake = a.br; inp.handbrake = a.hb;
     pz.drifting = a.dr; pz.slip = a.sl; pz.latAcc = a.la; pz.lonAcc = a.lo;
+    pz.hit = a.hi; pz.landing = a.ld;
     pz.surface = a.sf; pz.onWater = a.ow; pz.waterDepth = a.wd;
     pz.wheels.forEach((wh, i) => { const c = a.w[i] ?? -1; wh.contact = c >= 0; wh.comp = Math.max(0, c) / 100; wh.surf = a.ws[i] ?? a.sf; });
     pz.lean = a.ln; pz.pitchRate = a.pr; pz.wheelie = a.wl;
@@ -590,10 +592,11 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
       let s = slots.find(x => !x.owner);
       if (!s && slots.length < VOICES) {
         const gain = ctx.createGain(), pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-        gain.gain.value = 0; if (pan) gain.connect(pan).connect(ctx.destination); else gain.connect(ctx.destination);
-        s = { voice: new CarAudio({ ctx, out: gain }), gain, pan, owner: null, idle: 0 }; slots.push(s);
+        const bus = audio.engineBus || ctx.destination;     // Settings → Sound: Master and Engines volumes
+        gain.gain.value = 0; if (pan) gain.connect(pan).connect(bus); else gain.connect(bus);
+        s = { voice: new CarAudio({ ctx, out: gain, remote: true }), gain, pan, owner: null, idle: 0 }; slots.push(s);
       }
-      if (s) { s.owner = r; s.voice.gear = 1; }
+      if (s) { s.owner = r; s.voice.gear = 1; s.voice.effects?.reset(); }
     }
     const t = ctx.currentTime, right = camera ? R.setFromMatrixColumn(camera.matrixWorld, 0) : null;
     let n = 0;

@@ -139,6 +139,15 @@ export function createSettings() {
       refreshAtmosphere();
     },
     refreshAtmosphere: () => refreshAtmosphere(),
+    // Settings → Sound: master / engines / effects sliders (audio.js setVolumes saves them); moving one starts the sound
+    bindSound(audio) {
+      for (const input of document.querySelectorAll('#sound-content input[data-channel]')) {
+        const channel = input.dataset.channel, out = input.nextElementSibling;
+        const show = () => { out.textContent = `${input.value}%`; };
+        input.value = String(Math.round(audio.volumes[channel] * 100)); show();
+        input.addEventListener('input', () => { show(); audio.start(); audio.setVolumes({ [channel]: input.value / 100 }); });
+      }
+    },
     ready(onChange, onOpen) { changed = onChange; beforeOpen = onOpen; ready = true; menu.ready(); settingsButton.disabled = false; helpButton.disabled = false; showWelcome(); },
   };
 }

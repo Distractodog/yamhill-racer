@@ -111,10 +111,11 @@ const atmosphere = createAtmosphere({ scene, sun, sunDirection: SUN_DIR, world, 
 settings.bindAtmosphere(atmosphere, atmosphere.presets);
 const vehicleLights = createVehicleLights(scene);
 const audio = new CarAudio();
+settings.bindSound(audio);              // Settings → Sound: master / engines / effects volumes
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 // a race placing the car (start, J, Backspace restart, multiplayer start, checkpoint R) drops a waiting respawn hold
-const challenges = await createChallenges({ scene, world, car, minimap, vehicles, onPlace: () => respawnHold.cancel() });
+const challenges = await createChallenges({ scene, world, car, minimap, vehicles, audio, onPlace: () => respawnHold.cancel() });
 import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 const remotes = await createRemotes({ scene, camera, minimap, world, audio, night: () => atmosphere.night });   // other players' vehicles, tags and map dots (multiplayer)
@@ -205,6 +206,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => { keys.delete(e.code); letters.delete(e.code); });
+addEventListener('pointerdown', () => audio.start());   // a click / tap counts as the first input too
 addEventListener('blur', clearKeys);
 addEventListener('visibilitychange', clearKeys);
 const held = c => keys.has(c) || [...letters.values()].includes(c);
@@ -465,7 +467,7 @@ function frame(now) {
   garage.update(dt);
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
-  audio.update(car, input, dt);
+  audio.update(car, input, dt, atmosphere);
   updateCamera(dt);
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
@@ -514,6 +516,7 @@ addEventListener('resize', () => {
 window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide, directions };
 window.game.glider = glider; window.game.bikeGlider = bikeGlider;
 window.game.vehicles = vehicles;
+window.game.audio = audio;              // tools/sound_check.mjs
 // Every fresh load starts in the car; V still switches vehicles during play.
 
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim, vehicles });

@@ -35,6 +35,10 @@ const V3 = THREE.Vector3;
     wheels: [{ contact: false }, { contact: false }, { contact: false }] };
   assert.deepEqual(animState(jet), { th: 0.87, w: [-1, -1, -1], md: 'a', jc: [1, -0.5, 0] }, 'jet fields');
   assert.deepEqual(animState({ kind: 'car', steer: NaN, wheels: [] }), {}, 'NaN and empty dropped');
+  const impact = parseAnim({ ...animState({ ...car, hit: 12.34, landing: .678 }) });
+  assert.equal(impact.hi, 12.3); assert.equal(impact.ld, .68);
+  assert.equal(parseAnim({ w: [0], hi: Infinity, ld: -2 }).hi, 0);
+  assert.equal(parseAnim({ w: [0], hi: Infinity, ld: -2 }).ld, 0);
   const bytes = JSON.stringify(animState(car)).length;
   assert.ok(bytes < 110, `compact: ${bytes} bytes`);
   console.log(`animState: car ${bytes} B, bike ${JSON.stringify(animState(bike)).length} B, jet ${JSON.stringify(animState(jet)).length} B extra per state`);
@@ -79,6 +83,9 @@ const V3 = THREE.Vector3;
   assert.deepEqual([animAt(buf, 75).w[2], animAt(buf, 75).dr], [10, true]);
   assert.equal(animAt([st(0), st(66)], 30), null, 'older client → null');
   assert.equal(animAt([st(0), st(66, { w: [1, 1, 1, 1], st: 0.5 })], 30).st, 0.5, 'one side only → that side');
+  const impact = [st(0, { w: [10], hi: 0, ld: 0 }), st(100, { w: [10], hi: 12, ld: .6 })];
+  assert.deepEqual([animAt(impact, 49).hi, animAt(impact, 49).ld], [0, 0]);
+  assert.deepEqual([animAt(impact, 50).hi, animAt(impact, 50).ld], [12, .6], 'impact peaks retain a distinct onset at any render rate');
 }
 
 // ---------------------------------------------------------------- local vs remote, through the same syncMesh
@@ -313,7 +320,9 @@ console.log(`effects: drift marks ${marks} + smoke ${smoke}, gravel dust ${dust}
   for (let f = 0; f < 30; f++) { if (f % 4 === 0) send(); m4.advance(16); R4.update(0.016); }
   await new Promise(r => setTimeout(r, 0));
   assert.equal(R4.stats.voices, VOICES, `${VOICES} engines for 6 nearby players`);
-  assert.ok(R4.list().length === 6 && created.sources === VOICES * 11, `voices built on your audio context (${created.sources} sources)`);
+  // each voice: 8 looped effect sources (tyres, gravel, wind, rain...) + the race car's engine loops (audio/engines.js)
+  const { ENGINE_LOOPS } = await import('../game/src/audio/engineloops.js');
+  assert.ok(R4.list().length === 6 && created.sources === VOICES * (8 + ENGINE_LOOPS.race.length), `voices built on your audio context (${created.sources} sources)`);
   for (let i = 0; i < 6; i++) m4.emit('left', { t: 'left', id: 'v' + i });
   for (let f = 0; f < 400; f++) { m4.advance(16); R4.update(0.016); }
   assert.ok(R4.stats.voices === 0 && created.stopped >= created.sources - 4 * 4, `silent voices stop their sources after 5 s (${created.stopped}/${created.sources})`);

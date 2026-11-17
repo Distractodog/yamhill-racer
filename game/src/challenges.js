@@ -138,7 +138,7 @@ function makeRamp(world, r) {
 
 // ---------------------------------------------------------------- manager
 // onPlace(): a race is putting the car somewhere (start, restart, checkpoint): main.js drops a waiting respawn hold
-export async function createChallenges({ scene, world, car, minimap, vehicles = null, base = './assets/', onPlace = () => {} }) {
+export async function createChallenges({ scene, world, car, minimap, vehicles = null, audio = null, base ='./assets/', onPlace = () => {} }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
   const ghost = createGhost({ scene });
   const rewards = createRewards();
@@ -174,15 +174,16 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   const lastPos = new THREE.Vector2(), curPos = new THREE.Vector2();
   let lastY = 0, curY = 0;
 
-  // ---- sound blips (own tiny audio context; created on first key press)
-  let ac = null;
+  // ---- sound blips (the game's shared audio context, through the Master volume; silent until the first input starts it)
   function blip(freq, dur = 0.12, vol = 0.18) {
     try {
-      ac ??= new AudioContext();
+      audio?.start();
+      const ac = audio?.ctx, out = audio?.mixer?.master;
+      if (!ac || !out) return;
       const o = ac.createOscillator(), g = ac.createGain(), now = ac.currentTime;
       o.type = 'square'; o.frequency.value = freq;
       g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(0.001, now + dur);
-      o.connect(g).connect(ac.destination); o.start(now); o.stop(now + dur);
+      o.connect(g).connect(out); o.start(now); o.stop(now + dur);
     } catch {}
   }
 
