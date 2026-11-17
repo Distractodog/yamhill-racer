@@ -26,6 +26,7 @@ export async function fetchTileParts(loadData, loadBitmaps) {
 export function createTileQueue({ fetch, build, finish, free = () => {}, now = () => performance.now(), retryMs = 3000,
   warn = (...a) => console.warn(...a) }) {
   const loading = new Set(), failedAt = new Map(), jobs = [];
+  let carry = 0;                            // ms of last frame's budget left because the next step didn't fit
   const stepCost = new Map();               // step kind (what the generator yielded before it) -> recent cost, ms
   const slowStep = { label: '', ms: 0 };    // this frame's slowest build step (tools/lib/hitchprobe.mjs reads it)
   const drop = job => { const i = jobs.indexOf(job); if (i >= 0) jobs.splice(i, 1); };
@@ -64,18 +65,34 @@ export function createTileQueue({ fetch, build, finish, free = () => {}, now = (
     // Each step's cost is remembered by the label the job yielded just before it (that label tells which piece comes
     // next); a step only starts if its usual cost still fits in what is left of this frame's budget. The first step
     // of a frame always runs, so the queue never stalls. order(job): nearest first.
+    // The cost kept is a cautious one (it jumps up at once and falls slowly), so with a tile cut into many small steps a
+    // frame used to stop ~1/4 of its budget early (McMinnville: 3.7 of 5 ms a frame on average, tools/ground_lag_sim.mjs
+    // --teleport). What a frame leaves because the next step didn't fit is carried to the next frame (up to
+    // CARRY_MAX_MS), so the builder gets its whole budget on average without bigger frames.
     update(budget, order = null) {
       if (order && jobs.length > 1) jobs.sort((p, q) => order(p) - order(q));
       slowStep.ms = 0;
-      const t0 = now();
+      const t0 = now(), total = budget + carry;
       for (let first = true; jobs.length; first = false) {
         const t = now(), j = jobs[0], label = j.next;
-        if (!first && t - t0 + (stepCost.get(label) || 0) > budget) break;
+        if (!first && t - t0 + (stepCost.get(label) || 0) > total) break;
         stepOnce(j);
         const d = now() - t, c = stepCost.get(label);
         stepCost.set(label, c === undefined ? d : Math.max(d, c * 0.9 + d * 0.1));   // falls slowly, jumps up at once
         if (d > slowStep.ms) { slowStep.ms = d; slowStep.label = label || 'decode-height'; }
       }
+      carry = jobs.length ? Math.min(CARRY_MAX_MS, Math.max(0, total - (now() - t0))) : 0;
     },
+    get carry() { return carry; },
   };
+}
+
+// The tile builder's time for one frame (ms). base: its budget for a 60 Hz frame (world.js: 5 ms, up to 9 at speed,
+// plus a respawn hold's extra); frameMs: the recent frame interval. A frame slower than 60 Hz (a GPU-bound Retina
+// screen, a busy machine) gets proportionally more, up to FRAME_MAX_MS, so the world loads as many ms a second at 40 fps
+// as at 60 instead of a third slower; 60 Hz and faster screens keep base (a 120 Hz one builds twice a 60 Hz frame's).
+export const REF_FRAME_MS = 1000 / 60, FRAME_MAX_MS = 9, CARRY_MAX_MS = 2.5;
+export function frameBudget(base, frameMs = REF_FRAME_MS) {
+  const scaled = base * Math.min(Math.max(frameMs, REF_FRAME_MS), 100) / REF_FRAME_MS;
+  return Math.max(base, Math.min(scaled, FRAME_MAX_MS));
 }

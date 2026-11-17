@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeTileDataSteps } from '../game/src/data.js';
 import { readTileRaw, decodeTileSteps } from '../game/src/tilepack.js';
-import { createTileQueue, fetchTileParts } from '../game/src/tilequeue.js';
+import { createTileQueue, fetchTileParts, frameBudget, CARRY_MAX_MS, FRAME_MAX_MS } from '../game/src/tilequeue.js';
 
 const A = 'game/assets/', WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
 const ab = f => { const b = fs.readFileSync(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
@@ -96,6 +96,28 @@ const q2 = createTileQueue({ now: () => clock, warn: () => {}, fetch: () => fetc
 await q2.start('x', { tx: 0, tz: 0 }); await later(60);
 assert.equal(open(), 0, 'queue: no open bitmap'); assert(!q2.loading.has('x') && q2.failedAt.has('x'), 'queue: failed download not stuck');
 
-console.log(`PASS tile queue: ${bad.length} failing tiles (corrupt tile.json, corrupt heights, download, late step, empty build, finish) ` +
+// budget carry: steps of one label alternating 3 and 0.2 ms keep its remembered cost at 3 ms, so a 5 ms frame stopped
+// after ~3.2 ms (3 + 0.2, and 3 more doesn't fit). What is left is carried to the next frame: over many frames the
+// builder averages its whole budget (without the carry: ~3.2 ms), never more than budget + CARRY_MAX_MS in a frame.
+// Nothing is carried once the queue is empty.
+{
+  let t = 0;
+  const qc = createTileQueue({ now: () => t, warn: () => {}, fetch: () => 1, finish: () => {},
+    build: () => (function* () { for (let i = 0; i < 400; i++) { yield 'a'; t += i % 2 ? 0.2 : 3; } return {}; })() });
+  await qc.start('c', {});
+  const used = [];
+  for (let f = 0; f < 60; f++) { const t0 = t; qc.update(5); used.push(t - t0); }
+  const avg = used.slice(5).reduce((a, x) => a + x, 0) / (used.length - 5);
+  assert(avg > 4.5 && avg <= 5.01, `carry: ${avg.toFixed(2)} ms a frame on average (budget 5)`);
+  assert(Math.max(...used.slice(1)) <= 5 + CARRY_MAX_MS, 'carry: no frame over budget + CARRY_MAX_MS');
+  while (qc.jobs.length) qc.update(5);
+  assert.equal(qc.carry, 0, 'carry: none once the queue is empty');
+}
+// frameBudget: 60 Hz and faster keep the base; slower frames get proportionally more, never past FRAME_MAX_MS (or below base)
+assert.equal(frameBudget(5, 1000 / 60), 5); assert.equal(frameBudget(5, 1000 / 120), 5);
+assert(Math.abs(frameBudget(5, 25) - 7.5) < 1e-9, '40 fps: 1.5x'); assert.equal(frameBudget(5, 60), FRAME_MAX_MS);
+assert.equal(frameBudget(9, 40), 9, 'at speed (9 ms) it stays 9'); assert.equal(frameBudget(13, 40), 13, 'a respawn hold base above the cap is kept');
+
+console.log(`PASS tile queue: budget carry (whole budget on average, ≤ budget + ${CARRY_MAX_MS} ms a frame), frameBudget by frame rate; ${bad.length} failing tiles (corrupt tile.json, corrupt heights, download, late step, empty build, finish) ` +
   'dropped from the queue and freed, none stuck loading, retried after 3 s and loaded once repaired; the good tile loaded alongside; sync start-up build safe; ' +
   'fetchTileParts closes every bitmap when the data, the ground file or one bitmap fails, including bitmaps that arrive after the failure');

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
-import { createTileQueue, fetchTileParts } from './tilequeue.js';
+import { createTileQueue, fetchTileParts, frameBudget, REF_FRAME_MS } from './tilequeue.js';
 import { roadLODSteps, roadBatches, buildJunctions } from './roads.js';
 import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
@@ -338,7 +338,12 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   // vel (m/s, optional): at speed, also load around a point up to AHEAD_S seconds ahead, nearest-to-that-point
   // first, and allow more build time per frame, so the map keeps up even at 1000 km/h
   // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
+  // The budget is for a 60 Hz frame; slower frames get more (tilequeue.js frameBudget), by the frame interval measured
+  // here (smoothed; gaps over 250 ms, a hidden tab or a held frame, are left out).
+  let lastAt = 0, frameMs = REF_FRAME_MS;
   function update(cam, vel, extraMs = 0) {
+    const at = performance.now(), gap = at - lastAt; lastAt = at;
+    if (gap > 0 && gap < 250) frameMs += (gap - frameMs) * 0.1;
     const sp = vel ? Math.hypot(vel.x, vel.z) : 0, la = Math.min(AHEAD_MAX, sp * AHEAD_S) / (sp || 1);
     const ax = cam.x + (vel ? vel.x * la : 0), az = cam.z + (vel ? vel.z * la : 0);
     const want = new Map();
@@ -355,7 +360,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     }
     // build steps within this frame's budget, nearest tile first, by the same point the loads are ordered by (after a
     // respawn / teleport the queue can still hold tiles from where the vehicle was)
-    queue.update(FRAME_BUDGET_MS + Math.min(4, sp / 60) + extraMs, j => d2([j.tx, j.tz]));
+    queue.update(frameBudget(FRAME_BUDGET_MS + Math.min(4, sp / 60), frameMs) + extraMs, j => d2([j.tx, j.tz]));
   }
 
   // shadow casters: only trees near the car (that's all the shadow area covers); invisible in the normal view
