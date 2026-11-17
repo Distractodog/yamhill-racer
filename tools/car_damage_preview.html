@@ -1,0 +1,166 @@
+<!doctype html>
+<!-- distractodog supplementary offline model evidence. Prepare ignored plain Three.js files once:
+     node tools/car_damage_check.mjs --check-only --prepare-preview
+     Argus browse: tools/car_damage_preview.html?view=front (or ?view=side).
+     Calls the production building collision helper on a flat fixture, not Car.step or the real world. -->
+<html><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>distractodog car dents — LOADING</title>
+<style>
+html,body{margin:0;background:#26333e;color:#fff;font:14px system-ui;overflow:hidden}
+header{height:82px;box-sizing:border-box;padding:10px 15px}h1{font-size:19px;margin:0 0 4px}p{margin:3px 0;color:#dce5ed}a{color:#b7dbff}
+canvas{display:block}.label{position:absolute;background:#182631ed;padding:3px 6px;font-size:12px;pointer-events:none}.label b{font-size:14px}#status{color:#ffe39a}
+</style>
+<script type="importmap">{"imports":{"three":"./node_modules/car-damage-three/build/three.module.js","three/addons/":"./node_modules/car-damage-three/examples/jsm/"}}</script>
+</head><body><header><h1>distractodog · Car dent comparison · <span id="status">LOADING — incomplete</span></h1>
+<p>Supplementary model appearance only · production Car.collideBuildings on a flat wall fixture · no full-game or performance proof</p>
+<p id="views"><a href="?view=front">Front ¾</a> · <a href="?view=side">Side</a> · impacts use normal closing speed · repeated = high + 2 front + left/right + rear; reset restores original geometry</p></header>
+<script>
+window.done = false;
+window.addEventListener('error', e => { document.title = 'distractodog car dents — FAILED'; document.getElementById('status').textContent = 'FAILED: ' + e.message; });
+window.addEventListener('unhandledrejection', e => { document.title = 'distractodog car dents — FAILED'; document.getElementById('status').textContent = 'FAILED: ' + e.reason; });
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
+import { probeDentUploads } from './lib/cardamagegpu.mjs';
+import { applyVehicleType, VEHICLE_TYPES } from '../game/src/vehicletypes.js';
+const query = new URLSearchParams(location.search), view = query.get('view') || 'front';
+const sequence = query.has('sequence'), focusedType = query.get('type') || (sequence ? 'race' : null);
+const selectedPhase = query.get('phase'), phaseNames = ['pristine', 'medium', 'high', 'repeated', 'reset'];
+const types = focusedType ? VEHICLE_TYPES.car.filter(t => t.id === focusedType) : VEHICLE_TYPES.car;
+if (!types.length || (selectedPhase && !phaseNames.includes(selectedPhase))) throw Error('distractodog: invalid type or phase');
+// Focus: ?type=suv[&phase=high][&view=front]. Sequence: ?sequence=1 (race by default).
+if (focusedType) document.getElementById('views').textContent = `distractodog focused ${focusedType} · ${view} · ${sequence ? 'GPU readback + animated real physics/syncMesh' : selectedPhase || 'all five phases'} · supplementary fixture evidence`;
+
+const assert = (yes, message) => { if (!yes) throw Error('distractodog: ' + message); };
+assert(['front', 'side'].includes(view), 'view must be front or side');
+const wall = { pts: [[-20, 0], [20, 0], [20, 20], [-20, 20]], top: 10, h: 10 };
+const world = { heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0, surfaceAt: () => 3,
+  normalAt: (_x, _z, n = new THREE.Vector3()) => n.set(0, 1, 0), waterLevelAt: () => -Infinity,
+  buildingsNear: () => [wall], treesNear() {}, loadedAt: () => true, rampAt: () => 0,
+  extent: [-10000, -10000, 10000, 10000], spawn: [0, 0] };
+const W = innerWidth, H = innerHeight - 82, cols = focusedType ? selectedPhase ? 1 : 3 : 5, rows = focusedType ? selectedPhase ? 1 : 2 : VEHICLE_TYPES.car.length;
+const cw = W / cols, ch = H / rows;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H); renderer.setPixelRatio(1); renderer.setScissorTest(true); renderer.setClearColor(0xaabcc9);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xe8f3ff, 0x5a5040, 1.6));
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.4); sun.position.set(4, 8, 6); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshLambertMaterial({ color: 0x626e77 }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+const phases = ['Pristine · 0 km/h', 'Medium · 54 km/h', 'High · 162 km/h', 'Repeated · 162 km/h × 6', 'Reset · restored'];
+const results = [];
+for (const [row, { id, name }] of types.entries()) {
+  const c = new Car(world, { ...TUNING_DEFAULTS }); applyVehicleType(c, id); c.reset(0, -10, 0);
+  const clean = [];
+  c.mesh.traverse(o => { if (o.isMesh) clean.push({ mesh: o, p: o.geometry.attributes.position.array.slice() }); });
+  function displacement() {
+    let total = 0, max = 0;
+    for (const { mesh, p } of clean) {
+      const a = mesh.geometry.attributes.position.array;
+      assert(a.every(Number.isFinite), `${id}: nonfinite vertices`);
+      assert(mesh.geometry.attributes.normal.array.every(Number.isFinite), `${id}: nonfinite normals`);
+      for (let i = 0; i < a.length; i += 3) {
+        const d = Math.hypot(a[i] - p[i], a[i + 1] - p[i + 1], a[i + 2] - p[i + 2]); total += d; max = Math.max(max, d);
+      }
+    }
+    return { total, max };
+  }
+  function impact(speed, yaw = 0) {
+    c.damage.step(.3); // actual separation time exceeds collision debounce
+    c.pos.set(0, .75, -1.45 * (c.typePhysics?.width ?? 1));
+    c.quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    c.vel.set(0, 0, speed); c.ang.set(0, 0, 0); c.grounded = true;
+    c.collideBuildings(); c.damage.update();
+    assert(c.damage.sites.length > 0, `${id}: expected real building contact`);
+  }
+  // All columns share the pristine camera scale and wheel pose; only body damage changes.
+  const model = c.mesh;
+  const low = Math.min(...model.userData.wheels.map(w => w.holder.position.y - w.r));
+  model.position.set(0, -low, 0); model.quaternion.identity(); model.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(model), size = bounds.getSize(new THREE.Vector3());
+  const target = bounds.getCenter(new THREE.Vector3());
+  const cam = new THREE.PerspectiveCamera(34, cw / ch, .05, 100);
+  const distance = Math.max(size.length() * .42, size.y * 1.8) / Math.tan(THREE.MathUtils.degToRad(17));
+  cam.position.copy(target).addScaledVector(new THREE.Vector3(...(view === 'front' ? [4, 2, 6] : [8, 1.1, .2])).normalize(), distance);
+  cam.lookAt(target); scene.add(model);
+  if (sequence) {
+    // The deterministic readback runs first, before the animated motion below, so its pixel
+    // checks cannot pass merely because wheels or the chassis moved.
+    model.position.set(0, -low, 0); cam.aspect = W / H; cam.updateProjectionMatrix();
+    cam.position.copy(target).addScaledVector(new THREE.Vector3(4, 2, 6).normalize(), distance * .85); cam.lookAt(target);
+    const display = { x: 0, z: -10, yaw: 0 };
+    cam.position.z -= 10; cam.position.y += c.wheelReach() + low;
+    const at = target.clone(); at.z -= 10; at.y += c.wheelReach() + low; cam.lookAt(at);
+    const probe = await probeDentUploads({ car: c, renderer, scene, camera: cam, display,
+      site: { x: 0, z: 0, nx: 0, nz: -1 }, width: 640, height: 400 });
+    renderer.domElement.style.display = 'none';
+    const grid = document.createElement('div'); grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);height:' + H + 'px';
+    const stages = ['pristine', 'repeated-sync-3', 'dented-reference', 'reset-sync-3', 'reset-reference'];
+    for (const stage of stages) {
+      const tile = document.createElement('div'); tile.style.cssText = 'position:relative;background:#aabcc9;overflow:hidden';
+      const image = new Image(); image.src = probe.images[stage]; image.style.cssText = 'width:100%;height:100%;object-fit:contain'; tile.appendChild(image);
+      const text = document.createElement('div'); text.className = 'label'; text.style.cssText = 'top:0;left:0'; text.textContent = `distractodog ${id}: ${stage}`; tile.appendChild(text); grid.appendChild(tile);
+    }
+    const tile = document.createElement('div'); tile.style.cssText = 'position:relative;background:#aabcc9;overflow:hidden';
+    const animated = new Image(); animated.style.cssText = 'width:100%;height:100%;object-fit:contain'; tile.appendChild(animated);
+    const label = document.createElement('div'); label.className = 'label'; label.style.cssText = 'top:0;left:0'; tile.appendChild(label); grid.appendChild(tile); document.body.appendChild(grid);
+    // Finite animation: real step -> interpolate -> syncMesh -> render, including suspension
+    // and linkage writes between the actual building contact and reset. Never an idle loop.
+    renderer.setSize(640, 400); cam.aspect = 1.6; cam.updateProjectionMatrix();
+    const frames = [];
+    for (let i = 0; i < 18; i++) {
+      await new Promise(requestAnimationFrame);
+      if (i === 0 || i === 12) c.reset(0, -10, 0);
+      if (i === 6) { c.pos.set(0, .75, -1.45 * (c.typePhysics?.width ?? 1)); c.vel.set(0, 0, 45); c.grounded = true; c.damage.step(.3); c.collideBuildings(); c.pos.set(0, c.wheelReach(), -10); c.vel.set(0, 0, 0); }
+      c.savePrev(); c.step(1 / 120, { throttle: i % 6 < 3 ? .6 : 0, brake: i % 6 >= 3 ? .6 : 0, steer: .25, handbrake: false });
+      c.interpolate(1); c.syncMesh(1 / 60);
+      renderer.setViewport(0, 0, 640, 400); renderer.setScissorTest(false); renderer.render(scene, cam);
+      animated.src = renderer.domElement.toDataURL('image/png');
+      frames.push({ i, phase: i < 6 ? 'pristine' : i < 12 ? 'dented' : 'reset', sites: c.damage.sites.length, wheelY: model.userData.wheels.map(w => w.holder.position.y) });
+      label.textContent = `distractodog animated sync ${i + 1}/18 · ${frames.at(-1).phase} · ${c.damage.sites.length} sites`;
+    }
+    await Promise.all([...grid.querySelectorAll('img')].map(im => im.decode()));
+    delete probe.images;
+    window.carDamagePreview = { author: 'distractodog', complete: true, sequence: true, probe, frames };
+    window.done = true;
+    const verdict = probe.pass ? 'PASS' : 'FAIL — regression detected';
+    document.getElementById('status').textContent = `COMPLETE · ${verdict} · GPU dent mismatch ${probe.dentUpload.pixels}px / reset ${probe.resetUpload.pixels}px`;
+    document.title = `distractodog synced ${id} — COMPLETE ${verdict}`;
+    console[probe.pass ? 'log' : 'error']('distractodog GPU sequence ' + verdict + ': ' + JSON.stringify(probe));
+    break;
+  }
+  const amounts = [];
+  for (let col = 0; col < 5; col++) {
+    if (col === 1 || col === 2) { c.reset(0, -10, 0); impact(col === 1 ? 15 : 45); }
+    if (col === 3) for (const yaw of [0, 0, Math.PI / 2, -Math.PI / 2, Math.PI]) impact(45, yaw);
+    if (col === 4) { c.reset(0, -10, 0); c.damage.update(); }
+    const delta = displacement(); amounts.push(delta.total);
+    if (col === 0 || col === 4) assert(delta.max === 0 && c.damage.sites.length === 0, `${id}: pristine/reset mismatch`);
+    model.position.set(0, -low, 0); model.quaternion.identity(); model.updateMatrixWorld(true);
+    const visible = !selectedPhase || phaseNames[col] === selectedPhase;
+    const slot = selectedPhase ? 0 : col, drawCol = focusedType ? slot % cols : col, drawRow = focusedType ? Math.floor(slot / cols) : row;
+    if (visible) {
+    renderer.setViewport(drawCol * cw, H - (drawRow + 1) * ch, cw, ch);
+    renderer.setScissor(drawCol * cw + 1, H - (drawRow + 1) * ch + 1, cw - 2, ch - 2); renderer.render(scene, cam);
+    const label = document.createElement('div'); label.className = 'label';
+    label.style.left = drawCol * cw + 4 + 'px'; label.style.top = 82 + drawRow * ch + 3 + 'px';
+    const b = document.createElement('b'); b.textContent = `${name} · ${phases[col]}`; label.appendChild(b);
+    label.appendChild(document.createElement('br'));
+    label.append(`${c.damage.sites.length} sites · max displacement ${(delta.max * 1000).toFixed(0)} mm · ${view}`);
+    document.body.appendChild(label);
+    }
+    results.push({ type: id, phase: col, sites: c.damage.sites.length, ...delta });
+  }
+  assert(amounts[2] > amounts[1] && amounts[1] > 0 && amounts[3] > amounts[2], `${id}: medium/high/repeated ordering`);
+  console.log(`distractodog PASS ${id}: medium < high < repeated; exact reset; finite geometry/normals`);
+  scene.remove(model);
+}
+if (!sequence) {
+window.carDamagePreview = { author: 'distractodog', view, results, complete: true };
+window.done = true;
+document.getElementById('status').textContent = `COMPLETE · ${selectedPhase ? 1 : results.length} cells · ${view}`;
+document.title = `distractodog car dents — COMPLETE ${selectedPhase ? 1 : results.length} cells ${view}`;
+console.log('distractodog COMPLETE: comparison cells; supplementary model appearance only.');
+}
+</script></body></html>
