@@ -389,6 +389,8 @@ export function createVehicleWorld(world, vehicle) {
       return height;
     },
     heightAt: (x, z, y) => Math.max(world.heightAt(x, z, y), roofAt(x, z)),
+    terrainNormalAt: (x, z, out, y) => roofAt(x, z) > world.heightAt(x, z, y)
+      ? null : world.terrainNormalAt?.(x, z, out, y),
     surfaceAt: (x, z, y) => roofAt(x, z) > world.heightAt(x, z, y) ? 6 : world.surfaceAt(x, z, y),
     normalAt: (x, z, out, y) => {
       const h = roofAt(x, z);

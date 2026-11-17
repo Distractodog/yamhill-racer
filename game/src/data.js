@@ -300,6 +300,18 @@ export function makeWorld(W) {
   }
   const at = (x, z) => tileAt(x, z) || nearest(x, z);
   function terrainAt(x, z) { const t = at(x, z); return t ? t.terrainAt(x, z) : 0; }
+  // Only bare ground: authored surfaces keep their own contact/traction rules. Query at the
+  // vehicle's height so a bridge overhead does not hide the bank underneath it.
+  function terrainNormalAt(x, z, out, y) {
+    const t = at(x, z); if (!t) return null;
+    const h = t.terrainAt(x, z);
+    if ((t.overlayAt?.(x, z, y) ?? -Infinity) >= h - 0.02 || (ramps.length && rampAt(x, z) > 0)) return null;
+    if (placedPieces && (placedPieces.sample(x, z, y)?.h ?? -Infinity) >= h) return null;
+    // Small probes follow the drawn triangle, rather than smoothing a narrow cutting into a hill.
+    const e = 0.05;
+    return out.set(terrainAt(x - e, z) - terrainAt(x + e, z), 2 * e,
+      terrainAt(x, z - e) - terrainAt(x, z + e)).normalize();
+  }
   // ramps: the map's fixed ones (assets/ramps.json, setFixedRamps) + a running challenge's (setRamps); each sits on
   // whatever road is under it
   let ramps = [], fixedRamps = [], challengeRamps = [];
@@ -384,6 +396,6 @@ export function makeWorld(W) {
     remove(tx, tz) { tiles.delete(key(tx, tz)); last = null; },
     has: (tx, tz) => tiles.has(key(tx, tz)),
     loadedAt: (x, z) => !!tileAt(x, z),
-    terrainAt, heightAt, groundAt, rampAt, setRamps, setFixedRamps, get ramps() { return ramps; }, surfaceAt, waterLevelAt, normalAt, treesNear, buildingsNear, placeOn,
+    terrainAt, terrainNormalAt, heightAt, groundAt, rampAt, setRamps, setFixedRamps, get ramps() { return ramps; }, surfaceAt, waterLevelAt, normalAt, treesNear, buildingsNear, placeOn,
   };
 }

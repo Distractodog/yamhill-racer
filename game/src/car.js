@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { breakTrunk } from './treebreak.js';
 import { wetGrip, wetBraking } from './wetgrip.js';
+import { beginTerrainStep, endTerrainStep, terrainWheel, terrainGrip, terrainHold, terrainSlide, terrainLift } from './steepterrain.js';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
@@ -100,7 +101,7 @@ export class Car extends Vehicle {
     this.quat.setFromAxisAngle(_v.set(0, 1, 0), yaw);
     this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.steer = 0; this.drifting = false;
     this.savePrev?.(); this.renderPos?.copy(this.pos); this.renderQuat?.copy(this.quat);
-    for (const w of this.wheels) { w.comp = w.prevComp = 0; }
+    for (const w of this.wheels) { w.comp = w.prevComp = 0; w.terrainHeight = undefined; w.contact = false; }
     this.flood = 0; this.underT = 0; this.bogT = 0; this.waterSub = 0; this.skimming = false;
   }
 
@@ -127,6 +128,7 @@ export class Car extends Vehicle {
     const t = this.t, W = this.world;
     const MASS = this.typePhysics?.mass ?? DEFAULT_MASS, RADIUS = this.typePhysics?.radius ?? DEFAULT_RADIUS;
     const HALF = this.typeHalf || DEFAULT_HALF;
+    beginTerrainStep(this, t.restLength + RADIUS);
     this._prevVel.copy(this.vel);
     _up.set(0, 1, 0).applyQuaternion(this.quat);
     _fw.set(0, 0, 1).applyQuaternion(this.quat);
@@ -146,7 +148,8 @@ export class Car extends Vehicle {
       const wl = W.waterLevelAt(_w.x, _w.z);
       const wet = wl > gh;
       W.normalAt(_w.x, _w.z, _n, _w.y);
-      const denom = _up.dot(_n);
+      const blocked = terrainWheel(W, wh, _w, _n, gh, t.restLength);
+      const denom = blocked ? 0 : _up.dot(_n);
       const dist = denom > 0.25 ? ((_w.y - gh) * _n.y) / denom : 99;
       wh.prevComp = wh.comp; wh.bed = false; wh.plane = 0;
       if (dist < reach + 0.7) near++;
@@ -186,8 +189,11 @@ export class Car extends Vehicle {
     this.grounded = contacts > 0;
     const firm = contacts >= 2;
     if (contacts) { let b = 0; for (let i = 1; i < 8; i++) if (counts[i] > counts[b]) b = i; this.surface = b; }
+    let terrainY = 1;
+    for (const wh of this.wheels) if (wh.bed) terrainY = Math.min(terrainY, wh.terrainY);
+    const slopeGrip = terrainGrip(terrainY, this.surface);
     const rainGrip = wetGrip(W, this.surface), brakeGrip = wetBraking(W, this.surface);
-    const grip = rainGrip * GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1);   // steep roofs slip
+    const grip = slopeGrip * rainGrip * GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1);   // steep roofs slip
     if (contacts) _nAvg.normalize(); else _nAvg.set(0, 1, 0);
     if (bed >= 2) _F.addScaledVector(_nAvg, -t.downforce * speed * speed * MASS);
 
@@ -293,7 +299,7 @@ export class Car extends Vehicle {
         _vp.multiplyScalar(1 - Math.min(0.5, t.driftSpeedLoss * Math.abs(Math.sin(beta)) * dt * k * (this.drifting ? 1 : 2)));
       }
       // static grip: tyres resist sliding sideways (e.g. gravity across a slope) unless you're drifting
-      if (!this.drifting) {
+      if (!this.drifting && terrainHold(terrainY)) {
         _c.crossVectors(n, _hp);                                   // car's left, on the ground
         const lat = _vp.dot(_c), lim = t.cornerGrip * grip * 1.2 * dt;
         _vp.addScaledVector(_c, -Math.max(-lim, Math.min(lim, lat)) * k);
@@ -314,8 +320,10 @@ export class Car extends Vehicle {
       if (input.handbrake) a -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 7 * brakeGrip);
       const coast = input.throttle || input.brake ? 0 : 1.2;
       // parked or crawling with no pedals: hold the car on a hill instead of rolling away
-      if (!input.throttle && !input.brake && Math.abs(vf) < 2) a -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 9);
+      if (terrainHold(terrainY) && !input.throttle && !input.brake && Math.abs(vf) < 2) a -= Math.sign(vf) * Math.min(Math.abs(vf) / dt, 9);
       a -= (DRAG[this.surface] + coast) * Math.sign(vf) * Math.min(1, Math.abs(vf));
+      a *= slopeGrip;
+      if (slopeGrip < 1) a = THREE.MathUtils.clamp(a, -t.gravity * 0.8 * slopeGrip, t.gravity * 0.8 * slopeGrip);
       // cornering scrubs a little speed; in a drift the engine pushes mostly along the slide
       a -= Math.abs(this.latAcc) * 0.06;
       if (this.drifting && vPlane > 1) {
@@ -329,6 +337,8 @@ export class Car extends Vehicle {
     } else {
       this.slip = 0;
     }
+
+    if (bed) terrainSlide(this, _nAvg, terrainY, dt);
 
     // ground snap: grounded last step, wheels just lifted, not a big launch -> pull back down
     if (!firm && this.wasGrounded && near >= 2 && this.vel.y < 7 && !inWater) this.vel.y -= t.snap * dt;
@@ -353,6 +363,7 @@ export class Car extends Vehicle {
     if (this.underT > UNDER_SECS || this.bogT > BOG_SECS) { this.toBank(); return; }
 
     this.hit = 0;
+    endTerrainStep(this);
     this.collideGround();
     this.collideTrees();
     this.collideBuildings();
@@ -380,7 +391,7 @@ export class Car extends Vehicle {
     let worst = 0;
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
       _w.set((BOX_C.x + sx * BOX_H.x) * width, BOX_C.y + sy * BOX_H.y, (BOX_C.z + sz * BOX_H.z) * length).applyQuaternion(this.quat).add(this.pos);
-      const pen = W.heightAt(_w.x, _w.z, _w.y) - _w.y;
+      const pen = terrainLift(W, _w, W.heightAt(_w.x, _w.z, _w.y) - _w.y, this.t.restLength);
       if (pen > worst) { worst = pen; _r.copy(_w).sub(this.pos); }
     }
     if (worst > 0) {

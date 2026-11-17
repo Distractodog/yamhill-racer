@@ -17,6 +17,7 @@
 //     air (scrub); hands off it slowly lines up with its flight path. Landing far off line is a bail.
 import * as THREE from 'three';
 import { wetGrip, wetBraking } from './wetgrip.js';
+import { beginTerrainStep, endTerrainStep, terrainWheel, terrainGrip, terrainHold, terrainSlide, terrainLift } from './steepterrain.js';
 import { Vehicle } from './vehicle.js';
 import { drawnWheelY, primeWheelArch } from './wheeltravel.js';
 import { keepBodyAboveGround, bodyLiftCap } from './bodyclearance.js';
@@ -88,7 +89,7 @@ export class Bike extends Vehicle {
     const W = this.world, hf = W.heightAt(x + Math.sin(yaw) * LF, z + Math.cos(yaw) * LF), hr = W.heightAt(x + Math.sin(yaw) * LR, z + Math.cos(yaw) * LR);
     this.pitch = Math.atan2(hf - hr, WB); this.pos.y = Math.max(hf, hr) + 0.58;
     this.setQuat(); this.vel.set(0, 0, 0); this.ang.set(0, 0, 0); this.steer = 0; this.drifting = false; this.lean = 0; this.leanRate = 0;
-    for (const w of this.wheels) w.comp = w.prevComp = 0;
+    for (const w of this.wheels) { w.comp = w.prevComp = 0; w.terrainHeight = undefined; w.contact = false; }
     this.flood = 0; this.underT = 0; this.bogT = 0; this.waterSub = 0; this.sunk = false; this.skimming = false;
     this.afterReset();
   }
@@ -96,6 +97,7 @@ export class Bike extends Vehicle {
   step(dt, input) {
     if (this.glide?.active) { this.glide.step(dt, input); return; }     // flying under the glider (glider.js)
     const t = this.t, W = this.world, g = t.gravity;
+    beginTerrainStep(this, t.travel + RADIUS);
     this._prevVel.copy(this.vel);
     this.setQuat();
     _up.set(0, 1, 0).applyQuaternion(this.quat);
@@ -116,7 +118,8 @@ export class Bike extends Vehicle {
       const sc = W.surfaceAt(_w.x, _w.z, _w.y);
       if (!onW) gh += bumps(_w.x, _w.z) * BUMP[sc];
       W.normalAt(_w.x, _w.z, _n, _w.y);
-      const denom = _up.dot(_n);
+      const blocked = terrainWheel(W, wh, _w, _n, gh, t.travel);
+      const denom = blocked ? 0 : _up.dot(_n);
       const dist = denom > 0.25 ? ((_w.y - gh) * _n.y) / denom : 99;
       wh.prevComp = wh.comp; wh.bed = false; wh.plane = 0;
       if (dist < reach + 0.6) near++;
@@ -156,6 +159,9 @@ export class Bike extends Vehicle {
       _nAvg.normalize();
       const s = W.surfaceAt(this.pos.x, this.pos.z, this.pos.y); this.surface = wet ? 5 : (s === 5 ? 0 : s);
     } else _nAvg.set(0, 1, 0);
+    let terrainY = 1;
+    for (const wh of this.wheels) if (wh.bed) terrainY = Math.min(terrainY, wh.terrainY);
+    const slopeGrip = terrainGrip(terrainY, this.surface);
     this.onWater = wet > 0;
     const hx = Math.sin(this.yaw), hz = Math.cos(this.yaw);
     // the slope under the bike; skimming (tyres planing, none on the bed) it rides the flat water, not the bed below
@@ -233,7 +239,7 @@ export class Bike extends Vehicle {
     let leanWant;
     if (drive > 0) {
       const rainGrip = wetGrip(W, this.surface), brakeGrip = wetBraking(W, this.surface);
-      const n = _nAvg, k = drive / 2, grip = rainGrip * GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1), loose = LOOSE[this.surface];
+      const n = _nAvg, k = drive / 2, grip = slopeGrip * rainGrip * GRIP[this.surface] * (this.typePhysics?.grip?.[this.surface] ?? 1) * (W.roofGrip?.() ?? 1), loose = LOOSE[this.surface];
       _hp.copy(_fw).addScaledVector(n, -_fw.dot(n)).normalize();
       _vp.copy(this.vel).addScaledVector(n, -this.vel.dot(n));
       const vPlane = _vp.length(), vf = _vp.dot(_hp), reversing = vf < -0.5, av = Math.abs(vf);
@@ -270,7 +276,7 @@ export class Bike extends Vehicle {
       // the velocity follows the nose: fast with grip, slowly while sliding
       if (vPlane > 0.3) {
         let align = t.gripAlign * grip;
-        if (this.drifting) align = t.slideAlign;
+        if (this.drifting) align = t.slideAlign * slopeGrip;
         else if (loose > 0.5 && latA > gripA) align *= 0.35;       // past the grip on dirt: it slides
         if (slideIn > 0.05) align *= 0.35 / (0.35 + slideIn);      // on the gas: the slide holds
         if (this.steer * beta > 0.05 && !this.drifting) align *= 2; // steering into the slide catches it
@@ -280,7 +286,7 @@ export class Bike extends Vehicle {
         _vp.multiplyScalar(1 - Math.min(0.5, (0.35 * Math.abs(Math.sin(beta)) + (this.washout ? 0.25 : 0)) * dt * k));
       }
       this.slipSigned = beta; this.slip = Math.abs(beta);
-      if (!this.drifting && this.slip < 0.15) {                    // tyres resist sliding down a side slope
+      if (terrainHold(terrainY) && !this.drifting && this.slip < 0.15) {                    // tyres resist sliding down a side slope
         _c.crossVectors(n, _hp);
         const lat = _vp.dot(_c), lim = gripA * 1.2 * dt;
         _vp.addScaledVector(_c, -clamp(lat, -lim, lim) * k);
@@ -291,8 +297,10 @@ export class Bike extends Vehicle {
       if (input.throttle > 0 && rear) a = reversing ? t.brakeDecel * brakeGrip * input.throttle : input.throttle * t.accel * (this.typePhysics?.drive?.[this.surface] ?? 1) * Math.max(0, 1 - (vf / vmax) ** 2) * (1 - 0.3 * this.slip);
       if (input.brake > 0) { if (vf > 1) a -= t.brakeDecel * brakeGrip * input.brake * (front ? 1 : 0.4); else if (vf > -6) a -= input.brake * 6; }
       if (this.drifting) a -= Math.sign(vf) * Math.min(av / dt, 5 * brakeGrip);
-      if (!input.throttle && !input.brake && av < 1.5) a -= Math.sign(vf) * Math.min(av / dt, 8);
+      if (terrainHold(terrainY) && !input.throttle && !input.brake && av < 1.5) a -= Math.sign(vf) * Math.min(av / dt, 8);
       a -= (DRAG[this.surface] + (input.throttle || input.brake ? 0 : 1.0)) * Math.sign(vf) * Math.min(1, av);
+      a *= slopeGrip;
+      if (slopeGrip < 1) a = clamp(a, -g * 0.8 * slopeGrip, g * 0.8 * slopeGrip);
       _vp.addScaledVector(_hp, a * dt * k);
       const vN = this.vel.dot(n);
       this.vel.copy(_vp).addScaledVector(n, vN);
@@ -310,6 +318,8 @@ export class Bike extends Vehicle {
     // lean: a damped spring toward what's asked (tips in and out smoothly)
     this.leanRate += ((leanWant - this.lean) * t.leanSpring - this.leanRate * t.leanDamp) * dt;
     this.lean = clamp(this.lean + this.leanRate * dt, -1.05, 1.05);
+
+    if (bed) terrainSlide(this, _nAvg, terrainY, dt);
 
     // ground snap over small crests; landing check
     const firm = contacts === 2;
@@ -338,6 +348,9 @@ export class Bike extends Vehicle {
     this.setQuat();
     this.ang.set(0, this.yawRate, 0);
 
+    this.hit = 0;
+    endTerrainStep(this);
+    bottom = terrainLift(W, this.pos, bottom, t.travel);
     // bottomed-out springs / body in the ground: push up, kill the speed into the ground
     if (bottom > 0) {
       this.pos.addScaledVector(_nAvg, bottom);
@@ -345,7 +358,7 @@ export class Bike extends Vehicle {
     }
     const gC = W.heightAt(this.pos.x, this.pos.z, this.pos.y);
     if (this.pos.y < gC + 0.25) {                                // the body itself hit the ground
-      this.pos.y = gC + 0.25; if (this.vel.y < 0) this.vel.y = 0;
+      this.pos.y += terrainLift(W, this.pos, gC + 0.25 - this.pos.y, t.travel); if (this.vel.y < 0) this.vel.y = 0;
       // on a roof, a "slope" steeper than ~55° is its edge under the wheels: tip over it rather than bail onto it
       const edge = Math.abs(this.groundPitch) >= 0.95 && W.onRoof?.();
       if (Math.abs(this.pitch - this.groundPitch) > 0.6 && !edge) this.bail(); else this.pitchRate += (this.groundPitch - this.pitch) * 8 * dt;
@@ -360,7 +373,6 @@ export class Bike extends Vehicle {
       return;
     }
 
-    this.hit = 0;
     const tr = this.collideTrees(0.45, [-0.6, 0.0, 0.6]);
     if (tr > 0) { this.drifting = false; this.yawRate *= 0.5; }
     this.collideBuildings(0.7);
