@@ -3,6 +3,7 @@ import fs from 'fs';
 import * as THREE from 'three';
 import { makeWorld, makeTileData } from '../game/src/data.js';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
+import { createRaceBot } from './lib/racebot.mjs';
 import { readTileData } from '../game/src/tilepack.js';
 const A = (process.env.YR_ASSETS || 'game/assets').replace(/\/?$/, '/');     // YR_ASSETS=dir tests another assets folder
 const WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
@@ -26,13 +27,14 @@ for (const [tx, tz] of WJ.tiles) {
 const WATER = await import('./lib/water.mjs'), POND = WATER.deepestPond(W, 0, 0);
 const tuning = { ...TUNING_DEFAULTS, ...(process.env.TUNE ? JSON.parse(process.env.TUNE) : {}) };
 const DT = 1 / 120, up = new THREE.Vector3(), fw = new THREE.Vector3();
-function run(name, x, z, yaw, secs, ctl, every = 0.5, make = () => new Car(W, tuning)) {
+function run(name, x, z, yaw, secs, ctl, every = 0.5, make = () => new Car(W, tuning), after = () => {}) {
   const car = make(); car.wind = null; // calm-air handling baseline
   car.reset(x, z, yaw);
   const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false };
   const rows = []; let t = 0, flips = 0, wasUp = true, maxAir = 0, t100 = null, bad = false;
   for (let i = 0; i < secs / DT; i++) {
     t = i * DT; ctl(t, inp, car); car.step(DT, inp);
+    if (after(t + DT, car) === false) break;
     up.set(0, 1, 0).applyQuaternion(car.quat);
     const kmh = car.vel.length() * 3.6;
     if (t100 === null && kmh >= 100) t100 = t;
@@ -124,6 +126,7 @@ if (which === 'all' || which === 'ramps') {
 if (which === 'all' || which === 'walls') {
   // Low physical barriers: impact regressions, then every real route with the same collider and DNF rule.
   const { makeTrack } = await import('../game/src/track.js');
+  const { raceTrack, crossedRaceGate } = await import('../game/src/racecourse.js');
   const { makeRaceBarriers, raceBounds } = await import('../game/src/racebarriers.js');
   const { testRaceBarriers } = await import('./race_barrier_test.mjs');
   testRaceBarriers();
@@ -140,48 +143,36 @@ if (which === 'all' || which === 'walls') {
   };
   const { Bike } = await import('../game/src/bike.js');
   for (const c of CH.filter(c => c.track && (!process.env.ONLY || c.id.includes(process.env.ONLY)))) {           // car + dirt-bike races (jet races have no walls)
-    const track = makeTrack(c.track), bounds = raceBounds(track);
-    W.setRaceBarriers(makeRaceBarriers(c.track, W));
+    const R = raceTrack(c.track, c.gates.at(-1)), track = makeTrack(R), bounds = raceBounds(track);
+    W.setRaceBarriers(makeRaceBarriers(R, W));
     let escaped = false;
-    const isBike = c.vehicle === 'bike', R = c.track, cap = c.id === 'long-walk' ? 110 : isBike ? 90 : 260;
-    let tgt = 0, worst = -9, hits = 0, done = false, tEnd = null, slowT = 0, backT = 0, backs = 0;
-    const [sx, sz] = R[0], yaw = Math.atan2(R[3][0] - sx, R[3][1] - sz);
+    const isBike = c.vehicle === 'bike', cap = c.id === 'long-walk' ? 110 : isBike ? 90 : 260;
+    const bot = createRaceBot(c, R, track);
+    let worst = -9, hits = 0, done = false, tEnd = null, previousBacks = 0;
+    const { x: sx, z: sz, yaw } = c.start;
+    let next = 1, previous = { x: sx, y: 0, z: sz };
     const { car } = run(`walls: bot drives ${c.name}`, sx, sz, yaw, c.length / (cap / 3.6) * 4 + 120, (t, i, k) => {
       if (done) { i.throttle = 0; i.brake = 1; return; }
-      track.update(k.pos.x, k.pos.z);
-      const sp = k.vel.length(), look = 5 + sp * 0.35;
-      // Follow the local centreline with a speed-dependent lookahead, including car hairpins.
-      tgt = track.index; let ahead = 0;
-      while (R[tgt + 1] && ahead < look) { ahead += Math.hypot(R[tgt+1][0]-R[tgt][0], R[tgt+1][1]-R[tgt][1]); tgt++; }
-      fw.set(0, 0, 1).applyQuaternion(k.quat);
-      let d = Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) - Math.atan2(fw.x, fw.z); d = Math.atan2(Math.sin(d), Math.cos(d));
-      i.steer = Math.max(-1, Math.min(1, -d * 2.5));
-      if (isBike && sp > 4) {      // a rider asks for a lean: pure-pursuit turn rate → the lean that gives it → bars
-        const L = Math.max(6, look), w = 2 * sp * Math.sin(d) / L, lean = -Math.atan(w * sp / k.t.gravity);
-        const lmax = k.t.maxLean * Math.min(1, Math.max(0.05, (sp - 2) / 14));
-        i.steer = Math.max(-1, Math.min(1, lean / lmax + (lean - k.lean) * 0.8));
-      }
-      // Brake before tight bends instead of relying on an infinite wall to redirect the bot.
-      let curvature = 0;
-      for (let j = track.index; j < Math.min(R.length - 2, track.index + 12); j++) {
-        const a=R[j], b=R[j+1], c=R[j+2];
-        const turn=Math.atan2(c[0]-b[0],c[1]-b[1])-Math.atan2(b[0]-a[0],b[1]-a[1]);
-        curvature=Math.max(curvature,Math.abs(Math.atan2(Math.sin(turn),Math.cos(turn)))/Math.max(2,Math.hypot(b[0]-a[0],b[1]-a[1])));
-      }
-      const want = Math.max(12, Math.min(cap, Math.sqrt((isBike ? 3 : 6) / Math.max(.001, curvature)) * 3.6));
-      i.throttle = sp * 3.6 < want ? 1 : 0; i.brake = sp * 3.6 > want + 4 ? 1 : 0;
-      // stuck (wedged on a tight bend): back up for 1.5 s with the wheel the other way, like a person would
-      slowT = sp < 1 ? slowT + DT : 0;
-      if (slowT > 1 && backT <= 0) { backT = 1.5; backs++; if (process.env.WV) console.log('   stuck at', k.pos.x.toFixed(0), k.pos.z.toFixed(0), 'tgt', tgt, 'surf', k.surface, 'contacts', k.contacts, 'pitch', ((k.pitch || 0) * 57.3).toFixed(0), 'gp', ((k.groundPitch || 0) * 57.3).toFixed(0), 'ramp', W.rampAt(k.pos.x, k.pos.z).toFixed(2), 'h', W.heightAt(k.pos.x, k.pos.z).toFixed(1), 'h+3', W.heightAt(k.pos.x + Math.sin(k.heading()) * 3, k.pos.z + Math.cos(k.heading()) * 3).toFixed(1), 'kmh', (k.vel.length() * 3.6).toFixed(0), 'thr', i.throttle, 'steer', i.steer.toFixed(2)); }
-      if (backT > 0) { backT -= DT; i.throttle = 0; i.brake = 1; i.steer = -i.steer; }
-      track.update(k.pos.x, k.pos.z);
-      if (bounds.update(k, DT) && !escaped) { escaped = true; console.error('Out of bounds at', k.pos.x.toFixed(2), k.pos.z.toFixed(2), 'track', track.index, 'speed', (sp*3.6).toFixed(1)); }
+      bot.drive(k, i, DT);
+      if (bot.backs > previousBacks) { previousBacks = bot.backs; if (process.env.WV) console.log('   stuck at', k.pos.x.toFixed(0), k.pos.z.toFixed(0), 'tgt', bot.target, 'surf', k.surface, 'contacts', k.contacts, 'pitch', ((k.pitch || 0) * 57.3).toFixed(0), 'gp', ((k.groundPitch || 0) * 57.3).toFixed(0), 'ramp', W.rampAt(k.pos.x, k.pos.z).toFixed(2), 'h', W.heightAt(k.pos.x, k.pos.z).toFixed(1), 'h+3', W.heightAt(k.pos.x + Math.sin(k.heading()) * 3, k.pos.z + Math.cos(k.heading()) * 3).toFixed(1), 'kmh', (k.vel.length() * 3.6).toFixed(0), 'thr', i.throttle, 'steer', i.steer.toFixed(2)); }
       const wallHit = k.hit; if (wallHit > 0) hits++;
-      if (process.env.TR && Math.hypot(k.pos.x - +process.env.TR.split(',')[0], k.pos.z - +process.env.TR.split(',')[1]) < 15 && (Math.round(t * 120) % 15 === 0 || (t > 180.85 && t < 181.05))) console.log('   tr', 'hit', k.hit.toFixed(1), 'bail', k.msgT > 0 ? k.msg : '', 'water', k.waterDepth.toFixed(2), 'y-h', (k.pos.y - W.heightAt(k.pos.x, k.pos.z)).toFixed(2), 'pitch', (k.pitch*57.3).toFixed(0), 'gp', (k.groundPitch*57.3).toFixed(0), t.toFixed(2), k.pos.x.toFixed(1), k.pos.z.toFixed(1), 'hd', (k.heading() * 57.3).toFixed(0), 'tgtdir', (Math.atan2(R[tgt][0] - k.pos.x, R[tgt][1] - k.pos.z) * 57.3).toFixed(0), 'kmh', (k.vel.length() * 3.6).toFixed(1), 'thr', i.throttle, 'brk', i.brake, 'st', i.steer.toFixed(2), 'wall', wallHit.toFixed(2), 'vf', k.vel.dot(new THREE.Vector3(0,0,1).applyQuaternion(k.quat)).toFixed(2), 'yawRate', (k.yawRate||0).toFixed(2), 'contacts', k.contacts);
+      if (process.env.TR && Math.hypot(k.pos.x - +process.env.TR.split(',')[0], k.pos.z - +process.env.TR.split(',')[1]) < 15 && (Math.round(t * 120) % 15 === 0 || (t > 180.85 && t < 181.05))) console.log('   tr', 'hit', k.hit.toFixed(1), 'bail', k.msgT > 0 ? k.msg : '', 'water', k.waterDepth.toFixed(2), 'y-h', (k.pos.y - W.heightAt(k.pos.x, k.pos.z)).toFixed(2), 'pitch', (k.pitch*57.3).toFixed(0), 'gp', (k.groundPitch*57.3).toFixed(0), t.toFixed(2), k.pos.x.toFixed(1), k.pos.z.toFixed(1), 'hd', (k.heading() * 57.3).toFixed(0), 'tgtdir', (Math.atan2(R[bot.target][0] - k.pos.x, R[bot.target][1] - k.pos.z) * 57.3).toFixed(0), 'kmh', (k.vel.length() * 3.6).toFixed(1), 'thr', i.throttle, 'brk', i.brake, 'st', i.steer.toFixed(2), 'wall', wallHit.toFixed(2), 'vf', k.vel.dot(new THREE.Vector3(0,0,1).applyQuaternion(k.quat)).toFixed(2), 'yawRate', (k.yawRate||0).toFixed(2), 'contacts', k.contacts);
       worst = Math.max(worst, outside(k, R));
-      if (track.index >= R.length - 3) { done = true; tEnd = t; W.setRaceBarriers(null); }
-    }, 30, isBike ? () => new Bike(W) : undefined);
-    console.log(`   ${done ? `reached the finish in ${tEnd.toFixed(0)} s` : `DID NOT FINISH (got to ${(track.index / (R.length - 1) * 100).toFixed(0)}%)`} · furthest past the edge ${worst.toFixed(2)} m · wall contact ${hits} steps · backed up ${backs}×`);
+    }, 30, isBike ? () => new Bike(W) : undefined, (t, k) => {
+      // The player order: physics contacts, finish crossing, then bounds. Reaching
+      // the last track sample used to pass this test BEFORE crossing the arch.
+      if (crossedRaceGate(c.gates[next], previous, k.pos, next === c.gates.length - 1 ? track : null)) {
+        next++;
+        if (next === c.gates.length) { done = true; tEnd = t; W.setRaceBarriers(null); return false; }
+      }
+      previous = { x: k.pos.x, y: k.pos.y, z: k.pos.z };
+      if (bounds.update(k, DT)) {
+        escaped = true;
+        console.error('Out of bounds at', k.pos.x.toFixed(2), k.pos.z.toFixed(2), 'track', track.index);
+        return false;
+      }
+    });
+    console.log(`   ${done ? `reached the finish in ${tEnd.toFixed(0)} s` : `DID NOT FINISH (got to ${(track.index / (R.length - 1) * 100).toFixed(0)}%)`} · gates ${next - 1}/${c.gates.length - 1} · furthest past the edge ${worst.toFixed(2)} m · wall contact ${hits} steps · backed up ${bot.backs}×`);
     if (!done || escaped) { console.error(`FAIL race barrier bot ${c.id}: finished=${done}, out of bounds=${escaped}`); process.exitCode = 1; }
     W.setRaceBarriers(null);
   }
@@ -481,6 +472,7 @@ if (which === 'all' || which === 'jet') {
       prev = p;
     });
     console.log(`   ${done ? `finished in ${done.toFixed(1)} s` : `DID NOT FINISH (${rings}/${G.length - 1} rings)`}`);
+    if (!done || st.nan) process.exitCode = 1;
   }
   W.setFixedRamps([R0]);
 }

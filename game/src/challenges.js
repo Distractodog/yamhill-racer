@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
 import { makeTrack } from './track.js';
+import { raceTrack, crossedRaceGate } from './racecourse.js';
 import { makeRaceBarriers, raceBounds } from './racebarriers.js';
 import { buildRaceBarrierModel } from './racebarriermodel.js';
 import { gridTrack } from './mp/collide.js';
@@ -298,7 +299,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     loadingView.show(ch);
     buildArches();
     const points = ch.vehicle !== 'jet' && ch.track
-      ? (opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track) : null;
+      ? raceTrack(opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track, ch.gates.at(-1)) : null;
     track = points ? makeTrack(points) : null;
     if (track) {
       const layer = makeRaceBarriers(points, world);
@@ -433,18 +434,9 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   }
 
   // ---- checkpoint crossing: the car's path this frame crosses the arch line between the posts
-  function crossed(g) {
-    const cx = Math.cos(g.yaw), cz = -Math.sin(g.yaw);       // across the road (local x)
-    const fx = Math.sin(g.yaw), fz = Math.cos(g.yaw);        // along the route
-    const d0 = (lastPos.x - g.x) * fx + (lastPos.y - g.z) * fz, d1 = (curPos.x - g.x) * fx + (curPos.y - g.z) * fz;
-    if (d0 > 0 || d1 < 0 || d0 === d1) return false;
-    const k = -d0 / (d1 - d0);
-    const ix = lastPos.x + (curPos.x - lastPos.x) * k, iz = lastPos.y + (curPos.y - lastPos.y) * k;
-    if (g.y !== undefined) {                 // a ring: through the hole, not just across the line
-      const iy = lastY + (curY - lastY) * k;
-      return Math.hypot((ix - g.x) * cx + (iz - g.z) * cz, iy - g.y) <= g.r + 1;
-    }
-    return Math.abs((ix - g.x) * cx + (iz - g.z) * cz) <= g.w / 2 + 1.5;
+  function crossed(g, to = { x: curPos.x, y: curY, z: curPos.y }) {
+    return crossedRaceGate(g, { x: lastPos.x, y: lastY, z: lastPos.y }, to,
+      next === ch.gates.length - 1 ? track : null);
   }
 
   function passGate() {
@@ -526,7 +518,10 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       if (returning || (state !== 'countdown' && state !== 'running')) return;
       // Also fold a wing opened before the race or through another control path.
       if (car.glide?.active) { car.glide.cancel(); car.glide.say('No glider in races', 1.8); }
-      if (bounds?.update(car, dt)) dnf('Out of bounds — race over');
+      // Physics runs before update() awards the finish. A valid crossing wins even
+      // if this frame carries the car beyond the run-off; update keeps the race clock.
+      const finishing = state === 'running' && next === ch.gates.length - 1 && crossed(ch.gates[next], car.pos);
+      if (!finishing && bounds?.update(car, dt)) dnf('Out of bounds — race over');
     },
     get track() { return track; },
     // hold the car on the line during the countdown (and while the menu is open)

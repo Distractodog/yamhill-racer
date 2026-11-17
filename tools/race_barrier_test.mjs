@@ -133,6 +133,17 @@ export function testRaceBarriers() {
   car.reset(0,-105,0);car.vel.set(0,0,10);const p=car.pos.clone();layer.collide(car,dt);
   assert(car.pos.equals(p),'start is physically open');
   car.reset(0,2005,0);const end=car.pos.clone();layer.collide(car,dt);assert(car.pos.equals(end),'finish is physically open');
+  // Real baked courses repeat their final point: neither side may collapse onto
+  // the centreline and form a V-shaped cap. Include duplicate starts/interior points.
+  const repeated=makeRaceBarriers([[0,0,6],[0,0,6],[0,10,6],[0,10,6],[0,20,6],[0,20,6]],world);
+  for(const s of repeated.segments) {
+    assert.equal(Math.abs(s.ax),6,'duplicate point keeps the wall at the road edge');
+    assert.equal(Math.abs(s.bx),6,'duplicate finish cannot cap the road');
+  }
+  for(let z=16;z<=24;z+=.25) {
+    car.reset(0,z,0);car.vel.set(0,0,80);const before=car.pos.clone();repeated.collide(car,dt);
+    assert(car.pos.equals(before),'vehicle can cross repeated finish point with solid barriers');
+  }
   // One mesh, low wall and cap, linear colour attributes, and finite geometry.
   const model=buildRaceBarrierModel(layer); assert(model.mesh.isMesh);assert.equal(model.mesh.children.length,0);
   const pos=model.mesh.geometry.attributes.position;

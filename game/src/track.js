@@ -21,7 +21,15 @@ export function makeTrack(points) {
 
   return {
     get index() { return idx; },
+    get endWidth() { return HW[n - 1]; },
     reset() { idx = 0; lastX = NaN; },
+    contains(x, z) {
+      for (let i = 0; i < n - 1; i++) {
+        const [d2, t] = onSeg(i, x, z);
+        if (Math.sqrt(d2) <= HW[i] + (HW[i + 1] - HW[i]) * t) return true;
+      }
+      return false;
+    },
     update(x, z) {
       idx = Math.hypot(x - lastX, z - lastZ) < 30
         ? nearestSeg(x, z, idx - 6, idx + 12)[0] : nearestSeg(x, z, 0, n - 2)[0];

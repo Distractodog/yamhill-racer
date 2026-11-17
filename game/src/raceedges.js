@@ -2,8 +2,15 @@
 // road itself. Clip those internal portions against the other strips; rendering and collision share the result.
 export function raceEdges(points) {
   const edges = [-1, 1].map(side => points.map(([x, z, hw], i) => {
-    const a = points[Math.max(0, i - 1)], b = points[Math.min(points.length - 1, i + 1)];
-    const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz) || 1;
+    // Baked routes can repeat the finish point. Using that zero-length tangent
+    // put BOTH wall ends on the centreline, closing the road at the finish arch.
+    let before = i - 1, after = i + 1;
+    while (before >= 0 && Math.hypot(points[before][0]-x, points[before][1]-z) < 1e-6) before--;
+    while (after < points.length && Math.hypot(points[after][0]-x, points[after][1]-z) < 1e-6) after++;
+    const a = points[Math.max(0, before)], b = points[Math.min(points.length - 1, after)];
+    let dx = b[0] - a[0], dz = b[1] - a[1];
+    if (Math.hypot(dx, dz) < 1e-6) { dx = b[0] - x; dz = b[1] - z; }
+    const len = Math.hypot(dx, dz) || 1;
     return [x + side * dz / len * hw, z - side * dx / len * hw];
   }));
   const grid = new Map(), cell = 24, strips = [];
