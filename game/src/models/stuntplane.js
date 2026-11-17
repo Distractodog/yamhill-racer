@@ -2,6 +2,7 @@
 // three-blade propeller, fixed main gear in pants and a tail wheel. Flown by jet.js with STUNT_AIRFRAME
 // (vehicletypes.js type 'stunt').
 import * as THREE from 'three';
+import { speedBrakePanels } from '../speedbrakes.js';
 import { material, put, pivot, batch, loft, ribbon, plate, fin, mirrorX, rod, wingPair, wheel, pant, propeller } from './planekit.js';
 
 // Geometry the physics needs (jet.js FIGHTER_AIRFRAME keys); matches the model below. Tail wheel first: it steers.
@@ -97,7 +98,8 @@ export function buildStuntPlaneModel() {
   const tilt = 0.118;
   batch(root, new Set([canopy]));
   sides.forEach(side => batch(side));
-  root.userData = {
+  const setSpeedBrake = speedBrakePanels(root, stripe, [-1, 1].map(s => ({ x: s * 2.3, y: -.20, z: .25, w: 1.5, d: .42 })));
+  root.userData = { setSpeedBrake,
     wheels, setGear: () => {}, noseWheel: wheels[0].holder, elevator, rudder, aileronL, aileronR, wreck, canopy, propeller: prop,
     wreckMats: mats, wreckColor: WRECK, blob: [8.2, 7.9], lights, landingLight: true,
     decalSpots: [[0.6, 0.32, 0.287, 0.07, -2.65, 0, Math.PI / 2 + tilt], [0.6, 0.32, -0.287, 0.07, -2.65, 0, -Math.PI / 2 - tilt]],

@@ -1,6 +1,7 @@
 // Compact stealth airframe in the jet's collision envelope: +z nose, +x left wing.
 // Static pieces are merged by paint role; moving parts share the Jet.syncMesh contract.
 import * as THREE from 'three';
+import { speedBrakePanels } from '../speedbrakes.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export function buildStealthModel() {
@@ -118,7 +119,11 @@ export function buildStealthModel() {
     }
     for (const [material, parts] of batches) { add(group, mergeGeometries(parts), material); parts.forEach(g => g.dispose()); }
   }
-  root.userData = { wheels, noseWheel: wheels[0].holder, setGear, flame, elevator, rudder, aileronL, aileronR,
+  // Two dorsal bay doors hinge along the outside of the flat upper fuselage.
+  const setSpeedBrake = speedBrakePanels(root, trim, [-1, 1].map(s => ({
+    x: s * .72, y: .61, z: -1.9, w: .69, d: 1.5, axis: 'z', side: -s, angle: -s * 1.15,
+  })));
+  root.userData = { setSpeedBrake, wheels, noseWheel: wheels[0].holder, setGear, flame, elevator, rudder, aileronL, aileronR,
     canopy, wreck, wreckMats, wreckColor, blob: [9.8,13], landingLight: true,
     decalPanels: [[.9,.65,2.4,.065,-.9,-Math.PI/2],[.9,.65,-2.4,.065,-.9,-Math.PI/2]],
     lights: { head: [new THREE.Vector3(0,-.345,4.15)], tail: [],

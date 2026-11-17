@@ -1,6 +1,7 @@
 // Prop plane (a Cessna 172-style trainer): high wing on struts, fixed tricycle gear with wheel pants, big cabin
 // windows, a two-blade propeller. Flown by jet.js with PROP_AIRFRAME (vehicletypes.js type 'prop').
 import * as THREE from 'three';
+import { speedBrakePanels } from '../speedbrakes.js';
 import { material, put, pivot, batch, loft, ribbon, plate, fin, mirrorX, rod, wingPair, wheel, pant, propeller } from './planekit.js';
 
 // Geometry the physics needs (jet.js FIGHTER_AIRFRAME keys); matches the model below.
@@ -92,7 +93,8 @@ export function buildPropPlaneModel() {
   };
   const deck = 1.06 + 0.085;   // wing top
   batch(root, new Set([canopy]));
-  root.userData = {
+  const setSpeedBrake = speedBrakePanels(root, stripe, [-1, 1].map(s => ({ x: s * 2.7, y: 1.23, z: .35, w: 1.7, d: .48 })));
+  root.userData = { setSpeedBrake,
     wheels, setGear: () => {}, noseWheel: wheels[0].holder, elevator, rudder, aileronL, aileronR, wreck, canopy, propeller: prop,
     wreckMats: mats, wreckColor: WRECK, blob: [11.2, 8.6], lights, landingLight: true,
     // Garage liveries / scuffs on top of the wings (cosmetics.js)
