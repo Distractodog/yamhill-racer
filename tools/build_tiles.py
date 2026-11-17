@@ -628,7 +628,8 @@ for tx, tz in TILES:
     for c, rgb in SURF_COL.items(): col[s2 == c] = np.array(rgb, np.float32)
     tone = ndimage.gaussian_filter(rng.standard_normal((TEXN // 8, TEXN // 8)).astype(np.float32), 4)
     col *= 1 + ndimage.zoom(tone / (tone.std() + 1e-6), 8, order=1)[:TEXN, :TEXN, None] * 0.05
-    tilefmt.write_ground(out, Image.fromarray(np.clip(col, 0, 255).astype(np.uint8)), PACK)
+    # Lossless intermediate: feather final colours before the optional WebP encode.
+    tilefmt.write_ground(out, Image.fromarray(np.clip(col, 0, 255).astype(np.uint8)), False)
 
     # ---- heights: core + margin from the global grid
     hz0, hx0 = hi0 - HM, hj0 - HM
@@ -699,6 +700,10 @@ for tx, tz in TILES:
     tilefmt.write_bytes(out, 'ponds.bin', pid_pad.astype(np.uint16).tobytes(), PACK)
     world_tiles.append([tx, tz])
     log(f'tile {tx},{tz}: trees {len(T)}, buildings {len(tb)}, strips {len(render)}, ponds {len(tponds)}, river pools {len(trivers)} ({time.time() - t1:.0f}s)')
+
+# Final colours include per-tile palette classification and noise, so join them here.
+from ground_seams import feather
+feather(OUT, world_tiles, PACK, log=log)
 
 # ---------------------------------------------------------------- 7. world.json
 json.dump({'tile': TILE, 'hstep': HSTEP, 'hn': HN, 'hm': HM, 'surfN': TILE, 'tiles': world_tiles,

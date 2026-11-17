@@ -59,6 +59,46 @@ class TaperTest(unittest.TestCase):
         self.assertTrue(np.allclose(far, (1000, 100)))
         self.assertEqual(sum(R['taper']), 1)
 
+    def test_short_taper_keeps_blend(self):
+        _, _, recs = build([road([(-400, 0), (0, 0), (500, 0)], TRUNK, 17),
+                            road([(0, 0), (100, 40)], LINK, roadnet.LINK_W)])
+        self.assertEqual(len(recs), 1)
+        self.assertGreaterEqual(recs[0]['TP'], 40)
+        self.assertLess(recs[0]['TP'], 60)
+        self.assertGreaterEqual(recs[0]['BL'], 20)
+        self.assertGreater(recs[0]['TP'], recs[0]['LD'])
+
+    def test_too_short_stays_junction(self):
+        _, _, recs = build([road([(-400, 0), (0, 0), (500, 0)], TRUNK, 17),
+                            road([(0, 0), (45, 18)], LINK, roadnet.LINK_W)])
+        self.assertEqual(recs, [])
+
+    def test_neighbour_cannot_trim_away_nose(self):
+        _, _, recs = build([
+            road([(-400, 0), (-20, 0), (0, 0), (500, 0)], TRUNK, 17),
+            road([(-20, 0), (-20, -100)], TRUNK, 17),
+            road([(0, 0), (300, 90)], LINK, roadnet.LINK_W),
+        ])
+        self.assertEqual(recs, [])
+
+    def test_outward_shift_needs_blending_room(self):
+        _, _, recs = build([
+            road([(-400, 0), (0, 0), (500, 0)], TRUNK, 17),
+            road([(0, 0), (50, 5), (80, 20)], LINK, roadnet.LINK_W),
+        ])
+        self.assertEqual(recs, [])
+
+    def test_curved_main(self):
+        angle = np.linspace(-.5, .8, 261)
+        pts = np.column_stack([500 * np.sin(angle), 500 * (1 - np.cos(angle))])
+        frame = roadnet._Frame(pts)
+        s = np.linspace(10, frame.L - 10, 1000)
+        q, n = frame.at(s)
+        u, lat = frame.project(q[:, :2] + 15 * n)
+        self.assertTrue((np.diff(u) > 0).all())
+        self.assertLess(np.abs(u - s).max(), .1)
+        self.assertLess(np.abs(lat - 15).max(), .01)
+
 
 if __name__ == '__main__':
     unittest.main()
