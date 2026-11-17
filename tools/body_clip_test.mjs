@@ -209,7 +209,7 @@ function hold(v, yaw, kmh, x, z) {
   const hs = kmh === null ? Math.hypot(v.vel.x, v.vel.z) : kmh / 3.6;
   v.vel.x = Math.sin(yaw) * hs; v.vel.z = Math.cos(yaw) * hs;
 }
-function stats() { return { body: Infinity, where: '', chassis: Infinity, tyre: Infinity, comp: 0, frames: 0, air: 0 }; }
+function stats() { return { body: Infinity, where: '', chassis: Infinity, tyre: Infinity, checkTyres: true, comp: 0, frames: 0, air: 0 }; }
 function sample(v, s) {
   v.interpolate(1); v.syncMesh(DT);
   const [b, where] = bodyClearance(v);
@@ -269,10 +269,12 @@ function ramp(kind, id, kmh) {
 }
 
 // 120 Hz physics, 60 Hz drawing: p95 absolute frame-to-frame lift change, including immediate safety rises.
-// This checks body clearance; the original flat/road/ramp runs below retain their tyre checks. Rough ground beside
-// a tyre can rise above its centre contact, so the road tyre tolerance is not applied to these field samples.
-function jitter(kind, id, points, kmh) {
+// Keep measuring tyres on every route, but apply the road tolerance only on asphalt. On the field route, the dirt
+// bike's tyre edge dips 32 mm into uneven ground even with the original guard (no lift in either version): report
+// that existing wheel-contact limitation explicitly, without confusing it with body clipping or lift jitter.
+function jitter(kind, id, name, points, kmh) {
   const R = rail(points), v = make(kind, id, W), s = stats(), changes = [], lifts = [];
+  s.checkTyres = name !== 'off-road';
   v.reset(...R.at(0), R.yaw(0));
   for (let i = 0, d = 0; d < Math.min(R.length - 20, 350); i++) {
     v.step(DT, input({ throttle: 1 }));
@@ -287,9 +289,12 @@ function jitter(kind, id, points, kmh) {
       lifts.push(lift);
       const [b, where] = bodyClearance(v);
       if (b < s.body) { s.body = b; s.where = where; }
+      s.tyre = Math.min(s.tyre, tyreClearance(v));
+      s.frames++;
     }
   }
-  if (changes.length < 60 || lifts.some(n => !Number.isFinite(n))) throw new Error('Incomplete jitter coverage');
+  if (changes.length < 60 || lifts.some(n => !Number.isFinite(n)) || !Number.isFinite(s.body) || !Number.isFinite(s.tyre))
+    throw new Error('Incomplete jitter coverage');
   const percentile = (a, p) => [...a].sort((a, b) => a - b)[Math.floor((a.length - 1) * p)];
   s.jitter = percentile(changes, 0.95); s.lift = percentile(lifts, 0.95);
   return s;
@@ -336,11 +341,12 @@ for (const slope of [0.2, 0.4]) {
 function report(type, name, s) {
   rows.push(`${type.padEnd(7)}${name.padEnd(26)}body${cm(s.body)} cm  chassis${cm(s.chassis)} cm  tyre${cm(s.tyre)} cm  comp ${(s.comp * 100).toFixed(0).padStart(3)}%  air ${s.air.toFixed(1)}s  ${s.body < 0 ? '<< UNDER: ' + s.where : ''}`);
   if (s.jitter !== undefined) rows[rows.length - 1] += ` lift p95 ${(s.lift * 1000).toFixed(1)} mm  change p95 ${(s.jitter * 1000).toFixed(1)} mm`;
+  if (!s.checkTyres) rows[rows.length - 1] += ' (rough-ground tyre diagnostic only)';
   console.log(rows.at(-1));
   if (s.jitter >= 0.01) fails.push(`${type} ${name}: lift jitter p95 ${(s.jitter * 1000).toFixed(1)} mm >= 10 mm`);
   if (!(s.body >= 0)) fails.push(`${type} ${name}: drawn body ${cm(s.body)} cm under the ground (${s.where})`);
   // bikes' tyres too (held on the road under the hub: a round tyre on a ramp's slope can dip ~1 cm beside it)
-  if (BIKES.has(type) && !(s.tyre >= -BIKE_TYRE)) fails.push(`${type} ${name}: drawn tyre ${cm(s.tyre)} cm in the road`);
+  if (BIKES.has(type) && s.checkTyres && !(s.tyre >= -BIKE_TYRE)) fails.push(`${type} ${name}: drawn tyre ${cm(s.tyre)} cm in the road`);
   if (s.flew === false || s.landed === false) fails.push(`${type} ${name}: ramp jump must fly and land`);
 }
 const R = place('hwy') ? rail(ROUTE) : null, F = R ? features(R, 3) : null;
@@ -360,7 +366,7 @@ for (const [kind, types] of Object.entries(VEHICLE_TYPES).filter(([k]) => k !== 
     }
     report(id, `Hwy 18 crests+dips ${kmh}`, s);
   }
-  if (place('jitter')) for (const [name, points] of JITTER) for (const kmh of [100, 300]) report(id, `${name} jitter ${kmh}`, jitter(kind, id, points, kmh));
+  if (place('jitter')) for (const [name, points] of JITTER) for (const kmh of [100, 300]) report(id, `${name} jitter ${kmh}`, jitter(kind, id, name, points, kmh));
   if (place('ramp')) for (const kmh of SPEEDS) report(id, `Hwy 18 ramp ${kmh} km/h`, ramp(kind, id, kmh));
 }
 console.log(`\n${rows.length} runs in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
