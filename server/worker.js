@@ -95,7 +95,7 @@ export class RelayRoom {
       this.counted = true;
       await this.ctx.storage.put('counted', true);
     }
-    // The game record updates the daily counter once; do not also send a legacy /game hit.
+    // Game records are the source for MP totals; do not send legacy ID-less /game hits.
     await this.stats.update().catch(() => {});
     this.saveSession(ws);
     for (const peer of oldClients) {

@@ -35,16 +35,24 @@ function fixture() {
 const pacificDate = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 const dayKey = () => `day:${pacificDate(Date.now())}`;
 
+async function checkGameCount(f, expected, day = pacificDate(Date.now())) {
+  const html = await (await f.stats.fetch(new Request('https://stats/stats'))).text();
+  const row = html.match(new RegExp(`<tr><td>${day}</td><td>\\d+</td><td>\\d+</td><td>(\\d+)</td>`));
+  assert.ok(row, `daily row for ${day}`);
+  assert.equal(Number(row[1]), expected);
+  return html;
+}
+
 test('counts visits, hashed uniques, countries, persistence and 30/day limit; concurrent hits survive', async () => {
   const f = fixture();
   await Promise.all(Array.from({ length: 35 }, () => f.hit()));
   await f.hit('b'.repeat(32), 'CA');
-  assert.deepEqual(f.data.get(dayKey()), { visits: 31, unique: 2, games: 0, countries: { US: 30, CA: 1 } });
+  assert.deepEqual(f.data.get(dayKey()), { visits: 31, unique: 2, countries: { US: 30, CA: 1 } });
   assert.ok([...f.data.keys()].filter(k => k.startsWith('visitor:')).every(k => /:[a-f0-9]{64}$/.test(k)));
   assert.ok(!JSON.stringify([...f.data]).includes('a'.repeat(32)));
   const restored = new Stats(f.ctx);
   await restored.fetch(new Request('https://stats/game', { method: 'POST' }));
-  assert.equal(f.data.get(dayKey()).games, 1);
+  await checkGameCount(f, 0);
 });
 
 test('Pacific rollover resets limit; daily alarm retains 60 days even with no visits', async () => {
@@ -67,7 +75,7 @@ test('Pacific rollover resets limit; daily alarm retains 60 days even with no vi
     assert.equal([...f.data.keys()].filter(k => k.startsWith('visitor:')).length, 62); // two real retained hashes
     now += 65 * DAY;
     await f.stats.alarm();
-    assert.deepEqual([...f.data.keys()], ['migration:mp-reset-1']);
+    assert.deepEqual([...f.data.keys()], []);
   } finally { Date.now = realNow; }
 });
 
@@ -75,31 +83,29 @@ test('bounded visitor storage stops accepting new IDs at daily cap', async () =>
   const f = fixture();
   f.data.set(dayKey(), { visits: VISITOR_CAP, unique: VISITOR_CAP, games: 0, countries: {} });
   await f.hit();
-  assert.equal(f.data.size, 2); // daily row and one-time migration flag
+  assert.equal(f.data.size, 1); // daily row only
   assert.equal(f.data.get(dayKey()).visits, VISITOR_CAP);
 });
 
-test('multiplayer game counter migration resets old days, rebuilds today once, and preserves other stats', async () => {
+test('stored daily counters and legacy ID-less reports cannot inflate record-derived MP totals after migration', async () => {
   const realNow = Date.now;
   Date.now = () => Date.parse('2026-11-17T20:00:00Z');
   try {
     const f = fixture();
-    f.data.set('day:2026-11-16', { visits: 12, unique: 8, games: 5, countries: { US: 12 } });
-    f.data.set('day:2026-11-17', { visits: 7, unique: 6, games: 5, countries: { CA: 7 } });
-    f.data.set('game:joined-a', { start: Date.now() - 1000, maxPlayers: 2 });
-    f.data.set('game:joined-b', { start: Date.now() - 2000, maxPlayers: 4 });
-    f.data.set('game:solo', { start: Date.now() - 3000, maxPlayers: 1 });
-    f.data.set('game:yesterday', { start: Date.parse('2026-11-16T20:00:00Z'), maxPlayers: 2 });
-
-    await f.stats.fetch(new Request('https://stats/unknown'));
-    assert.deepEqual(f.data.get('day:2026-11-16'), { visits: 12, unique: 8, games: 0, countries: { US: 12 } });
-    assert.deepEqual(f.data.get('day:2026-11-17'), { visits: 7, unique: 6, games: 2, countries: { CA: 7 } });
-    assert.equal(f.data.get('migration:mp-reset-1'), true);
-
-    f.data.get('day:2026-11-16').games = 9;
-    await f.stats.fetch(new Request('https://stats/game', { method: 'POST', body: '{}' }));
-    assert.equal(f.data.get('day:2026-11-16').games, 9);
-    assert.equal(f.data.get('day:2026-11-17').games, 3);
+    f.data.set('migration:mp-reset-1', true);
+    f.data.set('day:2026-11-17', { visits: 7, unique: 6, games: 8, countries: { CA: 7 } });
+    f.data.set('game:joined', { id: 'joined', start: Date.now() - 1000, last: Date.now(), maxPlayers: 2, names: ['Host', 'Guest'] });
+    f.data.set('game:solo', { id: 'solo', start: Date.now() - 3000, last: Date.now(), maxPlayers: 1, names: ['Host'] });
+    for (let i = 0; i < 8; i++) await f.stats.fetch(new Request('https://stats/game', { method: 'POST', body: '{}' }));
+    for (const stats of [f.stats, new Stats(f.ctx)]) {
+      const html = await checkGameCount({ ...f, stats }, 1);
+      assert.equal((html.match(/MP games with 2\+ players<\/dt><dd>1<\/dd>/g) || []).length, 3);
+      assert.ok(html.includes('<td>30-day totals</td><td>7</td><td>6</td><td>1</td>'));
+      const table = html.split('<h2>Multiplayer games</h2>')[1].split('<h2>Per day</h2>')[0];
+      assert.equal((table.match(/<tr><td>/g) || []).length, 2);
+      assert.ok(table.includes('Host, Guest'));
+    }
+    assert.deepEqual(f.data.get('day:2026-11-17'), { visits: 7, unique: 6, games: 8, countries: { CA: 7 } });
   } finally { Date.now = realNow; }
 });
 
@@ -167,11 +173,11 @@ test('counts once when a guest joins; survives later joins and hibernation; new 
   await relay.webSocketMessage(host, hello(true));
   await relay.webSocketMessage(host, hello(true));
   await relay.webSocketMessage(host, JSON.stringify({ t: 'join-policy', anyone: true }));
-  assert.equal(f.data.get(dayKey())?.games ?? 0, 0);
+  await checkGameCount(f, 0);
   relay.room.connect('000000000002', guest);
   await relay.webSocketMessage(guest, hello(false));
   await Promise.all(pending);
-  assert.equal(f.data.get(dayKey()).games, 1);
+  await checkGameCount(f, 1);
   const second = socket();
   relay.room.connect('000000000005', second);
   await relay.webSocketMessage(second, hello(false));
@@ -182,7 +188,7 @@ test('counts once when a guest joins; survives later joins and hibernation; new 
   relay.room.connect('000000000003', rejected);
   await relay.webSocketMessage(rejected, hello(true));
   await Promise.all(pending);
-  assert.equal(f.data.get(dayKey()).games, 1);
+  await checkGameCount(f, 1);
   sockets.push(host, guest, rejoin);
   const restored = new RelayRoom(ctx, f.env);
   await ctx.blockConcurrencyWhile(async () => {});
@@ -190,7 +196,7 @@ test('counts once when a guest joins; survives later joins and hibernation; new 
   restored.room.connect('000000000007', another);
   await restored.webSocketMessage(another, hello(false));
   await Promise.all(pending);
-  assert.equal(f.data.get(dayKey()).games, 1);
+  await checkGameCount(f, 1);
   const freshSockets = [];
   const fresh = new RelayRoom({ ...ctx, getWebSockets: () => freshSockets }, f.env);
   await ctx.blockConcurrencyWhile(async () => {});
@@ -203,7 +209,7 @@ test('counts once when a guest joins; survives later joins and hibernation; new 
   fresh.room.connect('000000000008', newGuest);
   await fresh.webSocketMessage(newGuest, hello(false));
   await Promise.all(pending);
-  assert.equal(f.data.get(dayKey()).games, 2);
+  await checkGameCount(f, 2);
 });
 
 test('lobby and game records share admitted roster; pending requests never count and hibernation never recounts', async () => {
@@ -229,7 +235,7 @@ test('lobby and game records share admitted roster; pending requests never count
     assert.equal(listing.games[0]?.players ?? 0, count);
     const record = f.data.get(`game:${relay.stats.game?.id || gameId}`);
     assert.equal(record.maxPlayers, peak);
-    assert.equal(f.data.get(dayKey())?.games ?? 0, games);
+    await checkGameCount(f, games);
     assert.equal(relay.counted, games > 0 && count > 0);
     return record;
   };
@@ -377,11 +383,57 @@ test('relay game reports retain host, names, peak and end; same code can have se
     await report({}); const start = now;
     assert.equal(f.data.get(dayKey()), undefined); // solo host is visible but not a 2+ game
     now += 1000; await report({ count: 3, names: ['Maple', 'River', 'Aspen'] });
-    await report({ count: 2, names: ['Maple', 'Oak'] }); assert.equal(f.data.get(dayKey()).games, 1);
+    await report({ count: 2, names: ['Maple', 'Oak'] }); await checkGameCount(f, 1);
     now += 5000; await report({ count: 0, names: [] });
     const game = f.data.get('game:one'); assert.equal(game.start, start); assert.equal(game.end, now); assert.equal(game.maxPlayers, 3);
     assert.deepEqual(game.names, ['Maple', 'River', 'Aspen', 'Oak']);
-    await report({ id: 'two', count: 2 }); assert.equal(f.data.get(dayKey()).games, 2);
+    await report({ id: 'two', count: 2 }); await checkGameCount(f, 2);
     assert.equal(f.data.get('game:two').code, game.code);
   } finally { Date.now = realNow; }
+});
+
+test('MP days follow Pacific participation, not room creation or UTC; rejoining counts once each day', async () => {
+  const realNow = Date.now;
+  let now = Date.parse('2026-11-17T07:58:00Z'); Date.now = () => now;
+  try {
+    const f = fixture();
+    const report = count => f.stats.fetch(new Request('https://stats/game', { method: 'POST', body: JSON.stringify({ id: 'overnight', count }) }));
+    await report(1);
+    now += 180000; // Nov 17 Pacific; room started Nov 16
+    await report(2); await report(1); await report(2); await report(3);
+    await checkGameCount(f, 0, '2026-11-16');
+    await checkGameCount(f, 1);
+    now += DAY;
+    await report(1); await checkGameCount(f, 0);
+    await report(2); await report(1); await report(2);
+    const html = await checkGameCount(f, 1);
+    assert.deepEqual(f.data.get('game:overnight').mpDays, ['2026-11-17', '2026-11-18']);
+    assert.equal((html.match(/MP games with 2\+ players<\/dt><dd>1<\/dd>/g) || []).length, 3);
+    assert.ok(html.includes('<td>30-day totals</td><td>0</td><td>0</td><td>2</td>'));
+    assert.equal(f.data.get(dayKey()), undefined); // no separate daily MP counter
+  } finally { Date.now = realNow; }
+});
+
+test('all retained games used by totals are visible beyond the former 500-row table limit', async () => {
+  const f = fixture(), now = Date.now();
+  for (let i = 0; i < 501; i++) f.data.set(`game:seed${i}`, { id: `seed${i}`, start: now - i, last: now, maxPlayers: 2, names: [] });
+  const html = await checkGameCount(f, 501);
+  const table = html.split('<h2>Multiplayer games</h2>')[1].split('<h2>Per day</h2>')[0];
+  assert.equal((table.match(/<tr><td>/g) || []).length, 501);
+  assert.equal((html.match(/MP games with 2\+ players<\/dt><dd>501<\/dd>/g) || []).length, 3);
+});
+
+
+test('solo rooms never count and removing a retained record removes it from every MP total', async () => {
+  const f = fixture();
+  for (const id of ['solo-a', 'solo-b', 'joined']) {
+    for (const count of id === 'joined' ? [1, 2, 1, 2, 0] : [1, 1, 0]) {
+      await f.stats.fetch(new Request('https://stats/game', { method: 'POST', body: JSON.stringify({ id, count }) }));
+    }
+  }
+  await checkGameCount(f, 1);
+  f.data.delete('game:joined');
+  const html = await checkGameCount(f, 0);
+  assert.equal((html.match(/MP games with 2\+ players<\/dt><dd>0<\/dd>/g) || []).length, 3);
+  assert.equal(f.data.has(dayKey()), false);
 });
