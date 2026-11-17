@@ -178,3 +178,23 @@ const urls = [], picky = new Net({ storage: null, relay: undefined, WebSocketImp
 await picky.host().catch(() => {});
 assert.ok(urls[0].startsWith(`${LOCAL_RELAY}/room/${picky.me.code}?id=`), 'Node (no page) uses the local relay');
 console.log('PASS mp net: identity, lifecycle, roster/events, 15 Hz state, skins, clock, back pressure, retry, cleanup, relay choice');
+
+// Browser fetch rejects a Net receiver even though Node's native fetch permits it.
+{
+  const original = globalThis.fetch;
+  const calls = [];
+  function receiverCheckedFetch(url) {
+    if (this !== globalThis && this !== undefined) throw new TypeError('Illegal invocation');
+    calls.push(url);
+    return Promise.resolve({ ok: true, json: async () => ({ games: [{ id: 'ABCDE', players: 1 }] }) });
+  }
+  try {
+    globalThis.fetch = receiverCheckedFetch;
+    for (const options of [{}, { fetchImpl: receiverCheckedFetch }]) {
+      const net = new Net({ storage: null, relay: 'ws://127.0.0.1:8808', ...options });
+      assert.deepEqual(await net.listGames(), [{ id: 'ABCDE', players: 1 }]);
+    }
+    assert.deepEqual(calls, ['http://127.0.0.1:8808/lobby', 'http://127.0.0.1:8808/lobby']);
+  } finally { globalThis.fetch = original; }
+  console.log('PASS lobby fetch keeps the global receiver for default and injected implementations');
+}

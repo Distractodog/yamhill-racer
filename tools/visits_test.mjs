@@ -7,8 +7,8 @@ function fixture(search = '', hostname = 'distractodog.github.io') {
   const store = new Map(), listeners = new Map(), timers = new Map(), bodies = [], fetches = [];
   const scope = { crypto: webcrypto, location: { hostname, search }, screen: { width: 1680 }, Date: { now: () => now },
     localStorage: { getItem: k => store.get(k), setItem: (k, v) => store.set(k, v) },
-    navigator: { userAgent: 'Mozilla Chrome/1 Safari/1 Edg/1', sendBeacon(url, blob) { bodies.push(blob.text().then(JSON.parse)); return true; } },
-    fetch(url, opts) { fetches.push(opts); return Promise.resolve(); },
+    navigator: { userAgent: 'Mozilla Chrome/1 Safari/1 Edg/1', sendBeacon(url, blob) { assert.equal(this, scope.navigator); bodies.push(blob.text().then(JSON.parse)); return true; } },
+    fetch(url, opts) { assert.equal(this, scope); fetches.push(opts); return Promise.resolve(); },
     document: { hidden: false, addEventListener: (k, f) => listeners.set(k, f), removeEventListener: k => listeners.delete(k) },
     addEventListener: (k, f) => listeners.set(k, f), removeEventListener: k => listeners.delete(k),
     setInterval: (fn, ms) => { timers.set(ms, fn); return ms; }, clearInterval: id => timers.delete(id),

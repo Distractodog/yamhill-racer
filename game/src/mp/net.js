@@ -68,7 +68,7 @@ export function animTuning(v) {
 export class Net {
   constructor({ WebSocketImpl = globalThis.WebSocket, storage = storageDefault(), relay,
     clock = () => Date.now(), timers = globalThis, fetchImpl = globalThis.fetch } = {}) {
-    this._fetch = fetchImpl; this._WebSocket = WebSocketImpl; this._storage = storage; this._relay = relay;
+    this._fetch = fetchImpl?.bind(globalThis); this._WebSocket = WebSocketImpl; this._storage = storage; this._relay = relay;
     this._clock = clock; this._timers = timers; this._events = new Map();
     const read = (key, valid, fallback) => {
       let value; try { value = storage?.getItem(key); } catch {}
