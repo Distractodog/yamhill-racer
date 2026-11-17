@@ -1,3 +1,7 @@
+import { lobbyObject } from './lobby.mjs';
+import { RoomLobby } from './room-lobby.mjs';
+export { Lobby } from './lobby.mjs';
+import { RelayStats } from './relaystats.mjs';
 import { Room, roomAddress } from './relay.mjs';
 import { hit, authorized, statsObject } from './stats.mjs';
 export { Stats } from './stats.mjs';
@@ -5,6 +9,7 @@ export { Stats } from './stats.mjs';
 export default {
   fetch(request, env) {
     const path = new URL(request.url).pathname;
+    if (path === '/lobby' && request.method === 'GET') return lobbyObject(env).fetch(request);
     if (path === '/hit') return hit(request, env).catch(() => new Response(null, { status: 503 }));
     if (path === '/stats') {
       if (request.method !== 'GET' || !authorized(request, env.STATS_KEY)) return new Response(null, { status: 404 });
@@ -25,9 +30,11 @@ export class RelayRoom {
     this.ctx = ctx;
     this.layoutStored = new Map();
     this.counted = false;
+    this.lobby = new RoomLobby(this);
     const sockets = ctx.getWebSockets();
     const first = sockets[0]?.deserializeAttachment();
     this.room = new Room(first?.code);
+    this.stats = new RelayStats(ctx, env, this.room);
     for (const ws of sockets) {
       const attachment = ws.deserializeAttachment();
       if (attachment?.session) this.room.restore(ws, attachment.session);
@@ -53,6 +60,7 @@ export class RelayRoom {
           if (this.room.session(ws).player) this.room.removeRejected(ws, 'no-host');
         }
       }
+      await this.stats.restore().catch(() => {});
     });
   }
   fetch(request) {
@@ -73,6 +81,12 @@ export class RelayRoom {
     ws.serializeAttachment({ code: this.room.code, session: this.room.session(ws) ?? null });
   }
   async webSocketMessage(ws, message) {
+    let type; try { type = JSON.parse(message)?.t; } catch {}
+    const lobbyChange = ['hello', 'join-request', 'join-accept', 'join-decline', 'join-policy', 'heartbeat', 'kick'].includes(type);
+    const lobbyBefore = lobbyChange ? this.lobby.snapshot() : [];
+    if (type === 'join-request' && await this.lobby.prepare(ws, message) === false) return;
+    const original = lobbyBefore.find(([peer]) => peer === ws);
+    if (original && this.room.session(ws)?.claimed) original[1].claimed = true;
     const oldWorld = this.room.world;
     const oldClients = [...this.room.clients.keys()];
     const hadHost = !!this.room.host;
@@ -80,19 +94,15 @@ export class RelayRoom {
     if (!this.counted && this.room.players.length >= 2) {
       this.counted = true;
       await this.ctx.storage.put('counted', true);
-      if (this.env?.STATS) {
-      // Analytics cannot delay or reject room messages; waitUntil survives hibernation.
-        try {
-          this.ctx.waitUntil(statsObject(this.env).fetch(new Request('https://stats/game', { method: 'POST' })).catch(() => {}));
-        } catch { /* Stats unavailable; multiplayer keeps working. */ }
-      }
     }
+    // The game record updates the daily counter once; do not also send a legacy /game hit.
+    await this.stats.update().catch(() => {});
     this.saveSession(ws);
     for (const peer of oldClients) {
       if (!this.room.clients.has(peer)) this.saveSession(peer);
     }
     await this.saveWorld(oldWorld);
-    let type; try { type = JSON.parse(message)?.t; } catch {}
+    if (lobbyChange) await this.lobby.sync(lobbyBefore, ['hello', 'heartbeat', 'join-policy'].includes(type) && !!this.room.session(ws)?.player?.host);
     if (type === 'layout' || (hadHost && !this.room.host)) await this.saveLayout();
   }
   async saveLayout() {
@@ -113,6 +123,7 @@ export class RelayRoom {
     else await this.ctx.storage.delete('world');
   }
   async webSocketClose(ws) {
+    const lobbyBefore = this.lobby.snapshot();
     const oldWorld = this.room.world;
     const oldClients = [...this.room.clients.keys()];
     this.room.leave(ws);
@@ -120,10 +131,13 @@ export class RelayRoom {
       this.counted = false;
       await this.ctx.storage.delete('counted');
     }
+    await this.stats.update().catch(() => {});
     for (const peer of oldClients) this.saveSession(peer);
     await this.saveWorld(oldWorld);
     await this.saveLayout();
+    await this.lobby.sync(lobbyBefore);
     try { ws.close(1000, 'disconnected'); } catch { /* Already closed. */ }
   }
+  alarm() { return this.lobby.alarm(); }
   webSocketError(ws) { return this.webSocketClose(ws); }
 }

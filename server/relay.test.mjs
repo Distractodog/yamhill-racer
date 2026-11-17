@@ -6,7 +6,7 @@ import worker, { RelayRoom } from './worker.js';
 const code = 'ABCDE';
 const id = n => String(n).padStart(12, '0');
 const skin = { vehicle: 'car', colors: { body: '#ff0000' }, glider: {} };
-const hello = (host = false) => ({ t: 'hello', name: '<Racer>', code, host, skin });
+const hello = (host = false) => ({ t: host ? 'hello' : 'join-request', name: '<Racer>', code, host, skin });
 const socket = () => ({
   messages: [], closes: [],
   send(text) { this.messages.push(JSON.parse(text)); },
@@ -22,6 +22,11 @@ function fixture() {
     const s = socket();
     room.connect(id(n), s);
     send(s, hello(host));
+    if (!host && room.session(s)?.pending) {
+      const owner = [...room.clients].find(([, session]) => session.player?.host)?.[0];
+      if (owner) send(owner, { t: 'join-accept', id: id(n) });
+      s.messages = s.messages.filter(m => m.t !== 'join-pending');
+    }
     return s;
   };
   const host = join(1, true);

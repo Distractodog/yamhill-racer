@@ -28,7 +28,7 @@ try {
     pages.push(page);
   }
   const [host, guest] = pages;
-  const code = await host.evaluate(async () => { await game.multiplayer.mp.host(); return game.multiplayer.mp.me.code; });
+  const code = await host.evaluate(async () => { await game.multiplayer.mp.host(); game.multiplayer.mp.send({ t: 'join-policy', anyone: true }); return game.multiplayer.mp.me.code; });
   await guest.evaluate(code => game.multiplayer.mp.join(code), code);
   await Promise.all(pages.map(p => p.waitForFunction(() => game.multiplayer.mp.players.size === 2)));
   const base = await host.evaluate(() => ({ x: game.car.pos.x, z: game.car.pos.z, y: game.world.heightAt(game.car.pos.x, game.car.pos.z) }));

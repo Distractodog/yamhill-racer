@@ -68,16 +68,58 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
   panel.id = 'mp-panel'; panel.hidden = true; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-labelledby', 'mp-title');
   panel.innerHTML = `<header class="panel-heading"><h2 id="mp-title">Play multiplayer</h2><button id="mp-close" aria-label="Close multiplayer">×</button></header>
     <label>Your name <input id="mp-name" maxlength="80" autocomplete="nickname"></label>
-    <p>Your code: <strong id="mp-code"></strong> <button id="mp-copy" class="menu-button">Copy</button></p>
-    <div id="mp-connect"><button id="mp-host" class="menu-button">Host my game</button>
-      <form id="mp-join-form"><label>Friend’s code <input id="mp-join-code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" required pattern="[A-HJ-KM-NP-Z2-9a-hj-km-np-z]{5}"></label><button id="mp-join" class="menu-button">Join</button></form></div>
-    <div id="mp-game" hidden><p>Game code: <strong id="mp-room"></strong></p><h3>Players</h3><ul id="mp-players"></ul>
+    <div id="mp-connect"><button id="mp-host" class="menu-button">Host a game</button>
+      <h3>Open games</h3><p id="mp-empty" role="status">Looking for games…</p><ul id="mp-games"></ul>
+      <button id="mp-cancel" class="menu-button" hidden>Cancel request</button></div>
+    <div id="mp-game" hidden><label id="mp-policy"><input id="mp-anyone" type="checkbox"> Let anyone join without asking</label><h3>Players</h3><ul id="mp-players"></ul>
       <fieldset id="mp-world"><legend>World settings</legend><label><input type="radio" name="mp-mode" value="host">Everyone uses the host's settings</label><label><input type="radio" name="mp-mode" value="own">Everyone uses their own settings</label><label>Bumping: <select id="mp-bump"><option value="on">on</option><option value="off">off</option></select></label></fieldset>
       <p id="mp-host-note">Only the host can change world settings.</p><button id="mp-leave" class="menu-button">Leave game</button></div><p id="mp-status" role="status"></p>`;
   document.body.append(panel);
   const $ = id => panel.querySelector('#mp-' + id);
   const toast = document.createElement('div'); toast.id = 'mp-toasts'; toast.setAttribute('role', 'status'); toast.setAttribute('aria-live', 'polite'); document.body.append(toast);
-  let toastTimer, busy = false;
+  let toastTimer, busy = false, pollTimer = null, pollVersion = 0, listing = false;
+  let games = [], listSignature = '', declineMessage = '';
+  const requests = document.createElement('section'); requests.id = 'mp-requests'; requests.hidden = true;
+  requests.setAttribute('aria-label', 'Join requests'); requests.setAttribute('aria-live', 'polite'); document.body.append(requests);
+  const pending = new Map();
+  function showRequests() {
+    // Keep decisions inside the menu's keyboard focus trap while it is open.
+    (panel.hidden ? document.body : panel).append(requests);
+    requests.replaceChildren(); requests.hidden = !pending.size || !mp.isHost;
+    for (const request of pending.values()) {
+      const row = document.createElement('div'), label = document.createElement('p');
+      row.dataset.request = request.id; label.textContent = `${request.name} wants to join`; row.append(label);
+      for (const [action, text] of [['accept', 'Accept'], ['decline', 'Decline']]) {
+        const choice = document.createElement('button'); choice.className = 'menu-button'; choice.textContent = text;
+        choice.dataset.action = action;
+        choice.addEventListener('click', () => mp.send({ t: `join-${action}`, id: request.id })); row.append(choice);
+      }
+      requests.append(row);
+    }
+  }
+  function drawGames() {
+    const signature = JSON.stringify([games, busy]); if (signature === listSignature) return; listSignature = signature;
+    $('games').replaceChildren();
+    for (const game of games) {
+      const row = document.createElement('li'), label = document.createElement('span'), ask = document.createElement('button');
+      label.textContent = `${game.name} · ${game.players} / ${game.max}`;
+      ask.className = 'menu-button'; ask.textContent = 'Ask to join'; ask.dataset.game = game.id;
+      ask.disabled = busy || game.players >= game.max;
+      ask.addEventListener('click', () => connect(game)); row.append(label, ask); $('games').append(row);
+    }
+  }
+  async function refreshGames() {
+    if (panel.hidden || mp.inGame || listing) return;
+    const version = pollVersion; listing = true;
+    try {
+      const next = await mp.listGames();
+      if (version !== pollVersion || panel.hidden || mp.inGame) return;
+      games = next; $('empty').textContent = games.length ? '' : 'No one is hosting right now — host a game'; drawGames();
+    } catch { if (version === pollVersion) $('empty').textContent = 'Could not load open games. Trying again…'; }
+    finally { listing = false; }
+  }
+  function startPolling() { clearInterval(pollTimer); refreshGames(); pollTimer = setInterval(refreshGames, 5000); }
+
   function say(text) { toast.textContent = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.textContent = ''; }, 4500); }
   const note = document.createElement('p'); note.id = 'mp-settings-note'; note.hidden = true; note.textContent = 'The host controls tuning, time of day and weather while everyone uses the host’s settings.';
   document.getElementById('settings-title').parentElement.after(note);
@@ -96,7 +138,9 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
     const menuButton = document.getElementById('menu-button');
     if (menuButton) menuButton.querySelector('.menu-label').textContent = mp.inGame ? 'Menu · MP' : 'Menu';
     $('title').textContent = button.textContent; $('connect').hidden = mp.inGame; $('game').hidden = !mp.inGame;
-    $('code').textContent = mp.me.code; $('room').textContent = mp.roomCode || '';
+    $('policy').hidden = !mp.isHost;
+    if (!mp.inGame) { pending.clear(); showRequests(); }
+    drawGames();
     // guests see the host's choice checked but can't change it (inert, not disabled: a disabled radio's dot is near invisible)
     $('world').inert = !mp.isHost; $('world').setAttribute('aria-disabled', String(!mp.isHost)); $('host-note').hidden = mp.isHost;
     panel.querySelectorAll('[name="mp-mode"]').forEach(el => { el.checked = el.value === world.mode; });
@@ -110,31 +154,43 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
     }
     names = new Map([...names, ...mp.players]);
   }
-  function close() { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); (document.getElementById('menu-button') || button).focus({ preventScroll: true }); }
+  function close() { clearInterval(pollTimer); pollTimer = null; pollVersion++; panel.hidden = true; document.body.append(requests); button.setAttribute('aria-expanded', 'false'); (document.getElementById('menu-button') || button).focus({ preventScroll: true }); }
   button.disabled = false;
   button.addEventListener('click', () => {
     if (!panel.hidden) { settings.close(); return; }
-    beforeOpen(); settings.openExternal(panel, close); render(); panel.hidden = false; button.setAttribute('aria-expanded', 'true'); $('name').value = mp.me.name; $('close').focus();
+    beforeOpen(); settings.openExternal(panel, close); render(); panel.hidden = false; button.setAttribute('aria-expanded', 'true'); $('name').value = mp.me.name; $('close').focus(); showRequests(); startPolling();
   });
   $('close').addEventListener('click', () => settings.close());
   $('name').value = mp.me.name;
   $('name').addEventListener('change', () => { mp.setName($('name').value); $('name').value = mp.me.name; });
-  $('copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(mp.me.code); $('status').textContent = 'Code copied'; } catch { $('status').textContent = `Your code is ${mp.me.code}`; } });
-  async function connect(join) {
+  async function connect(game) {
     if (busy) return;
-    busy = true; $('host').disabled = $('join').disabled = true; $('status').textContent = 'Connecting…';
-    try { mp.setName($('name').value); await (join ? mp.join($('join-code').value.trim().toUpperCase()) : mp.host()); $('status').textContent = ''; }
-    catch (error) { $('status').textContent = `Could not connect: ${error?.message || error}`; }
-    finally { busy = false; $('host').disabled = $('join').disabled = false; render(); }
+    busy = true; declineMessage = ''; $('host').disabled = true; $('cancel').hidden = !game;
+    $('status').textContent = game ? `Asking ${game.name} to join…` : 'Connecting…'; drawGames();
+    try { mp.setName($('name').value); await (game ? mp.requestJoin(game.id) : mp.host()); $('status').textContent = ''; }
+    catch (error) {
+      const messages = { 'request-pending': 'You already have a pending request.', 'rate-limit': 'Too many requests — try again in a minute.',
+        'full': 'This game is full.', 'no-host': 'This game is no longer available.', 'host-left': 'The host left.',
+        'left': 'Request cancelled.', 'timeout': 'The request timed out. Try again.', 'lobby-unavailable': 'Open games are unavailable. Try again.' };
+      $('status').textContent = declineMessage || messages[error?.reason] || `Could not connect: ${error?.message || error}`;
+    }
+    finally { busy = false; $('host').disabled = false; $('cancel').hidden = true; render(); refreshGames(); }
   }
-  $('host').addEventListener('click', () => connect(false));
-  $('join-form').addEventListener('submit', e => { e.preventDefault(); connect(true); });
+  $('host').addEventListener('click', () => connect());
+  $('cancel').addEventListener('click', () => mp.leave());
+  $('anyone').addEventListener('change', () => mp.send({ t: 'join-policy', anyone: $('anyone').checked }));
+  mp.on('join-policy', ({ anyone }) => { $('anyone').checked = anyone; });
+  mp.on('join-pending', ({ name }) => { $('status').textContent = `Waiting for ${name} to accept…`; });
+  mp.on('join-declined', ({ name }) => { declineMessage = `${name} declined`; $('status').textContent = declineMessage; say(declineMessage); });
+  mp.on('join-request', request => { if (mp.isHost) { pending.set(request.id, request); showRequests(); } });
+  mp.on('join-resolved', ({ id }) => { pending.delete(id); showRequests(); });
+  mp.on('connected', () => { if (mp.isHost) $('anyone').checked = false; });
   $('world').addEventListener('change', e => { if (e.target.id === 'mp-bump') world.setBump(e.target.value === 'on'); else world.setMode(e.target.value); render(); });
   $('leave').addEventListener('click', () => { world.restore(); mp.leave(); render(); });
   mp.on('joined', ({ player }) => { if (player.id !== mp.me.id) say(`${player.name} joined`); render(); });
   mp.on('left', ({ id }) => { say(`${names.get(id)?.name || 'A player'} left`); render(); });
   mp.on('kicked', () => { say('You were removed'); render(); });
-  mp.on('closed', ({ reason }) => { say(reason === 'full' ? 'This game is full' : reason === 'no-host' ? 'No host found for that code' : 'The host left — game over'); render(); });
+  mp.on('closed', ({ reason }) => { say(reason === 'full' ? 'This game is full' : reason === 'no-host' ? 'This game is no longer available' : reason === 'host-left' ? 'The host left — game over' : 'Could not join this game'); render(); });
   for (const event of ['connected', 'disconnected', 'roster', 'world']) mp.on(event, render);
   render();
   return { world, open: () => button.click() };

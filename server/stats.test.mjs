@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import worker, { RelayRoom } from './worker.js';
-import { Stats, DAY, VISITOR_CAP, ORIGIN } from './stats.mjs';
+import { Lobby } from './lobby.mjs';
+import { Stats, DAY, VISITOR_CAP, RECORD_CAP, ORIGIN, peakConcurrent, renderStats } from './stats.mjs';
 import { countVisit } from '../game/src/visits.js';
 globalThis.crypto ??= webcrypto;
 
@@ -15,7 +16,7 @@ function fixture() {
       get: async key => structuredClone(data.get(key)),
       put: async (key, value) => { for (const [k, v] of typeof key === 'string' ? [[key, value]] : Object.entries(key)) data.set(k, structuredClone(v)); },
       getAlarm: async () => alarm, setAlarm: async value => { alarm = value; },
-      list: async ({ prefix, end, limit }) => new Map([...data].filter(([k]) => k.startsWith(prefix) && k < end).sort().slice(0, limit)),
+      list: async ({ prefix, end, limit }) => new Map([...data].filter(([k]) => k.startsWith(prefix) && (!end || k < end)).sort().slice(0, limit)),
       delete: async keys => { for (const k of Array.isArray(keys) ? keys : [keys]) data.delete(k); },
     },
   };
@@ -28,7 +29,8 @@ function fixture() {
   };
   return { data, ctx, stats, env, hit };
 }
-const dayKey = () => `day:${new Date().toISOString().slice(0, 10)}`;
+const pacificDate = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+const dayKey = () => `day:${pacificDate(Date.now())}`;
 
 test('counts visits, hashed uniques, countries, persistence and 30/day limit; concurrent hits survive', async () => {
   const f = fixture();
@@ -42,9 +44,9 @@ test('counts visits, hashed uniques, countries, persistence and 30/day limit; co
   assert.equal(f.data.get(dayKey()).games, 1);
 });
 
-test('UTC rollover resets limit; daily alarm retains exactly 35 days even with no visits', async () => {
+test('Pacific rollover resets limit; daily alarm retains 60 days even with no visits', async () => {
   const realNow = Date.now;
-  let now = Date.parse('2026-11-16T23:59:59Z');
+  let now = Date.parse('2026-11-17T07:59:59Z');
   Date.now = () => now;
   try {
     const f = fixture();
@@ -52,15 +54,15 @@ test('UTC rollover resets limit; daily alarm retains exactly 35 days even with n
     now += 2000;
     await f.hit();
     assert.equal(f.data.get('day:2026-11-17').visits, 1);
-    for (let i = 0; i < 40; i++) {
-      const date = new Date(now - i * DAY).toISOString().slice(0, 10);
+    for (let i = 0; i < 65; i++) {
+      const date = pacificDate(now - i * DAY);
       f.data.set(`day:${date}`, { visits: 1 });
       f.data.set(`visitor:${date}:test`, 1);
     }
     await f.stats.alarm();
-    assert.equal([...f.data.keys()].filter(k => k.startsWith('day:')).length, 35);
-    assert.equal([...f.data.keys()].filter(k => k.startsWith('visitor:')).length, 37); // two real retained hashes
-    now += 40 * DAY;
+    assert.equal([...f.data.keys()].filter(k => k.startsWith('day:')).length, 60);
+    assert.equal([...f.data.keys()].filter(k => k.startsWith('visitor:')).length, 62); // two real retained hashes
+    now += 65 * DAY;
     await f.stats.alarm();
     assert.equal(f.data.size, 0);
   } finally { Date.now = realNow; }
@@ -92,7 +94,7 @@ test('hit enforces origin, input and size; allows safelisted beacon and OPTIONS'
   for (const [init, status] of [
     [{ method: 'POST', body: '{}' }, 403],
     [{ method: 'POST', headers: { Origin: ORIGIN }, body: '{}' }, 400],
-    [{ method: 'POST', headers: { Origin: ORIGIN }, body: 'x'.repeat(1025) }, 413],
+    [{ method: 'POST', headers: { Origin: ORIGIN }, body: 'x'.repeat(8193) }, 413],
     [{ method: 'GET', headers: { Origin: ORIGIN } }, 405],
     [{ method: 'OPTIONS', headers: { Origin: ORIGIN } }, 204],
   ]) assert.equal((await worker.fetch(new Request('https://relay/hit', init), f.env)).status, status);
@@ -133,10 +135,11 @@ test('counts once when a guest joins; survives later joins and hibernation; new 
   await ctx.blockConcurrencyWhile(async () => {});
   const host = socket(), guest = socket(), rejected = socket();
   relay.room.code = 'ABCDE';
-  const hello = host => JSON.stringify({ t: 'hello', name: 'Player', code: 'ABCDE', host, skin: { vehicle: 'car' } });
+  const hello = host => JSON.stringify({ t: host ? 'hello' : 'join-request', name: 'Player', code: 'ABCDE', host, skin: { vehicle: 'car' } });
   relay.room.connect('000000000001', host);
   await relay.webSocketMessage(host, hello(true));
   await relay.webSocketMessage(host, hello(true));
+  await relay.webSocketMessage(host, JSON.stringify({ t: 'join-policy', anyone: true }));
   assert.equal(f.data.get(dayKey())?.games ?? 0, 0);
   relay.room.connect('000000000002', guest);
   await relay.webSocketMessage(guest, hello(false));
@@ -168,11 +171,66 @@ test('counts once when a guest joins; survives later joins and hibernation; new 
   fresh.room.code = 'ABCDE';
   fresh.room.connect('000000000004', replacement);
   await fresh.webSocketMessage(replacement, hello(true));
+  await fresh.webSocketMessage(replacement, JSON.stringify({ t: 'join-policy', anyone: true }));
   const newGuest = socket();
   fresh.room.connect('000000000008', newGuest);
   await fresh.webSocketMessage(newGuest, hello(false));
   await Promise.all(pending);
   assert.equal(f.data.get(dayKey()).games, 2);
+});
+
+test('lobby and game records share admitted roster; pending requests never count and hibernation never recounts', async () => {
+  const f = fixture(), l = fixture();
+  const lobby = new Lobby(l.ctx);
+  await l.ctx.blockConcurrencyWhile(async () => {});
+  f.env.LOBBY = { idFromName: () => 'public', get: () => lobby };
+  const pending = [], sockets = [];
+  const ctx = { ...f.ctx, getWebSockets: () => sockets, waitUntil: p => pending.push(p) };
+  let relay = new RelayRoom(ctx, f.env);
+  await ctx.blockConcurrencyWhile(async () => {});
+  relay.room.code = 'ABCDE';
+  const send = (ws, message) => relay.webSocketMessage(ws, JSON.stringify(message));
+  const open = (id, name, host = false) => {
+    const ws = { messages: [], send(text) { this.messages.push(JSON.parse(text)); }, close() {},
+      serializeAttachment(v) { this.attachment = structuredClone(v); }, deserializeAttachment() { return this.attachment; } };
+    sockets.push(ws); relay.room.connect(id, ws);
+    return [ws, { t: host ? 'hello' : 'join-request', name, code: 'ABCDE', host, skin: { vehicle: 'car' } }];
+  };
+  const check = async (count, peak, games) => {
+    await Promise.all(pending);
+    const listing = await (await worker.fetch(new Request('https://relay/lobby'), f.env)).json();
+    assert.equal(listing.games[0]?.players ?? 0, count);
+    const record = f.data.get(`game:${relay.stats.game?.id || gameId}`);
+    assert.equal(record.maxPlayers, peak);
+    assert.equal(f.data.get(dayKey())?.games ?? 0, games);
+    assert.equal(relay.counted, games > 0 && count > 0);
+    return record;
+  };
+  const [host, hostHello] = open('000000000001', 'Host', true);
+  await send(host, hostHello);
+  const gameId = relay.stats.game.id;
+  await check(1, 1, 0);
+  const [guest, guestHello] = open('000000000002', 'Guest');
+  await send(guest, guestHello);
+  await check(1, 1, 0);
+  await send(host, { t: 'join-accept', id: '000000000002' });
+  await check(2, 2, 1);
+  assert.equal(guest.messages.filter(m => m.t === 'stats-game').at(-1).id, gameId);
+  const [declined, declinedHello] = open('000000000003', 'Declined');
+  await send(declined, declinedHello);
+  await send(host, { t: 'join-decline', id: '000000000003' });
+  await check(2, 2, 1);
+  relay = new RelayRoom(ctx, f.env);
+  await ctx.blockConcurrencyWhile(async () => {});
+  assert.equal(relay.stats.game.id, gameId);
+  await send(host, { t: 'heartbeat' });
+  await check(2, 2, 1);
+  await relay.webSocketClose(guest);
+  await check(1, 2, 1);
+  await relay.webSocketClose(host);
+  const ended = await check(0, 2, 1);
+  assert.deepEqual(ended.names, ['Host', 'Guest']);
+  assert.ok(ended.end);
 });
 
 test('stats failures cannot reject host hello', async () => {
@@ -186,4 +244,117 @@ test('stats failures cannot reject host hello', async () => {
   relay.room.connect('000000000001', ws);
   await relay.webSocketMessage(ws, JSON.stringify({ t: 'hello', name: 'Host', code: 'ABCDE', host: true, skin: { vehicle: 'car' } }));
   assert.ok(relay.room.host);
+});
+
+const sessionRequest = (f, event, seq, values = {}) => {
+  const r = new Request('https://relay/hit', { method: 'POST', headers: { Origin: ORIGIN }, body: JSON.stringify({
+    v: 'visitor_1234567890123456', s: 'session_1234567890123456', event, seq, activeMs: 0,
+    offset: 480, screen: 'large', browser: 'Chrome', vehicles: ['car:race'], races: { started: 0, finished: 0 }, ...values,
+  }) });
+  r.cf = { country: 'US' };
+  return worker.fetch(r, f.env);
+};
+const sessions = f => [...f.data].filter(([k]) => k.startsWith('session:')).map(([, v]) => v);
+
+test('session start, heartbeat, end, duplicate/out-of-order reports, resume and distinct browser sessions', async () => {
+  const realNow = Date.now; let now = Date.parse('2026-11-17T20:00:00Z'); Date.now = () => now;
+  try {
+    const f = fixture();
+    assert.equal((await sessionRequest(f, 'start', 1)).status, 204);
+    await sessionRequest(f, 'start', 1);
+    assert.equal(f.data.get(dayKey()).visits, 1);
+    now += 60000;
+    await sessionRequest(f, 'heartbeat', 2, { activeMs: 60000, vehicles: ['bike:dirt'], builder: true, graphics: 'high',
+      mp: { id: 'test-game', code: 'ABCDE', nickname: '<Ada>', maxPlayers: 4 }, races: { started: 2, finished: 1, medals: { gold: 1 } } });
+    let s = sessions(f)[0];
+    assert.equal(s.activeMs, 60000); assert.equal(s.end, null); assert.equal(s.builder, true);
+    assert.deepEqual(s.vehicles, ['car:race', 'bike:dirt']); assert.equal(s.races.medals.gold, 1);
+    assert.equal(s.mpGames[0].maxPlayers, 4); assert.equal(s.nickname, '<Ada>');
+    now += 10000; await sessionRequest(f, 'end', 3, { activeMs: 70000 });
+    await sessionRequest(f, 'heartbeat', 2, { activeMs: 1 });
+    s = sessions(f)[0]; assert.equal(s.end, now); assert.equal(s.activeMs, 70000);
+    now += 600000; await sessionRequest(f, 'heartbeat', 4, { activeMs: 70000 });
+    now += 60000; await sessionRequest(f, 'heartbeat', 5, { activeMs: 130000 });
+    s = sessions(f)[0]; assert.equal(s.activeMs, 130000); assert.equal(s.spans.length, 2);
+    assert.equal(s.last - s.start, 730000); // hidden interval is not active time
+    await sessionRequest(f, 'start', 1, { s: 'session_other_1234567890' });
+    assert.equal(sessions(f).length, 2); assert.equal(f.data.get(dayKey()).unique, 1);
+    assert.ok(!JSON.stringify([...f.data]).includes('visitor_1234567890123456'));
+  } finally { Date.now = realNow; }
+});
+
+test('missing end uses last heartbeat, unknown heartbeat does not create a session, metadata is whitelisted', async () => {
+  const realNow = Date.now; let now = Date.parse('2026-11-17T20:00:00Z'); Date.now = () => now;
+  try {
+    const f = fixture();
+    await sessionRequest(f, 'heartbeat', 1); assert.equal(sessions(f).length, 0);
+    await sessionRequest(f, 'start', 1, { browser: 'full UA', screen: '1234x5678', ip: 'do-not-store', vehicles: ['car:race', 'http://private'], location: 'private' });
+    now += 60000; await sessionRequest(f, 'heartbeat', 2, { activeMs: 60000 });
+    const last = now; now += DAY;
+    const s = sessions(f)[0]; assert.equal(s.last, last); assert.equal(s.end, null);
+    const html = await (await worker.fetch(new Request('https://relay/stats?key=test-key'), f.env)).text();
+    assert.ok(html.includes('(last report)')); assert.ok(html.includes('1.0 min / 1.0 min'));
+    assert.ok(html.includes('Sessions') && html.includes('Multiplayer games') && html.includes('<svg'));
+    const stored = JSON.stringify([...f.data]); assert.ok(!stored.includes('do-not-store') && !stored.includes('full UA') && !stored.includes('1234x5678'));
+  } finally { Date.now = realNow; }
+});
+
+test('session and game details expire and stay capped, including when no visitors arrive', async () => {
+  const f = fixture(), now = Date.now();
+  for (let i = 0; i <= RECORD_CAP; i++) f.data.set(`session:seed${i}`, { start: now - i });
+  f.data.set('session:expired', { start: now - 61 * DAY });
+  f.data.set('game:expired', { start: now - 61 * DAY });
+  await f.stats.alarm();
+  assert.equal(sessions(f).length, RECORD_CAP); assert.equal(f.data.has('game:expired'), false);
+  await sessionRequest(f, 'start', 1); assert.equal(sessions(f).length, RECORD_CAP);
+});
+
+test('peak concurrence excludes hidden intervals and deduplicates tabs; private page escapes nicknames', () => {
+  const list = [
+    { visitor: 'a', spans: [{ start: 0, last: 10 }, { start: 30, last: 40 }] },
+    { visitor: 'a', spans: [{ start: 1, last: 9 }] },
+    { visitor: 'b', spans: [{ start: 12, last: 29 }] },
+  ];
+  assert.equal(peakConcurrent(list, 0, 40), 1);
+  list.push({ visitor: 'c', spans: [{ start: 5, last: 15 }] });
+  assert.equal(peakConcurrent(list, 0, 40), 2);
+  const html = renderStats([{ day: pacificDate(Date.now()), visits: 1, unique: 1, games: 1, countries: { US: 1 } }], [], [
+    { id: '<script>', code: 'ABCDE', start: Date.now(), last: Date.now(), host: '<img onerror=x>', maxPlayers: 2, names: ['<svg onload=x>'] },
+  ]);
+  assert.ok(html.includes('&lt;img onerror=x&gt;') && !html.includes('<img onerror=x>'));
+});
+
+test('play time splits across Pacific midnight and uses DST calendar days', async () => {
+  const realNow = Date.now; let now = Date.parse('2026-11-17T07:59:30Z'); Date.now = () => now;
+  try {
+    const f = fixture(); await sessionRequest(f, 'start', 1);
+    now += 60000; await sessionRequest(f, 'heartbeat', 2, { activeMs: 60000 });
+    const s = sessions(f)[0]; assert.deepEqual(s.playByDay, { '2026-11-16': 30000, '2026-11-17': 30000 });
+    assert.equal(f.data.get('day:2026-11-16').visits, 1); assert.equal(f.data.has('day:2026-11-17'), false);
+    const html = await (await worker.fetch(new Request('https://relay/stats?key=test-key'), f.env)).text();
+    assert.ok(html.includes('Nov 16, 2026') && html.includes('11:59 PM'));
+    assert.ok(html.includes('0.5 min'));
+    now = Date.parse('2026-11-01T09:30:00Z'); // second 1:30 AM when DST ends
+    const dst = fixture();
+    const dstHtml = await (await worker.fetch(new Request('https://relay/stats?key=test-key'), dst.env)).text();
+    assert.equal((dstHtml.match(/<td>2026-11-01<\/td>/g) || []).length, 1);
+    assert.equal((dstHtml.match(/<td>2026-10-31<\/td>/g) || []).length, 1);
+  } finally { Date.now = realNow; }
+});
+
+test('relay game reports retain host, names, peak and end; same code can have separate games', async () => {
+  const realNow = Date.now; let now = Date.parse('2026-11-17T20:00:00Z'); Date.now = () => now;
+  try {
+    const f = fixture();
+    const report = values => f.stats.fetch(new Request('https://stats/game', { method: 'POST', body: JSON.stringify({ id: 'one', code: 'ABCDE', host: 'Maple', count: 1, names: ['Maple'], ...values }) }));
+    await report({}); const start = now;
+    assert.equal(f.data.get(dayKey()), undefined); // solo host is visible but not a 2+ game
+    now += 1000; await report({ count: 3, names: ['Maple', 'River', 'Aspen'] });
+    await report({ count: 2, names: ['Maple', 'Oak'] }); assert.equal(f.data.get(dayKey()).games, 1);
+    now += 5000; await report({ count: 0, names: [] });
+    const game = f.data.get('game:one'); assert.equal(game.start, start); assert.equal(game.end, now); assert.equal(game.maxPlayers, 3);
+    assert.deepEqual(game.names, ['Maple', 'River', 'Aspen', 'Oak']);
+    await report({ id: 'two', count: 2 }); assert.equal(f.data.get(dayKey()).games, 2);
+    assert.equal(f.data.get('game:two').code, game.code);
+  } finally { Date.now = realNow; }
 });

@@ -44,7 +44,7 @@ try {
       glider: kind === 'jet' ? {} : { wing: paint, stripe: '#ffffff', accent: '#faf6ea' } }));
     net.on('disconnected', ({ reason, retrying }) => console.log(`${net.me.name}: ${reason}${retrying ? ' (retrying)' : ''}`));
     bots.push({ net, vehicle, i });
-    if (i === 0 && !option('--room')) { net.me.code = room; await net.host(); }
+    if (i === 0 && !option('--room')) { net.me.code = room; await net.host(); net.send({ t: 'join-policy', anyone: true }); }
     else await net.join(room);
   }
   motion = setInterval(() => {

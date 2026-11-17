@@ -31,7 +31,7 @@ try {
     mp.setVehicleSource(() => ({ kind: 'car', colors: { body: window.paint }, glider: {}, vehicle: {
       pos: { x: -542, y: 200, z: 440 }, quat: { x: 0, y: 0, z: 0, w: 1 }, vel: { x: 1, y: 0, z: 2 },
     } }));
-    await mp.host(); return mp.me.code;
+    await mp.host(); mp.send({ t: 'join-policy', anyone: true }); return mp.me.code;
   });
   await guest.evaluate(code => mp.join(code), code);
   await guest.waitForFunction(() => mp.players.size === 2 && window.states.length >= 3);

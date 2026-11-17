@@ -52,7 +52,7 @@ async function open(label) {
   return page;
 }
 const H = await open('host'), G = await open('guest');
-await H.evaluate(async () => { const { mp } = await import('./src/mp/net.js'); mp.setName('Hana Host'); await mp.host(); });
+await H.evaluate(async () => { const { mp } = await import('./src/mp/net.js'); mp.setName('Hana Host'); await mp.host(); mp.send({ t: 'join-policy', anyone: true }); });
 const code = await H.evaluate(async () => (await import('./src/mp/net.js')).mp.me.code);
 const gid = await G.evaluate(async code => { const { mp } = await import('./src/mp/net.js'); mp.setName('Gus Guest'); await mp.join(code); return mp.me.id; }, code);
 await wait(800);
