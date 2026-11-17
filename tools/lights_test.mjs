@@ -121,7 +121,14 @@ for (const [kind, id, mesh] of models) {
     assert.deepEqual(a.head, [], `${mesh.name}: no landing-light anchor`);
     assert.equal(mesh.userData.landingLight, undefined, `${mesh.name}: no landingLight flag`);
     const l = createVehicleLightLenses(mesh, kind); l.update({ on: true });
-    assert.equal(l.group.getObjectByName('vehicle-light-left').material.emissive.getHexString(), 'ff1828', `${mesh.name}: port light is red`);
+    for (const [role, hex] of [['left', 'ff1828'], ['right', '18ff54'], ['nav-tail', 'ffffff']]) {
+      const lens = l.group.getObjectByName(`vehicle-light-${role}`);
+      assert(lens, `${mesh.name}: ${role} nav lens`);
+      assert.equal(lens.material.emissive.getHexString(), hex, `${mesh.name}: ${role} nav colour`);
+      assert.equal(lens.scale.x, 1, `${mesh.name}: ${role} nav full size`);
+      assert.equal(lens.material.emissiveIntensity, 1, `${mesh.name}: ${role} nav full brightness`);
+    }
+    assert(l.group.children.some(o => o.name === 'vehicle-light-strobe' && o.visible), `${mesh.name}: strobe flashes`);
     l.dispose();
     const previousIntensity = local.spot.intensity;
     local.update(.01, { mesh, kind }, 1); assert.equal(local.beam, false, `${mesh.name}: no aircraft beam`);
