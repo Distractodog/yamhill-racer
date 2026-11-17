@@ -74,6 +74,18 @@ export function makeRaceBarriers(points, world) {
       const depth = support + BARRIER_WIDTH / 2 - side * signed;
       if (depth <= 0) continue;
       const nx = s.nx * side, nz = s.nz * side;
+      if (car.recordImpact) {
+        // The contacting support corner (or face centre when parallel), projected onto the
+        // finite wall. Using the vehicle centre here would put oblique nose hits in a door.
+        const right = rx * nx + rz * nz, forward = fx * nx + fz * nz;
+        const sx = Math.abs(right) < 1e-6 ? 0 : -Math.sign(right) * h.x;
+        const sz = Math.abs(forward) < 1e-6 ? 0 : -Math.sign(forward) * halfLength;
+        const px = cx + rx * sx + fx * sz, pz = cz + rz * sx + fz * sz;
+        const u = clamp(((px - s.ax) * s.dx + (pz - s.az) * s.dz) / (s.len * s.len), 0, 1);
+        car.recordImpact(s.ax + s.dx * u + nx * BARRIER_WIDTH / 2,
+          Math.min(p.y, s.ay + (s.by - s.ay) * u + BARRIER_HEIGHT),
+          s.az + s.dz * u + nz * BARRIER_WIDTH / 2, nx, 0, nz, -(v.x * nx + v.z * nz), 'barrier');
+      }
       p.x += nx * depth; p.z += nz * depth;
       const vn = v.x * nx + v.z * nz;
       if (vn < 0) {

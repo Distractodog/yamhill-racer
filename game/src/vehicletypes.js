@@ -85,6 +85,7 @@ export function applyVehicleType(vehicle, id) {
   }
   const defaults = vehicle.kind === 'car' ? TUNING_DEFAULTS : vehicle.kind === 'jet' ? JET : BIKE;
   const base = vehicle._typeBaseTuning;
+  if (vehicle.type !== spec.id) vehicle.damage?.repair();
   vehicle.type = spec.id;
   vehicle.name = spec.name;
   vehicle.typePhysics = spec.physics || null;

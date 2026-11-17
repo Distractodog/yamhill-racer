@@ -219,18 +219,19 @@ export class Glider {
   // The wing is wide, so it reaches a few metres further than the car.
   hitTree() {
     const c = this.car, W = c.world, reach = 1.2 + 2.6 * this.open;
-    let hx = 0, hz = 0, hit = false;
+    let hx = 0, hz = 0, hr = 0, hit = false;
     W.treesNear(c.pos.x, c.pos.z, 16, (tx, tz, tr, h, broad, id) => {
       if (hit || h === undefined) return;
       const y = c.pos.y - W.terrainAt(tx, tz);
       if (y > h + 0.5 || y < 0) return;
       const crown = broad ? (y > h * 0.3 ? h * 0.3 : tr) : h * 0.15 * (1 - y / h) + tr;
       const d = Math.hypot(c.pos.x - tx, c.pos.z - tz);
-      if (d < crown + reach && !breakTreeClip(c, id, d, crown, tr, h, y)) { hit = true; hx = tx; hz = tz; }
+      if (d < crown + reach && !breakTreeClip(c, id, d, crown, tr, h, y)) { hit = true; hx = tx; hz = tz; hr = crown; }
     });
     if (!hit) return false;
     let nx = c.pos.x - hx, nz = c.pos.z - hz; const d = Math.hypot(nx, nz) || 1; nx /= d; nz /= d;
     const vn = c.vel.x * nx + c.vel.z * nz;
+    if (d < hr + this.bodyR) c.recordImpact?.(hx + nx * hr, c.pos.y, hz + nz * hr, nx, 0, nz, -vn, 'tree');
     if (vn < 0) { c.vel.x -= nx * vn * 1.2; c.vel.z -= nz * vn * 1.2; }
     c.vel.multiplyScalar(0.4);
     this.crash('tree');

@@ -425,7 +425,7 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
   const near = body(false), far = body(true);
   // suspension: the last vertices of the near body mesh (no extra draw call, and mp/remotes.js bakeParts keeps their
   // order), one block per wheel hinged on the chassis; the far body has fixed arms
-  const armStart = near.p.length / 3;
+  const armStart = near.p.length / 3, farArmStart = far.p.length / 3;
   const links = spec.map((W, i) => {
     const { pivot, bars } = arms(W), from = near.p.length / 3;
     for (const [a, b] of bars) rod(near, a, b, .045, .016, CARBON);
@@ -437,6 +437,8 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
   });
   const armEnd = near.p.length / 3;
   const nearMeshes = near.meshes({ fixed }), farMeshes = far.meshes({ fixed });
+  nearMeshes[0].userData.damageVertexCount = armStart;
+  farMeshes[0].userData.damageVertexCount = farArmStart;
   recolour([...nearMeshes, ...farMeshes], colors);
   const lod = lodBody(bodyPivot, nearMeshes, farMeshes, FAR_AT);
   const [nearGroup, farGroup] = lod.levels.map(l => l.object);

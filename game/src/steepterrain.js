@@ -69,6 +69,7 @@ function pushOut(v, points, quat) {
       if (h <= p.y + 0.06 || !W.terrainNormalAt(p.x, p.z, n, p.y) || n.y >= FACE_Y) continue;
       const horizontal = Math.hypot(n.x, n.z), nx = n.x / horizontal, nz = n.z / horizontal;
       const distance = Math.min(2, (h - p.y + 0.01) * n.y / horizontal);
+      v.recordImpact?.(p.x, p.y, p.z, nx, 0, nz, -(v.vel.x * nx + v.vel.z * nz), 'terrain');
       v.pos.x += nx * distance; v.pos.z += nz * distance;
       const into = v.vel.x * nx + v.vel.z * nz;
       if (into < 0) {

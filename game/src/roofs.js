@@ -240,6 +240,7 @@ function parapetPush(v, k, foot) {
     let nx = (qx - edge.x) / d, nz = (qz - edge.z) / d;
     if (!inside) { nx = -nx; nz = -nz; }
     const pen = Math.min(inside ? r - d : r + d, budget);
+    v.recordImpact?.(edge.x, Math.min(p.y, top), edge.z, nx, 0, nz, -(v.vel.x * nx + v.vel.z * nz), 'parapet');
     budget -= pen; p.x += nx * pen; p.z += nz * pen;
     const vn = v.vel.x * nx + v.vel.z * nz;
     if (vn < 0) { v.vel.x -= nx * vn * 1.1; v.vel.z -= nz * vn * 1.1; v.hit = Math.max(v.hit, -vn); worst = Math.max(worst, -vn); }
@@ -273,6 +274,7 @@ function wallPush(v, pts, R, top, ease) {
     pen = Math.min(pen, SOFT + Math.max(0, -v.vel.y) / 120);      // keeps pace with the fall
     p.x += nx * pen; p.z += nz * pen; return 0;
   }
+  v.recordImpact?.(bx, Math.min(p.y, wallTop), bz, nx, 0, nz, -vn, 'building');
   p.x += nx * pen; p.z += nz * pen;
   if (vn < 0) { v.vel.x -= nx * vn * 1.3; v.vel.z -= nz * vn * 1.3; v.vel.multiplyScalar(0.85); v.hit = Math.max(v.hit, -vn); return -vn; }
   return 0;

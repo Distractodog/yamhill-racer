@@ -60,6 +60,21 @@ export function resolveCollision(vehicle, remote, dt = 1 / 120, atMs = 0, tie = 
   if (Math.hypot(a.x - b.x, a.z - b.z) < 1e-8 && Math.hypot(dx, dz) < 1e-8) { hit.nx *= tie; hit.nz *= tie; }
   const { nx, nz } = hit, share = b.mass / (a.mass + b.mass);
   const correction = Math.max(0, hit.depth + 0.002) * share;
+  // Contact on the local box's support face, with tangential placement from the overlap.
+  // Only cosmetic metadata: retain the existing correction, impulse and yaw response below.
+  if (vehicle.recordImpact) {
+    const forward = nx * a.fx + nz * a.fz, right = nx * a.rx + nz * a.rz;
+    const overlapMiddle = (x, z, half) => {
+      const centre = (b.x - a.x) * x + (b.z - a.z) * z, extent = radius(b, x, z);
+      return clamp((Math.max(-half, centre - extent) + Math.min(half, centre + extent)) / 2, -half, half);
+    };
+    const f = Math.abs(forward) > 1e-6 ? -Math.sign(forward) * a.l / 2
+      : overlapMiddle(a.fx, a.fz, a.l / 2);
+    const r = Math.abs(right) > 1e-6 ? -Math.sign(right) * a.w / 2
+      : overlapMiddle(a.rx, a.rz, a.w / 2);
+    vehicle.recordImpact(a.x + a.fx * f + a.rx * r, a.y, a.z + a.fz * f + a.rz * r, nx, 0, nz,
+      -((v.x - remote.vel[0]) * nx + (v.z - remote.vel[2]) * nz), 'vehicle');
+  }
   p.x += nx * correction; p.z += nz * correction;
   const closing = -((v.x - remote.vel[0]) * nx + (v.z - remote.vel[2]) * nz);
   if (closing <= 0) return true;
