@@ -74,7 +74,7 @@ test('decline, auto-decline at 30 s, cancellation, host departure and no legacy 
   const { room, host, send, open, advance } = fixture();
   const denied = open(2); send(host, { t: 'join-decline', id: id(2) });
   assert.equal(last(denied, 'join-declined').name, 'Host'); assert.equal(room.session(denied), undefined);
-  const expired = open(3); advance(29999); assert.ok(room.session(expired)); advance(1);
+  const expired = open(3); advance(29999); assert.ok(room.session(expired)); send(host, { t: 'heartbeat' }); advance(1);
   assert.equal(last(expired, 'join-declined').name, 'Host'); send(host, { t: 'join-accept', id: id(3) }); assert.equal(room.players.length, 1);
   const cancelled = open(4); room.leave(cancelled); assert.equal(last(host, 'join-resolved').id, id(4));
   const legacy = socket(); room.connect(id(5), legacy); send(legacy, { ...hello(), t: 'hello' }); assert.equal(last(legacy, 'closed').reason, 'approval-required');
@@ -113,13 +113,16 @@ test('Room DO persists pending guests, admission changes and host policy; alarm 
   await restored.webSocketMessage(host, JSON.stringify({ t: 'join-accept', id: id(2) }));
   assert.equal(guest.attachment.session.player.id, id(2)); assert.equal(guest.attachment.session.pending, undefined);
   assert.equal(lobby.state.requests.get(id(2)).until, 0);
-  assert.equal(lobby.state.list()[0].players, 2); assert.equal(ctx.data.has('alarm'), false);
+  assert.equal(lobby.state.list()[0].players, 2); assert.ok(ctx.data.get('alarm'), 'host lease keeps an alarm armed');
   await restored.webSocketMessage(host, JSON.stringify({ t: 'join-policy', anyone: true }));
   assert.equal(host.attachment.session.anyone, true);
   await restored.webSocketMessage(host, JSON.stringify({ t: 'join-policy', anyone: false }));
   const waiting = socket(); restored.room.connect(id(3), waiting); await restored.webSocketMessage(waiting, JSON.stringify(hello()));
   const againCtx = context([host, guest, waiting], ctx.data), again = new RelayRoom(againCtx, env); await againCtx.ready;
-  again.room.now = () => ctx.data.get('alarm'); await again.alarm();
+  const deadline = again.room.session(waiting).expires;
+  again.room.host.heartbeat = deadline - 10000;
+  again.room.now = () => deadline - 1; await again.webSocketMessage(host, JSON.stringify({ t: 'heartbeat' }));
+  again.room.now = () => deadline; await again.alarm();
   assert.equal(last(waiting, 'join-declined').name, 'Host'); assert.equal(waiting.attachment.session, null);
   assert.equal(lobby.state.requests.get(id(3)).until, 0);
   await again.webSocketClose(host); assert.deepEqual(lobby.state.list(), []);
@@ -150,7 +153,7 @@ test('request preparation handles cancellation and duplicate messages during Lob
   const first = relay.webSocketMessage(guest, JSON.stringify(hello())); await begun;
   await relay.webSocketMessage(guest, JSON.stringify(hello()));
   assert.equal(relay.room.players.length, 1); assert.equal(last(guest, 'join-pending'), undefined);
-  await relay.webSocketClose(guest); release(); await first;
+  await relay.webSocketMessage(guest, JSON.stringify({ t: 'leave' })); release(); await first;
   assert.equal(lobby.state.requests.get(id(2)).until, 0);
   assert.equal(guest.attachment.session, null);
 });
@@ -165,4 +168,13 @@ test('largest allowed pending/host attachments remain below Cloudflare 2 KiB aft
     const bytes = new TextEncoder().encode(JSON.stringify(ws.attachment)).length;
     assert.ok(bytes < 2048, `${bytes} attachment bytes`);
   }
+});
+
+test('guest-driven roster publications retain the host timestamp and cannot renew expired discovery', () => {
+  let now = 0; const lobby = new LobbyState({ now: () => now });
+  const entry = { id: 'ABCDE', name: 'Host', players: 1, created: 0, seen: 0 };
+  lobby.update(entry); now = 29999; lobby.update({ ...entry, players: 2 });
+  assert.equal(lobby.list()[0].players, 2);
+  now = 30000; assert.deepEqual(lobby.list(), []);
+  lobby.update({ ...entry, players: 1 }); assert.deepEqual(lobby.list(), []);
 });

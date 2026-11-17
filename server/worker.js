@@ -29,6 +29,7 @@ export class RelayRoom {
     this.env = env;
     this.ctx = ctx;
     this.layoutStored = new Map();
+    this.layoutSaving = Promise.resolve();
     this.counted = false;
     this.lobby = new RoomLobby(this);
     const sockets = ctx.getWebSockets();
@@ -41,6 +42,7 @@ export class RelayRoom {
       else ws.close(1000, 'invalid-session');
     }
     ctx.blockConcurrencyWhile(async () => {
+      const before = this.lobby.snapshot();
       if (this.room.host) {
         this.counted = (await ctx.storage.get('counted')) === true;
         this.room.world = (await ctx.storage.get('world')) ?? null;
@@ -57,13 +59,17 @@ export class RelayRoom {
         for (const key of layout?.keys || []) await ctx.storage.delete(key);
         await ctx.storage.delete('layout');
         for (const ws of this.room.clients.keys()) {
-          if (this.room.session(ws).player) this.room.removeRejected(ws, 'no-host');
+          const s = this.room.session(ws);
+          if (s.player || s.pending) { this.room.removeRejected(ws, 'no-host'); this.saveSession(ws); }
         }
       }
       await this.stats.restore().catch(() => {});
+      await this.expire();
+      await this.lobby.sync(before);
     });
   }
-  fetch(request) {
+  async fetch(request) {
+    await this.expire();
     const address = roomAddress(request.url);
     if (!address) return new Response('Invalid room address', { status: 400 });
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
@@ -72,8 +78,11 @@ export class RelayRoom {
     this.room.code = address.code;
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
+    const before = this.lobby.snapshot(), oldWorld = this.room.world;
     this.room.connect(address.id, server);
     this.saveSession(server);
+    // connect() also checks the clock: it may cross the deadline after fetch's initial await.
+    await this.finishExpiry(before, oldWorld);
     return new Response(null, { status: 101, webSocket: client });
   }
   saveSession(ws) {
@@ -81,9 +90,11 @@ export class RelayRoom {
     ws.serializeAttachment({ code: this.room.code, session: this.room.session(ws) ?? null });
   }
   async webSocketMessage(ws, message) {
+    await this.expire();
+    if (!this.room.session(ws)) return;
     let type; try { type = JSON.parse(message)?.t; } catch {}
-    const lobbyChange = ['hello', 'join-request', 'join-accept', 'join-decline', 'join-policy', 'heartbeat', 'kick'].includes(type);
-    const lobbyBefore = lobbyChange ? this.lobby.snapshot() : [];
+    const lobbyChange = ['hello', 'join-request', 'join-accept', 'join-decline', 'join-policy', 'heartbeat', 'kick', 'leave'].includes(type);
+    const lobbyBefore = this.lobby.snapshot();
     if (type === 'join-request' && await this.lobby.prepare(ws, message) === false) return;
     const original = lobbyBefore.find(([peer]) => peer === ws);
     if (original && this.room.session(ws)?.claimed) original[1].claimed = true;
@@ -91,9 +102,15 @@ export class RelayRoom {
     const oldClients = [...this.room.clients.keys()];
     const hadHost = !!this.room.host;
     this.room.receive(ws, message);
+    const lostHost = hadHost && !this.room.host;
+    for (const peer of oldClients) this.saveSession(peer);
     if (!this.counted && this.room.players.length >= 2) {
       this.counted = true;
       await this.ctx.storage.put('counted', true);
+    }
+    if (!this.room.players.length && this.counted) {
+      this.counted = false;
+      await this.ctx.storage.delete('counted');
     }
     // Game records are the source for MP totals; do not send legacy ID-less /game hits.
     await this.stats.update().catch(() => {});
@@ -102,10 +119,15 @@ export class RelayRoom {
       if (!this.room.clients.has(peer)) this.saveSession(peer);
     }
     await this.saveWorld(oldWorld);
-    if (lobbyChange) await this.lobby.sync(lobbyBefore, ['hello', 'heartbeat', 'join-policy'].includes(type) && !!this.room.session(ws)?.player?.host);
-    if (type === 'layout' || (hadHost && !this.room.host)) await this.saveLayout();
+    if (lobbyChange || lobbyBefore.some(([peer]) => !this.room.session(peer))) await this.lobby.sync(lobbyBefore);
+    if (type === 'layout' || lostHost) await this.saveLayout();
   }
-  async saveLayout() {
+  saveLayout() {
+    // Close/expiry may overlap a new host while storage awaits. Always finish the latest layout last.
+    this.layoutSaving = this.layoutSaving.catch(() => {}).then(() => this.persistLayout());
+    return this.layoutSaving;
+  }
+  async persistLayout() {
     // Each storage value stays small too, not just the WebSocket frames.
     const next = new Map(), keyOf = c => `layout:${c.revision}:${c.index}`;
     const complete = this.room.layout?.map(c => { const key = keyOf(c); next.set(key, c); return key; }) ?? null;
@@ -123,10 +145,13 @@ export class RelayRoom {
     else await this.ctx.storage.delete('world');
   }
   async webSocketClose(ws) {
+    await this.expire();
+    if (!this.room.session(ws)) return;
     const lobbyBefore = this.lobby.snapshot();
     const oldWorld = this.room.world;
     const oldClients = [...this.room.clients.keys()];
     this.room.leave(ws);
+    for (const peer of oldClients) this.saveSession(peer);
     if (!this.room.players.length && this.counted) {
       this.counted = false;
       await this.ctx.storage.delete('counted');
@@ -138,6 +163,23 @@ export class RelayRoom {
     await this.lobby.sync(lobbyBefore);
     try { ws.close(1000, 'disconnected'); } catch { /* Already closed. */ }
   }
-  alarm() { return this.lobby.alarm(); }
+  async expire() {
+    if (this.room.deadline > this.room.now()) return;
+    const before = this.lobby.snapshot(), oldWorld = this.room.world;
+    this.room.expire();
+    await this.finishExpiry(before, oldWorld);
+  }
+  async finishExpiry(before, oldWorld) {
+    const changed = before.some(([ws]) => !this.room.session(ws));
+    if (!changed) return;
+    // Invalidate attachments before the first await, including when close callbacks are delayed.
+    for (const [ws] of before) this.saveSession(ws);
+    if (!this.room.host) { this.counted = false; await this.ctx.storage.delete('counted'); }
+    await this.saveWorld(oldWorld);
+    await this.saveLayout();
+    await this.stats.update().catch(() => {});
+    await this.lobby.sync(before);
+  }
+  async alarm() { await this.expire(); await this.lobby.sync([]); }
   webSocketError(ws) { return this.webSocketClose(ws); }
 }

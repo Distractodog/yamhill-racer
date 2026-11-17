@@ -253,7 +253,13 @@ export class Net {
     this._pending?.reject(error(reason)); this._pending = null;
     if (active) this._emit('disconnected', { reason, retrying: false });
   }
-  leave() { this._end('left'); }
+  leave() {
+    // The sending socket authenticates departure, including a pending join request.
+    if (this._socket?.readyState === 1) {
+      try { this._socket.send(JSON.stringify({ t: 'leave' })); } catch { /* Lease/close cleans up a broken transport. */ }
+    }
+    this._end('left');
+  }
 }
 
 function validName(value) { return typeof value === 'string' && value.trim().length >= 2 && value.trim().length <= 16 && /^[A-Za-z0-9 _.-]+$/.test(value.trim()); }

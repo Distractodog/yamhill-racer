@@ -55,3 +55,29 @@ controller.dispose(); assert.equal(poll, null); assert.equal([...mp.listeners.va
   guestWorld.dispose();
 }
 console.log('PASS: world sync, repeated snapshots/restores, all disconnect paths, host authorization, debounce, atmosphere persistence, disposal, day/night clock + weather to guests');
+
+// Exercise the same listing controller used by the menu, including overlapping opens.
+{
+  const { createGameListing } = await import('../game/src/mp/menu.js');
+  const requests = [], views = [];
+  let available = true;
+  const list = createGameListing({ available: () => available,
+    load: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
+    render: (games, message) => views.push({ games, message }) });
+  const old = list.open();
+  requests[0].resolve([{ id: 'old' }]); await old;
+  assert.equal(views.at(-1).games[0].id, 'old');
+  const pending = list.refresh(); list.close(); const fresh = list.open();
+  assert.deepEqual(views.at(-1).games, [], 'reopening immediately clears stale rows');
+  requests[2].resolve([{ id: 'fresh' }]); await fresh;
+  requests[1].resolve([{ id: 'stale' }]); await pending;
+  assert.equal(views.at(-1).games[0].id, 'fresh', 'late response cannot replace the newer open');
+  const failed = list.refresh(); requests[3].reject(Error('offline')); await failed;
+  assert.deepEqual(views.at(-1).games, []); assert.match(views.at(-1).message, /Could not refresh/);
+  const closed = list.refresh(); list.close(); requests[4].reject(Error('offline')); await closed;
+  assert.equal(views.length, 5, 'late failures do not redraw a closed menu');
+  const connected = list.open(); available = false; requests[5].resolve([{ id: 'ignored' }]); await connected;
+  assert.deepEqual(views.at(-1).games, []);
+  list.close();
+}
+console.log('PASS distractodog: menu listing clear/reopen, refresh failure and asynchronous generation ordering');

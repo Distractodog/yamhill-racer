@@ -10,7 +10,13 @@ export class LobbyState {
     for (const [id, r] of this.requests) if (r.times.every(t => t + 60000 <= now) && r.until <= now) this.requests.delete(id);
   }
   list() { this.prune(); return [...this.entries.values()].map(({ seen, ...entry }) => entry).sort((a, b) => a.created - b.created); }
-  update(entry) { this.prune(); if (entry.players) this.entries.set(entry.id, { ...entry, seen: this.now() }); else this.entries.delete(entry.id); }
+  update(entry) {
+    this.prune();
+    // Room publications carry the host's timestamp, never the guest activity time.
+    const seen = entry.seen ?? this.now();
+    if (entry.players && seen + LOBBY_TTL > this.now()) this.entries.set(entry.id, { ...entry, seen });
+    else this.entries.delete(entry.id);
+  }
   claim(id, key) {
     this.prune(); const now = this.now(), r = this.requests.get(id) || { times: [], until: 0 };
     r.times = r.times.filter(t => t + 60000 > now);

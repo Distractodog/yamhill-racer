@@ -1,7 +1,7 @@
 import { lobbyObject } from './lobby.mjs';
 // Keep discovery/admission I/O separate from the relay's world/layout and analytics storage.
 export class RoomLobby {
-  constructor(owner) { this.owner = owner; }
+  constructor(owner) { this.owner = owner; this.publication = Promise.resolve(); }
   async call(path, body) {
     if (!this.owner.env?.LOBBY) return {};
     const response = await lobbyObject(this.owner.env).fetch(new Request(`https://lobby/${path}`, {
@@ -24,8 +24,11 @@ export class RoomLobby {
     } catch { room.removeRejected(ws, 'lobby-unavailable'); }
     finally { delete s.claiming; }
   }
-  async sync(before, heartbeat = false) {
+  async sync(before) {
     const { room, ctx } = this.owner;
+    // Arm liveness before discovery/admission I/O can delay or fail.
+    if (Number.isFinite(room.deadline)) await ctx.storage.setAlarm?.(room.deadline);
+    else await ctx.storage.deleteAlarm?.();
     // A decision mutates the guest attachment too, not only the host who sent it.
     for (const [ws, s] of before) {
       const current = room.session(ws);
@@ -35,16 +38,13 @@ export class RoomLobby {
       }
       this.owner.saveSession(ws);
     }
-    const oldHost = before.find(([, s]) => s.player?.host)?.[1];
-    const oldCount = before.filter(([, s]) => s.player).length;
-    if (heartbeat || oldCount !== room.players.length || (!!oldHost !== !!room.host)) {
-      // Failed discovery must not interrupt room traffic; the next heartbeat retries.
-      await this.call('update', room.info).catch(() => {});
-    }
-    const deadlines = [...room.clients.values()].map(s => s.expires).filter(Boolean);
-    if (deadlines.length) await ctx.storage.setAlarm?.(Math.min(...deadlines));
-    else await ctx.storage.deleteAlarm?.();
+    // Serialize discovery writes; choose the current generation only when the write starts.
+    // An older close/sync waiting on admission I/O must never publish an old host afterwards.
+    this.publication = this.publication.catch(() => {}).then(async () => {
+      await this.call('update', room.info);
+    });
+    // Failed discovery does not interrupt traffic; the next host heartbeat retries.
+    await this.publication.catch(() => {});
   }
   snapshot() { return [...this.owner.room.clients].map(([ws, s]) => [ws, structuredClone(s)]); }
-  async alarm() { const before = this.snapshot(); this.owner.room.expire(); await this.sync(before); }
 }

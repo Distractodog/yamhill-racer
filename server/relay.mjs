@@ -1,6 +1,7 @@
 import { LobbyState } from './lobby.mjs';
 import { validChunk, acceptChunk } from '../game/src/builder/wire.js';
 // Transport-independent protocol. Clients provide send(JSON text) and close(code, reason).
+export const HOST_GRACE = 30000;
 export const MAX_PLAYERS = 16;
 export const MAX_MESSAGE_BYTES = 16384;
 const CODE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{5}$/;
@@ -26,10 +27,16 @@ export class Room {
     this.layout = null; this.layoutPending = null;
   }
   get info() { return { id: this.code, players: this.players.length, max: MAX_PLAYERS,
-    name: this.host?.player.name, created: this.host?.created, anyone: !!this.host?.anyone }; }
+    name: this.host?.player.name, created: this.host?.created, seen: this.host?.heartbeat ?? this.host?.created, anyone: !!this.host?.anyone }; }
   get host() { return [...this.clients.values()].find(s => s.player?.host); }
   get players() { return [...this.clients.values()].filter(s => s.player).map(s => s.player); }
+  get deadline() {
+    const deadlines = [...this.clients.values()].map(s => s.expires).filter(Number.isFinite);
+    if (this.host) deadlines.push((this.host.heartbeat ?? this.host.created ?? 0) + HOST_GRACE);
+    return deadlines.length ? Math.min(...deadlines) : Infinity;
+  }
   connect(id, client) {
+    this.expire();
     if (!ID.test(id)) return this.reject(client, 'invalid-id');
     if ([...this.clients.values()].some(s => s.id === id)) return this.reject(client, 'duplicate-id');
     if (this.players.length >= MAX_PLAYERS || this.clients.size >= 64) return this.reject(client, 'full');
@@ -55,14 +62,17 @@ export class Room {
   }
   roster() { this.broadcast({ t: 'roster', players: this.players }); }
   receive(client, text) {
+    this.expire(); // A late heartbeat cannot revive an expired host.
     const session = this.clients.get(client);
-    if (!session || session.claiming) return;
+    if (!session) return;
     let msg;
     try {
       if (typeof text !== 'string' || new TextEncoder().encode(text).length > MAX_MESSAGE_BYTES) return;
       msg = JSON.parse(text);
     } catch { return; }
     if (!object(msg) || typeof msg.t !== 'string') return;
+    if (msg.t === 'leave') { this.leave(client); this.close(client, 'left'); return; }
+    if (session.claiming) return;
     if (!session.player) {
       if (session.pending) return; // One outstanding request, no game traffic before admission.
       if (!['hello', 'join-request'].includes(msg.t)) return this.removeRejected(client, 'hello-required');
@@ -76,7 +86,7 @@ export class Room {
         if (reason) return this.removeRejected(client, reason);
       }
       session.pending = { name: msg.name, skin: msg.skin };
-      if (msg.host) { session.created = this.now(); session.anyone = false; this.admit(client, true); }
+      if (msg.host) { session.created = this.now(); session.heartbeat = session.created; session.anyone = false; this.admit(client, true); }
       else if (this.host.anyone) this.admit(client);
       else {
         session.expires = this.now() + 30000;
@@ -155,6 +165,13 @@ export class Room {
     this.removeRejected(client, 'declined');
   }
   expire() {
+    const host = [...this.clients].find(([, s]) => s.player?.host);
+    // Missing timestamps on legacy attachments fail closed, rather than gaining a new lease on wake.
+    if (host && (!Number.isFinite(host[1].heartbeat ?? host[1].created) ||
+        (host[1].heartbeat ?? host[1].created) + HOST_GRACE <= this.now())) {
+      this.leave(host[0]);
+      this.reject(host[0], 'host-expired');
+    }
     for (const [client, s] of this.clients) if (s.expires && s.expires <= this.now()) this.decline(client);
   }
   removeRejected(client, reason) {

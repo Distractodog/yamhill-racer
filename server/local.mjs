@@ -18,12 +18,17 @@ server.on('upgrade', (req, socket, head) => {
     if (!room) rooms.set(address.code, room = new Room(address.code, { admission: lobby }));
     attachRoomClient(room, ws, lobby, () => {
       if (rooms.get(address.code) === room) rooms.delete(address.code);
-    });
+    }, () => rooms.get(address.code) === room);
     room.connect(address.id, ws);
   });
 });
 // Local equivalent of Durable Object alarms. No timers are created by protocol imports.
-const expiry = setInterval(() => { for (const room of rooms.values()) room.expire(); }, 500);
+const expiry = setInterval(() => {
+  for (const [code, room] of rooms) {
+    room.expire(); lobby.update(room.info);
+    if (!room.clients.size) rooms.delete(code);
+  }
+}, 500);
 server.on('close', () => clearInterval(expiry));
 const port = Number(process.argv[2] || 8787);     // node server/local.mjs [port]
 server.listen(port, '127.0.0.1', () => console.log(`MP relay: ws://127.0.0.1:${server.address().port}`));

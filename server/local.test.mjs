@@ -104,7 +104,6 @@ test('local message adapter registers hosts, refreshes TTL, excludes pending gue
   now += LOBBY_TTL - 1; send(host, { t: 'heartbeat' });
   now += LOBBY_TTL - 1;
   assert.equal(lobby.list().length, 1);
-  now += 1; assert.equal(lobby.list().length, 0);
   send(host, { t: 'heartbeat' }); assert.equal(lobby.list().length, 1);
   const guest = connect('000000000002');
   send(guest, hello(false, 'Local Guest'));
@@ -115,4 +114,30 @@ test('local message adapter registers hosts, refreshes TTL, excludes pending gue
   assert.equal(guest.messages.filter(m => m.t === 'roster').at(-1).players.length, 2);
   guest.emit('close'); assert.equal(lobby.list()[0].players, 1);
   host.emit('close'); assert.deepEqual(lobby.list(), []); assert.equal(empty, 1);
+});
+
+test('local delayed closes, guest traffic and live duplicates cannot revive or replace expired hosting', () => {
+  let now = 0, current;
+  const lobby = new LobbyState({ now: () => now });
+  const openRoom = () => new Room('ABCDE', { now: () => now, admission: lobby });
+  const open = (room, id, host) => {
+    const ws = new EventEmitter(); ws.send = () => {}; ws.close = () => {}; // Withhold every close callback.
+    attachRoomClient(room, ws, lobby, () => {}, () => current === room);
+    room.connect(id, ws);
+    ws.emit('message', Buffer.from(JSON.stringify({ t: host ? 'hello' : 'join-request', host, name: 'Local', code: 'ABCDE', skin: { vehicle: 'car' } })), false);
+    return ws;
+  };
+  const send = (ws, message) => ws.emit('message', Buffer.from(JSON.stringify(message)), false);
+  const room = current = openRoom(), host = open(room, '000000000001', true);
+  send(host, { t: 'join-policy', anyone: true });
+  const guest = open(room, '000000000002', false);
+  now = 29999; send(guest, { t: 'ping' }); assert.ok(room.host);
+  assert.equal(room.connect('000000000001', { send() {}, close() {} }), false, 'live duplicate rejection');
+  now = 30000; send(guest, { t: 'state' });
+  assert.equal(room.host, undefined); assert.deepEqual(lobby.list(), []);
+  send(host, { t: 'heartbeat' }); assert.deepEqual(lobby.list(), []);
+  const next = current = openRoom(), fresh = open(next, '000000000001', true);
+  host.emit('close'); guest.emit('error'); send(host, { t: 'leave' });
+  assert.equal(lobby.list().length, 1); assert.ok(next.host, 'old room callbacks do not delete fresh listing');
+  send(fresh, { t: 'leave' }); assert.deepEqual(lobby.list(), []); assert.equal(next.host, undefined);
 });
