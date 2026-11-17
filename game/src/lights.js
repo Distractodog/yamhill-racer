@@ -304,8 +304,7 @@ export function createVehicleLights(scene = null) {
       beam = !aircraft && on && mesh.visible && lenses.anchors.head?.length > 0;
       // `level` (0..1) eases; the intensity follows the current mesh's strength, so a switch fades without a pop
       const want = beam ? 1 : 0;
-      if (aircraft) level = 0;
-      else level += (want - level) * Math.min(1, dt * HEADLIGHT_FADE);
+      level += (want - level) * Math.min(1, dt * HEADLIGHT_FADE);
       if (Math.abs(want - level) < .003) level = want;
       spot.intensity = level * shape.intensity;
       mount.updateWorldMatrix(true, false);

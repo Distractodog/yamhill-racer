@@ -123,8 +123,9 @@ for (const [kind, id, mesh] of models) {
     const l = createVehicleLightLenses(mesh, kind); l.update({ on: true });
     assert.equal(l.group.getObjectByName('vehicle-light-left').material.emissive.getHexString(), 'ff1828', `${mesh.name}: port light is red`);
     l.dispose();
+    const previousIntensity = local.spot.intensity;
     local.update(.01, { mesh, kind }, 1); assert.equal(local.beam, false, `${mesh.name}: no aircraft beam`);
-    assert.equal(local.spot.intensity, 0, `${mesh.name}: shared spotlight immediately off`);
+    assert(local.spot.intensity >= 0 && local.spot.intensity < previousIntensity, `${mesh.name}: shared spotlight fades out`);
     assert.equal(lightCount(), 1);
   } else {
     assert(a.head.length >= 1 && a.tail.length >= 1, `${kind} ${mesh.name}: head + tail`);
