@@ -12,10 +12,11 @@ const option = (key, fallback) => process.argv.includes(key) ? process.argv[proc
 const url = option('--url', GAME_URL), out = option('--out', '/tmp/yr-car-dents');
 const report = { author: 'distractodog', url, errors: [], warnings: [], shots: [], impacts: [], performance: [], visualReview: 'NOT REVIEWED: Ethan judges appearance' };
 await mkdir(out, { recursive: true });
-const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
+let browser;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 try {
+  browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'] });
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 800 });
   watchErrors(page, 'car-dents', report.errors);
   page.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) report.errors.push(`HTTP ${r.status()} ${r.url()}`); });
@@ -146,8 +147,11 @@ try {
     await pose(); await shots(type, 'reset');
   }
   assert.deepEqual(report.errors, [], report.errors.join('\n'));
+} catch (error) {
+  report.errors.push(`distractodog: ${error.stack || error.message}`);
+  throw error;
 } finally {
   await writeFile(join(out, 'report.json'), JSON.stringify(report, null, 2));
-  await browser.close();
+  await browser?.close();
 }
 console.log(`distractodog: saved ${report.shots.length} PNGs and actual-impact/performance evidence to ${out}. Review all PNGs; appearance is not automatically approved.`);
