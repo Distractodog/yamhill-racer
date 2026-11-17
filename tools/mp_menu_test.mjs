@@ -27,11 +27,23 @@ try {
   await openMenu(host); await host.click('#mp-button'); await host.click('#mp-host');
   await host.waitForFunction(() => game.multiplayer.mp.inGame);
   assert.equal(await host.$eval('#menu-button', el => el.textContent), 'Menu · MP');
-  const code = await host.evaluate(() => game.multiplayer.mp.me.code);
-  await openMenu(guest); await guest.click('#mp-button'); await guest.type('#mp-join-code', code);
-  // Typing letter keys in a dialog must never reach the game input set.
-  assert.equal(await guest.evaluate(() => game.keys.size), 0);
-  await guest.click('#mp-join');
+  const room = await host.evaluate(() => game.multiplayer.mp.roomCode);
+  await openMenu(guest); await guest.click('#mp-button');
+  await guest.waitForSelector(`#mp-games button[data-game="${room}"]`);
+  assert.equal(await guest.$('#mp-join-code'), null, 'no codes in the menu');
+  await guest.click('#mp-name', { clickCount: 3 }); await guest.type('#mp-name', 'Guest');
+  assert.equal(await guest.evaluate(() => game.keys.size), 0, 'typing in the menu does not drive');
+  const ask = async (action = 'accept') => {
+    await guest.waitForSelector(`#mp-games button[data-game="${room}"]:not([disabled])`);
+    await guest.click(`#mp-games button[data-game="${room}"]`);
+    await host.waitForSelector('#mp-requests:not([hidden]) button[data-action="accept"]');
+    assert.equal(await guest.evaluate(() => game.multiplayer.mp.inGame), false);
+    if (out) { await host.screenshot({ path: out + '/mp-join-request.png' }); await guest.screenshot({ path: out + '/mp-open-games.png' }); }
+    await host.click(`#mp-requests button[data-action="${action}"]`);
+  };
+  await ask('decline');
+  await guest.waitForFunction(() => document.querySelector('#mp-status').textContent === 'Host declined');
+  await ask();
   await guest.waitForFunction(() => game.multiplayer.mp.inGame && game.tuning.accel === 51);
   assert.deepEqual(await current(guest), await current(host)); assert.deepEqual(await saved(guest), guestSaved);
   // the guest sees the host's current world setting checked, and can't change it
@@ -61,12 +73,21 @@ try {
   await host.click('#mp-players button');
   await guest.waitForFunction(() => !game.multiplayer.mp.inGame);
   assert.deepEqual(await current(guest), own); assert.deepEqual(await saved(guest), guestSaved);
-  await guest.click('#mp-join'); await guest.waitForFunction(() => game.multiplayer.mp.inGame);
+  await ask(); await guest.waitForFunction(() => game.multiplayer.mp.inGame);
   await guest.click('#mp-leave'); await guest.waitForFunction(() => !game.multiplayer.mp.inGame);
   assert.deepEqual(await current(guest), own);
-  await guest.click('#mp-join'); await guest.waitForFunction(() => game.multiplayer.mp.inGame);
+  await host.click('#mp-anyone');
+  await host.waitForFunction(() => document.getElementById('mp-anyone').checked);
+  await guest.waitForSelector(`#mp-games button[data-game="${room}"]:not([disabled])`);
+  await guest.click(`#mp-games button[data-game="${room}"]`);
+  await guest.waitForFunction(() => game.multiplayer.mp.inGame);
+  assert.equal(await host.$eval('#mp-requests', el => el.hidden), true);
   await host.click('#mp-leave'); await guest.waitForFunction(() => !game.multiplayer.mp.inGame);
   assert.deepEqual(await current(guest), own); assert.deepEqual(await saved(guest), guestSaved);
+  await guest.waitForFunction(() => !document.querySelector('#mp-games button'));
+  await guest.setViewport({ width: 390, height: 844 });
+  if (out) await guest.screenshot({ path: out + '/mp-empty-mobile.png' });
+  assert.equal(await guest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
   console.log('PASS: join, input filtering, host/own/host restores, tuning + atmosphere updates, remove, guest leave, host leave, saved values unchanged, no page errors');
 } finally { await browser.close(); }

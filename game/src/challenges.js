@@ -1,3 +1,4 @@
+import { recordPlayEvent } from './visits.js';
 // Timed challenges: point-to-point runs through checkpoint arches (routes planned by tools/challenge_routes.py).
 // J opens the race menu (racemenu.js), as does driving slowly into a race's start ring in free roam (racemarkers.js);
 // starting one puts the car on the start line, counts 3-2-1-GO, then times you through every checkpoint in order to
@@ -424,6 +425,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     ghost.finish(t, car, isBest);
     if (isBest) { best[ch.id] = { time: t, splits: splits.slice(), date: new Date().toLocaleDateString('en-CA') }; saveBest(); }
     const won = medals.record(ch, t);
+    recordPlayEvent('race-finish', won.medal);
     result = { time: t, prev: prev?.time, isBest, medal: won.medal };
     const unlocked = rewards.complete(ch, t);
     blip(880, 0.12); setTimeout(() => blip(1320, 0.3), 130);
@@ -576,7 +578,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       }
       if (state === 'countdown') {
         const before = Math.ceil(cd); if (sync) cd = (sync.at - sync.now()) / 1000; else cd -= dt; const now = Math.ceil(cd);
-        if (cd <= 0) { state = 'running'; t = sync ? -cd : 0; ghost.start(ch, car); count.textContent = 'GO!'; blip(880, 0.35); setTimeout(() => { if (count.textContent === 'GO!') count.style.display = 'none'; }, 700); }
+        if (cd <= 0) { state = 'running'; recordPlayEvent('race-start'); t = sync ? -cd : 0; ghost.start(ch, car); count.textContent = 'GO!'; blip(880, 0.35); setTimeout(() => { if (count.textContent === 'GO!') count.style.display = 'none'; }, 700); }
         else if (now !== before) { count.textContent = String(now); blip(440, 0.15); }
       } else if (state === 'running') {
         if (sync) t = Math.max(0, (sync.now() - sync.at) / 1000); else t += dt;

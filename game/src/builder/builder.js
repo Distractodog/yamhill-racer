@@ -1,3 +1,4 @@
+import { recordPlayEvent } from '../visits.js';
 import * as THREE from 'three';
 import { PIECES, BY_ID, CATEGORIES, snapPlacement } from './pieces.js';
 import { createLayouts, createHistory, emptyLayout, encodeLayout, decodeLayout, MAX_PIECES } from './layouts.js';
@@ -60,7 +61,7 @@ export function createBuilder({scene,camera,renderer,world,vehicle,mp,canOpen=()
   function remove(){if(!selected)return;mutate(list=>{const i=list.findIndex(p=>p.id===selected);if(i>=0)list.splice(i,1);});selectMode();}
   function undo(redo=false){if(readOnly())return;selectMode();if(redo?history.redo():history.undo())apply();}
   function setEnabled(value){if(readOnly())return false;if(!value && opened)close(false);enabled=!!value;apply();return true;}
-  function open(){if(!enabled || readOnly() || !canOpen())return false;beforeOpen();clearKeys();held.clear();opened=true;panel.hidden=false;el('drive').focus({preventScroll:true});camera.position.copy(vehicle.pos).add(new THREE.Vector3(0,22,25));lookYaw=0;lookPitch=-.55;orient();choose('ramp-medium');notify();return true;}
+  function open(){if(!enabled || readOnly() || !canOpen())return false;beforeOpen();clearKeys();held.clear();opened=true;recordPlayEvent('builder');panel.hidden=false;el('drive').focus({preventScroll:true});camera.position.copy(vehicle.pos).add(new THREE.Vector3(0,22,25));lookYaw=0;lookPitch=-.55;orient();choose('ramp-medium');notify();return true;}
   function close(drive=true){
     if(!opened)return true;
     if(drive){const hit=pick(new THREE.Vector2(0,0));if(!hit || !world.loadedAt(hit.x,hit.z)){status('Look at loaded ground or a piece before driving.');return false;}onDrive(hit,Math.atan2(direction.x,direction.z));}

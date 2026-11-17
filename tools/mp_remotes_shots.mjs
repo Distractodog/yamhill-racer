@@ -53,7 +53,7 @@ const remotesOf = page => page.evaluate(() => game.remotes.list());
 const shot = async (page, name, clip) => { const file = path.join(OUT, name + '.png'); await page.screenshot({ path: file, clip }); console.log('  shot', file); };
 
 const A = await open('A'), B = await open('B');
-const code = await A.evaluate(async () => { const { mp } = await import('./src/mp/net.js'); mp.setName('Hana Host'); await mp.host(); return mp.me.code; });
+const code = await A.evaluate(async () => { const { mp } = await import('./src/mp/net.js'); mp.setName('Hana Host'); await mp.host(); mp.send({ t: 'join-policy', anyone: true }); return mp.me.code; });
 console.log('A hosts with code', code);
 await B.evaluate(async code => { const { mp } = await import('./src/mp/net.js'); mp.setName('Gus Guest'); await mp.join(code); }, code);
 await wait(800);

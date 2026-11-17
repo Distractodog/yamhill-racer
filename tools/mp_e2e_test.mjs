@@ -4,6 +4,7 @@
 // finish → results, accept-then-withdraw, host leaves → closed.   Run: node tools/mp_e2e_test.mjs
 import assert from 'node:assert/strict';
 import { Room, roomAddress } from '../server/relay.mjs';
+import { LobbyState } from '../server/lobby.mjs';
 import { Net } from '../game/src/mp/net.js';
 import { createWorldSettings } from '../game/src/mp/menu.js';
 import { createRaceCore, START_DELAY } from '../game/src/mp/racecore.js';
@@ -33,13 +34,14 @@ function post(fn) {
   queue.push(fn); if (pumping) return;
   pumping = true; try { while (queue.length) queue.shift()(); } finally { pumping = false; }
 }
+const lobby = new LobbyState({ now: () => time.t });
 const rooms = new Map(), wire = [];          // wire: every client → relay frame, for contract checks
 class FakeSocket {                          // the browser WebSocket as net.js uses it
   readyState = 0; bufferedAmount = 0;
   constructor(url) {
     const address = roomAddress(url); assert.ok(address, `relay URL follows the contract: ${url}`);
     let room = rooms.get(address.code);
-    if (!room) rooms.set(address.code, room = new Room(address.code, { now: () => time.t }));
+    if (!room) rooms.set(address.code, room = new Room(address.code, { now: () => time.t, admission: lobby }));
     const socket = this;
     this.room = room; this.id = address.id;
     this.server = {                         // the relay's side of the same socket (what local.mjs hands to Room)
@@ -54,9 +56,9 @@ class FakeSocket {                          // the browser WebSocket as net.js u
   send(text) {
     assert.equal(this.readyState, 1, 'net.js only sends on an open socket');
     wire.push({ from: this.id, ...JSON.parse(text) });
-    post(() => this.room.receive(this.server, text));
+    post(() => { this.room.receive(this.server, text); lobby.update(this.room.info); });
   }
-  close() { if (this.readyState === 3) return; this.readyState = 3; post(() => this.room.leave(this.server)); }
+  close() { if (this.readyState === 3) return; this.readyState = 3; post(() => { this.room.leave(this.server); lobby.update(this.room.info); }); }
   closed() {                                // relay closed it
     if (this.readyState === 3) return;
     this.readyState = 3; this.room.leave(this.server); this.onclose?.();
@@ -67,14 +69,14 @@ class FakeSocket {                          // the browser WebSocket as net.js u
 const RACE = { id: 'r1', name: 'Campus Sprint' };
 function player(name, skew) {
   const store = new Map(), storage = { getItem: k => store.get(k), setItem: (k, v) => store.set(k, v) };
-  const mp = new Net({ WebSocketImpl: FakeSocket, storage, timers, clock: () => time.t + skew });
+  const mp = new Net({ WebSocketImpl: FakeSocket, storage, timers, clock: () => time.t + skew, fetchImpl: async () => Response.json({ games: lobby.list() }) });
   mp.setName(name);
   const car = { pos: { x: 10, y: 2, z: 20 }, quat: { x: 0, y: 0, z: 0, w: 1 }, vel: { x: 1, y: 0, z: 0 }, glide: { active: false } };
   const colors = { body: '#123456' };
   mp.setVehicleSource(() => ({ vehicle: car, kind: 'car', colors, glider: {} }));
   const got = [];
   for (const t of ['roster', 'joined', 'left', 'state', 'skin', 'world', 'kicked', 'closed', 'connected', 'disconnected',
-    'invite', 'invite-reply', 'race-start', 'race-progress', 'race-finish', 'race-cancel']) mp.on(t, m => got.push({ t, ...m }));
+    'join-request', 'join-pending', 'join-declined', 'invite', 'invite-reply', 'race-start', 'race-progress', 'race-finish', 'race-cancel']) mp.on(t, m => got.push({ t, ...m }));
   const tuning = { car: { accel: 20 }, bike: { accel: 10 }, jet: { thrust: 5 } };
   const atmosphere = { preset: 'day', setPreset(p) { this.preset = p; } };
   let locked = false;
@@ -104,8 +106,16 @@ assert.equal(B.last('closed').reason, 'no-host');
 A.tuning.car.accel = 31; A.atmosphere.preset = 'sunset';
 await settle(A.mp.host());
 assert.ok(A.mp.inGame && A.mp.isHost); assert.equal(A.mp.roomCode, A.mp.me.code);
-await settle(B.mp.join(A.mp.me.code.toLowerCase()));
-await settle(C.mp.join(A.mp.me.code));
+const listed = await B.mp.listGames();
+assert.deepEqual(listed, [{ id: A.mp.me.code, name: 'Alice', players: 1, max: 16, created: time.t, anyone: false }]);
+async function requestAndAccept(guest) {
+  const joining = guest.mp.requestJoin(listed[0].id); advance(0);
+  assert.equal(guest.mp.inGame, false, 'request does not grant room membership');
+  assert.equal(A.last('join-request').id, guest.mp.me.id);
+  A.mp.send({ t: 'join-accept', id: guest.mp.me.id }); await joining;
+}
+await requestAndAccept(B);
+await requestAndAccept(C);
 for (const p of [A, B, C]) {
   assert.deepEqual([...p.mp.players.keys()].sort(), [A, B, C].map(q => q.mp.me.id).sort(), `${p.name} roster`);
   assert.equal(p.mp.players.get(A.mp.me.id).host, true); assert.equal(p.mp.players.get(B.mp.me.id).host, false);
@@ -159,7 +169,7 @@ assert.ok(A.of('left').some(m => m.id === C.mp.me.id) && B.of('left').some(m => 
 for (const p of [A, B]) assert.equal(p.mp.players.has(C.mp.me.id), false);
 B.mp.send({ t: 'kick', id: A.mp.me.id });              // only the host can kick
 assert.ok(A.mp.inGame);
-await settle(C.mp.join(A.mp.me.code));
+await requestAndAccept(C);
 assert.equal(A.mp.players.size, 3); assert.equal(C.tuning.car.accel, 31, 'rejoiner gets the world again');
 
 // ---------------------------------------------------------------- race: invite → B accepts, C declines → start
@@ -222,6 +232,7 @@ for (const p of [B, C]) {
   assert.equal(p.core.active, null);
 }
 assert.equal(rooms.get(A.mp.me.code).clients.size, 0);
+assert.deepEqual(await B.mp.listGames(), [], 'host departure removes public listing');
 for (const p of [A, B, C]) p.world.dispose();
 assert.equal(time.jobs.size, 0, 'no timers left running');
 for (const m of wire.filter(m => m.t === 'state')) assert.ok(m.p.length === 3 && m.q.length === 4 && m.vel.length === 3 && typeof m.glide === 'boolean' && m.v === 'car');

@@ -16,7 +16,7 @@ node server/local.mjs          # or: node server/local.mjs <port>
 Connect to `ws://127.0.0.1:8787/room/ABCDE?id=<12-character-player-id>` (the port argument changes 8787).
 Browser scripts read the relay from `YR_MP_RELAY` and the game from `YR_URL`.
 The first client must send the contract's `hello` with `host:true` and `code:ABCDE`.
-Guests send `host:false`. The server listens on loopback only. `ws` is now a direct
+Guests send `join-request` with `host:false`, then wait for host approval. The server listens on loopback only. `ws` is now a direct
 devDependency (it was previously only a transitive dependency).
 
 The client defaults to this relay. An HTTPS game page needs a secure `wss://`
@@ -33,9 +33,9 @@ npx wrangler deploy --config server/wrangler.toml
 ```
 
 Wrangler creates the `ROOMS` Durable Object binding and the SQLite-backed
-`RelayRoom` namespace using migration `v1`. Keep that migration for subsequent
+`RelayRoom` namespace using migration `v1`. Migration `v3` adds the `LOBBY` binding and shared SQLite-backed `Lobby` namespace. Keep that migration for subsequent
 deploys. Migration `v2` adds the separate SQLite-backed `Stats` namespace and
-`STATS` binding; keep both migrations. Set the private stats key before deploying:
+`STATS` binding; keep all three migrations. Set the private stats key before deploying:
 
 ```sh
 npx wrangler secret put STATS_KEY --config server/wrangler.toml
@@ -77,9 +77,25 @@ See [Cloudflare's hibernation API guide](https://developers.cloudflare.com/durab
 
 ## Behavior and limits
 
-- Up to 16 connections, including the host and pending hello handshakes.
-- Every client sends `hello` first. A guest without a host receives
-  `{t:'closed',reason:'no-host'}`. Join acceptance is the first roster.
+- Up to 16 admitted players including the host; at most 64 total sockets per room.
+- Hosts send `hello`; guests send `join-request`. A guest without a host receives
+  `{t:'closed',reason:'no-host'}`. Pending guests receive no game traffic. The host
+  receives `{t:'join-request',id,name,expires}` and sends `join-accept` or
+  `join-decline` with that `id`. Approval sends the same roster/world/layout as an
+  ordinary join. Requests auto-decline after 30 seconds through a DO alarm.
+- `GET /lobby` returns `{games:[{id,name,players,max,created,anyone}]}` with CORS and
+  no-cache headers. The menu polls every 5 seconds while open. Hosts register through
+  their room and send `heartbeat` every 10 seconds; listings expire after 30 seconds
+  without an update and are removed when the host leaves. Internal room IDs are never
+  shown in the UI. `room.info` exposes `id` and admitted `players` for analytics.
+- Only the host may send `join-policy` with boolean `anyone` (default false). Open
+  joining still observes capacity and rate limits. The shared Lobby permits one
+  pending request per player ID across all rooms, and 5 attempts per rolling minute;
+  disconnect/decline/accept releases the pending lease, not the rate history.
+  These limits use the browser's persistent random player ID, not authenticated accounts.
+- Pending requests and host policy survive hibernation in socket attachments; the
+  global list and admission budgets survive in Lobby storage. The local relay uses
+  the same rules with an in-memory lobby and expiry timer.
 - Joins notify existing members with `joined`; roster updates go to everyone on
   join, leave, and skin changes. A late joiner's stored `world` follows its roster.
 - `state` and `skin` go to peers; race messages and host `world` go to everyone,
@@ -94,14 +110,15 @@ See [Cloudflare's hibernation API guide](https://developers.cloudflare.com/durab
 - JSON frames are capped at 16 KiB, names at 128 characters, and skin JSON at 1 KiB
   UTF-8 to fit Cloudflare's 2 KiB session attachment limit. Malformed/unknown frames
   are ignored. Names are passed through without a name filter.
-- Codes are discovery identifiers, not authentication. The first valid host hello
+- Internal room IDs are routing identifiers, not authentication. The first valid host hello
   claims an empty room. There are no accounts, passwords, origin restrictions,
   chat, persistent kick bans, or server-side race adjudication.
 
 ## Checks
 
 ```sh
-node --test server/relay.test.mjs
+node --test server/relay.test.mjs server/lobby.test.mjs
+node tools/mp_e2e_test.mjs
 node --check server/relay.mjs
 node --check server/local.mjs
 node --check server/worker.js
@@ -118,40 +135,74 @@ with the secret entered privately. Missing, wrong, or unconfigured keys return 4
 The HTML has no external resources, is not cached, and suppresses referrers. Keep
 this URL private (it contains the key, including in your browser history).
 
-The page shows 30 UTC days, totals for that window, and country counts by visits.
-The unique total is **visitor-days**, not a distinct count across the whole month.
-An MP game means an accepted host hello opening a room, including a room with no
-guests; reconnecting as a new host counts again. Repeated hello, guest joins and
-hibernation restoration do not increment it. Stats failures never reject MP messages.
-The local Node relay intentionally remains a multiplayer-only stand-in.
+The page has Today / 7 days / 30 days summaries, a 30-day visits/play-time SVG
+chart and daily counters, newest-first sessions, and multiplayer game details.
+All displayed dates and times use **America/Los_Angeles (Pacific, including DST)**.
+Summary visitors are distinct browser hashes across the window; sessions and
+visitors use the session's start date. Play minutes are credited on the day played,
+including sessions crossing midnight. Average session length is elapsed time;
+active minutes count time with the tab visible (including menus and loading).
+Peak concurrency counts distinct browser visitors' overlapping visible intervals,
+not duplicate tabs. Missing end reports use the last heartbeat, without adding a
+grace period. These measurements are estimates, not abuse-proof traffic auditing.
 
-The game sends one nonblocking POST `/hit` per page load with its own random
-`yr-visitor-1` localStorage ID and pathname. It skips localhost, 127.0.0.1, IPv6
-loopback, and any URL containing `?nostats` (also works alongside other parameters).
-It uses a text/plain sendBeacon, falling back to credential-free keepalive fetch
-if unavailable/refused. Storage and network failures are ignored. Existing Cloudflare
-Web Analytics stays enabled.
+On page load the game sends `start` to POST `/hit`, followed by a heartbeat every
+60 seconds while visible, and `end` on visibility hidden or pagehide. Returning to
+the tab resumes the same session; a new page load creates a new random session ID.
+The client uses text/plain sendBeacon with credential-free keepalive fetch fallback.
+It skips localhost, 127.0.0.1, IPv6 loopback and `?nostats` (also with other query
+parameters). Analytics errors never prevent startup or multiplayer. Only the
+GitHub Pages origin `https://distractodog.github.io` is accepted for client reports.
+The local Node relay remains multiplayer-only. Existing Cloudflare Web Analytics
+is separate and remains enabled.
 
-Only the GitHub Pages origin `https://distractodog.github.io` is accepted for hits.
-There are no cookies and no IP addresses stored by this implementation. The path
-is validated then discarded. Visitor IDs are SHA-256 hashed with the UTC date
-before storage; only daily hashes and hit counts persist. Cloudflare country codes
-are aggregated; unavailable country is `XX`. At most 30 hits per visitor/day count.
-To bound storage, each day accepts at most 10,000 distinct visitor hashes; further
-new visitors that day are dropped, while already tracked visitors retain their
-30-hit allowance. A daily Durable Object alarm deletes counters and hashes older
-than the 35-day window even if no hits arrive. These are anonymous approximate
-analytics, not abuse-proof traffic auditing: clearing storage creates a new ID.
+Collected session data is deliberately limited:
 
-Deploy the relay with migration `v2` before publishing the updated game. Then load
-the published game once, check the private table increments, reload and check the
-unique count stays fixed, and open a host room to check MP games increments. Test
-with uBlock enabled. Workers Free request/storage quotas still apply; this uses
-one shared Stats object and does no per-frame work. No live deploy was performed
-by the worker implementing this feature.
+- Random browser visitor ID (`yr-visitor-1`) and a per-load session ID, both hashed
+  before storage. Visitor hashes are keyed with STATS_KEY so distinct visitors can
+  be counted across the retained window; rotating the secret changes these hashes.
+  No raw visitor/session IDs or multiplayer player IDs are stored in Stats.
+- Server-received start, last heartbeat and end timestamps, elapsed duration,
+  visible active milliseconds, and up to 256 visible intervals for concurrency.
+- Country code from `request.cf.country` (`XX` when unavailable), browser time-zone
+  offset in minutes west of UTC, coarse screen width class (small <768, medium
+  <1440, large), and browser family (Chrome/Edge/Firefox/Safari/Other). Exact screen
+  dimensions and full user agents are discarded. There are no IP addresses,
+  cookies, paths, driving coordinates, chat messages, or precise locations stored.
+- Vehicle families and types, cumulative races started/finished and gold/silver/
+  bronze medals, builder usage, current graphics mode, multiplayer game IDs/codes,
+  chosen/display nickname and maximum game population observed while present.
+  Sampling and hooks collect vehicle/builder changes without per-frame traffic.
+- Relay-sourced multiplayer games: unique random ID for each host lifetime (even
+  when a room code is reused), host nickname, start/end/last report, peak players,
+  and up to 64 player nicknames. Membership changes report immediately; ongoing
+  room traffic refreshes at most once a minute. Missing room end uses last report.
+  A game is counted once on first reaching two accepted players. Repeated hellos,
+  guest churn and relay hibernation do not create extra games. Nicknames are HTML
+  escaped on the private page. There are no accounts or additional personal data.
+
+A daily Durable Object alarm purges data outside the **60-day** retention window,
+including when nobody plays. Detail storage is capped at **2,000 sessions and
+2,000 multiplayer games** globally, evicting oldest starts first; the page displays
+up to 500 newest records per table. Caps can shorten the available history. Each
+session retains at most 40 vehicle types and 32 multiplayer games. Daily visitor
+storage accepts at most 10,000 distinct hashes and 30 starts/hits per visitor/day.
+Daily counters are independent of detail caps; summary/detail-derived totals can
+therefore differ from daily counters after eviction. Legacy page-load counters
+remain visible, but pre-upgrade session details cannot be reconstructed; old UTC
+counter keys are not migrated. Cumulative report sequence numbers prevent duplicate
+or out-of-order beacons from overwriting newer session data. Request bodies are
+stream-bounded at 8 KiB and only whitelisted fields reach storage.
+
+Deploy the relay before publishing the game. No additional Durable Object binding
+or migration is required for session stats; the combined lobby requires `v3`. The director should verify a published start,
+a 60-second heartbeat, tab hide/show, a completed race and a two-browser game on
+the private page. Also check with uBlock enabled. This worker did not deploy.
 
 ```sh
-node --test server/relay.test.mjs server/stats.test.mjs
+node --test server/relay.test.mjs server/stats.test.mjs tools/visits_test.mjs
 node --check game/src/visits.js
 node --check server/stats.mjs
+# Standalone populated dashboard screenshots, desktop and mobile (director):
+node tools/stats_shots.mjs --out /tmp/yr-stats-shots
 ```

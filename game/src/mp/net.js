@@ -67,8 +67,8 @@ export function animTuning(v) {
 
 export class Net {
   constructor({ WebSocketImpl = globalThis.WebSocket, storage = storageDefault(), relay,
-    clock = () => Date.now(), timers = globalThis } = {}) {
-    this._WebSocket = WebSocketImpl; this._storage = storage; this._relay = relay;
+    clock = () => Date.now(), timers = globalThis, fetchImpl = globalThis.fetch } = {}) {
+    this._fetch = fetchImpl; this._WebSocket = WebSocketImpl; this._storage = storage; this._relay = relay;
     this._clock = clock; this._timers = timers; this._events = new Map();
     const read = (key, valid, fallback) => {
       let value; try { value = storage?.getItem(key); } catch {}
@@ -83,7 +83,7 @@ export class Net {
     };
     this.inGame = false; this.isHost = false; this.roomCode = null; this.players = new Map();
     this._offset = 0; this._pings = new Map(); this._socket = null; this._pending = null;
-    this._stateTimer = null; this._pingTimer = null; this._timeout = null; this._retryTimer = null;
+    this._heartbeatTimer = null; this._stateTimer = null; this._pingTimer = null; this._timeout = null; this._retryTimer = null;
     this._source = () => null; this._skinSignature = ''; this._retried = false;
   }
 
@@ -107,6 +107,20 @@ export class Net {
     }
   }
   now() { return this._clock() + this._offset; }
+  async listGames() {
+    const relay = (this._relay ?? defaultRelay()).replace(/^ws/, 'http').replace(/\/$/, '');
+    const controller = new AbortController();
+    const timeout = this._timers.setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await this._fetch(`${relay}/lobby`, { cache: 'no-store', signal: controller.signal });
+      if (!response.ok) throw error('lobby-unavailable');
+      const data = await response.json();
+      if (!Array.isArray(data.games)) throw error('lobby-unavailable');
+      return data.games;
+    } finally { this._timers.clearTimeout(timeout); }
+  }
+
+  requestJoin(id) { return this.join(id); }
   host() { return this._start(this.me.code, true); }
   join(code) {
     code = String(code ?? '').trim().toUpperCase();
@@ -130,12 +144,12 @@ export class Net {
     this._socket = socket;
     this._timeout = this._timers.setTimeout(() => {
       if (this._socket === socket) this._end('timeout');
-    }, 10000);
+    }, this.isHost ? 10000 : 40000);
     socket.onopen = () => {
       if (socket !== this._socket) return;
       const skin = this._skin();
       this._skinSignature = JSON.stringify(skin);
-      this._write({ t: 'hello', name: this.me.name, code: this.me.code, host: this.isHost, skin });
+      this._write({ t: this.isHost ? 'hello' : 'join-request', name: this.me.name, code: this.me.code, host: this.isHost, skin });
     };
     socket.onmessage = event => {
       if (socket !== this._socket) return;
@@ -150,6 +164,10 @@ export class Net {
     socket.onclose = () => { if (socket === this._socket) this._drop('connection-lost'); };
   }
   _receive(msg) {
+    if (msg.t === 'stats-game') this.statsGameId = msg.id;
+    if (msg.t === 'join-declined') {
+      this._emit(msg.t, msg); this._end('declined'); return;
+    }
     if (msg.t === 'closed' || msg.t === 'kicked') {
       this._emit(msg.t, msg);
       this._end(msg.reason || msg.t);
@@ -165,6 +183,7 @@ export class Net {
         this._stateTimer = this._timers.setInterval(() => this._tick(), 1000 / 15);
         this._pingTimer = this._timers.setInterval(() => this._ping(), 5000);
         this._ping();
+        if (this.isHost) this._heartbeatTimer = this._timers.setInterval(() => this.send({ t: 'heartbeat' }), 10000);
         this._emit('connected', { roomCode: this.roomCode, isHost: this.isHost });
       }
     } else if (msg.t === 'joined' && msg.player) this.players.set(msg.player.id, msg.player);
@@ -208,6 +227,7 @@ export class Net {
   }
   send(msg) { return this.inGame && this._write(msg); }
   _clearConnection() {
+    this._timers.clearInterval(this._heartbeatTimer); this._heartbeatTimer = null;
     this._timers.clearInterval(this._stateTimer); this._timers.clearInterval(this._pingTimer);
     this._timers.clearTimeout(this._timeout);
     this._stateTimer = this._pingTimer = this._timeout = null;
@@ -218,6 +238,7 @@ export class Net {
   _drop(reason) {
     const retry = this.inGame && !this._retried;
     if (!retry) { this._end(reason); return; }
+    this.statsGameId = null;
     this._clearConnection(); this.inGame = false; this.players.clear(); this._retried = true;
     this._retryTimer = this._timers.setTimeout(() => { this._retryTimer = null; this._connect(); }, 500);
     this._emit('disconnected', { reason, retrying: true });
@@ -225,6 +246,7 @@ export class Net {
   _end(reason) {
     const active = !!this.roomCode;
     this._timers.clearTimeout(this._retryTimer); this._retryTimer = null;
+    this.statsGameId = null;
     this._clearConnection(); this.inGame = false; this.isHost = false; this.roomCode = null; this.players.clear();
     this._pending?.reject(error(reason)); this._pending = null;
     if (active) this._emit('disconnected', { reason, retrying: false });

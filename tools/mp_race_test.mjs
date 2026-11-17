@@ -35,7 +35,7 @@ async function open(name) {
 try {
   await sleep(1500);
   const host = await open('Hosty'), guest = await open('Guesty');
-  const code = await host.evaluate(async () => { const { mp } = await import('./src/mp/net.js'); await mp.host(); return mp.roomCode; });
+  const code = await host.evaluate(async () => { const { mp } = await import('./src/mp/net.js'); await mp.host(); mp.send({ t: 'join-policy', anyone: true }); return mp.roomCode; });
   await guest.evaluate(async c => { const { mp } = await import('./src/mp/net.js'); await mp.join(c); }, code);
   await sleep(1000);
   check('both in game', await host.evaluate(async () => (await import('./src/mp/net.js')).mp.players.size === 2));

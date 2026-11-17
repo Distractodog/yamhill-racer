@@ -3,8 +3,7 @@
 #mp-panel h2 { margin: 0; font-size: 20px; }
 #mp-close { background: transparent; color: white; border: 0; font-size: 26px; cursor: pointer; }
 #mp-panel label { display: block; margin: 12px 0; line-height: 1.6; }
-#mp-panel input:not([type=radio]) { box-sizing: border-box; display: block; width: 100%; padding: 9px; background: #ffffff12; color: white; border: 1px solid #ffffff60; border-radius: 6px; font: inherit; }
-#mp-join-code { text-transform: uppercase; letter-spacing: .18em; }
+#mp-panel input:not([type=radio]):not([type=checkbox]) { box-sizing: border-box; display: block; width: 100%; padding: 9px; background: #ffffff12; color: white; border: 1px solid #ffffff60; border-radius: 6px; font: inherit; }
 #mp-panel fieldset { border: 1px solid #ffffff40; border-radius: 8px; margin: 16px 0 8px; }
 #mp-panel input[type=radio] { accent-color: #ffd23f; }
 #mp-world[inert] { color: #d1d8d2; }
@@ -15,3 +14,15 @@
 #mp-toasts:empty { display: none; }
 #tuning-controls[inert], #atmosphere-controls[inert] { opacity: .6; }
 @media(max-width: 600px) { #mp-panel { top: 20px; left: 12px; max-height: calc(100dvh - 80px); } }
+
+#mp-games { list-style: none; padding: 0; }
+#mp-games li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #ffffff20; }
+#mp-games span, #mp-requests p { overflow-wrap: anywhere; }
+#mp-games button { flex-shrink: 0; }
+#mp-panel input[type=checkbox] { accent-color: #ffd23f; }
+#mp-requests { position: fixed; z-index: 45; top: 240px; right: 14px; width: min(320px, calc(100vw - 56px)); max-height: 50dvh; overflow: auto; padding: 16px; border: 1px solid #ffffff40; border-radius: 14px; background: #14241af5; color: white; box-shadow: 0 12px 40px #0008; font: 16px system-ui, sans-serif; }
+#mp-requests[hidden] { display: none; }
+#mp-requests p { margin: 0 0 12px; }
+#mp-requests > div + div { border-top: 1px solid #ffffff30; margin-top: 12px; padding-top: 12px; }
+#mp-requests button { margin-right: 8px; }
+@media(max-width: 600px) { #mp-requests { top: 170px; } }

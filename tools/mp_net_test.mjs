@@ -34,7 +34,7 @@ function fixture({ silent = false } = {}) {
       if (silent) return;
       const code = this.url.pathname.split('/').pop(), id = this.url.searchParams.get('id');
       let room = rooms.get(code);
-      if (m.t === 'hello') {
+      if (m.t === 'hello' || m.t === 'join-request') {
         if (!room && !m.host) { this.deliver({ t: 'closed', reason: 'no-host' }); return; }
         if (!room) rooms.set(code, room = new Map());
         if (room.size >= 16) { this.deliver({ t: 'closed', reason: 'full' }); return; }
