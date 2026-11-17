@@ -2,7 +2,9 @@
 // A tile that fails anywhere (download, a corrupt file throwing while it is decoded in a build step, a build step, a
 // build that returns nothing, finish) is dropped cleanly: its job leaves the queue, whatever it had built so far is
 // freed (free(job): the build puts its partial output on job.partial), it stops counting as loading, and it may be
-// tried again `retryMs` later. Before, an error inside a build step threw out of the frame loop and left the tile
+// tried again `retryMs` later (then exponential backoff, capped at `maxRetryMs`, with no attempt limit).
+// Retried jobs carry reload=true so fetches bypass a possibly corrupt cached response, including decode failures.
+// Before, an error inside a build step threw out of the frame loop and left the tile
 // "loading" for good: it never came, and it held one of the three streaming slots.
 //   const q = createTileQueue({ fetch: job => data, build: (job, data) => generator, finish: (job, value) => {}, free: job => {} });
 //   q.start(key, { tx, tz }, sync?)  ·  q.update(budgetMs, job => distance)  ·  q.pending()  ·  q.loading  ·  q.slowStep
@@ -23,9 +25,9 @@ export async function fetchTileParts(loadData, loadBitmaps) {
   }
 }
 
-export function createTileQueue({ fetch, build, finish, free = () => {}, now = () => performance.now(), retryMs = 3000,
+export function createTileQueue({ fetch, build, finish, free = () => {}, now = () => performance.now(), retryMs = 1500, maxRetryMs = 12000,
   warn = (...a) => console.warn(...a) }) {
-  const loading = new Set(), failedAt = new Map(), jobs = [];
+  const loading = new Set(), failedAt = new Map(), failures = new Map(), jobs = [];
   let carry = 0;                            // ms of last frame's budget left because the next step didn't fit
   const stepCost = new Map();               // step kind (what the generator yielded before it) -> recent cost, ms
   const slowStep = { label: '', ms: 0 };    // this frame's slowest build step (tools/lib/hitchprobe.mjs reads it)
@@ -36,6 +38,7 @@ export function createTileQueue({ fetch, build, finish, free = () => {}, now = (
     try { job.gen?.return(); } catch {}
     try { free(job); } catch (e2) { warn(`tile ${job.k}: freeing a failed build:`, e2); }
     job.failed = true; loading.delete(job.k); failedAt.set(job.k, now());
+    failures.set(job.k, (failures.get(job.k) || 0) + 1);
   }
   // one build step: 'more' | 'done' | 'failed'
   function stepOnce(job) {
@@ -45,18 +48,19 @@ export function createTileQueue({ fetch, build, finish, free = () => {}, now = (
     drop(job);
     if (!r.value) { fail(job, new Error('the build returned nothing')); return 'failed'; }
     try { finish(job, r.value); } catch (e) { job.partial = r.value; fail(job, e); return 'failed'; }
-    loading.delete(job.k); failedAt.delete(job.k);
+    loading.delete(job.k); failedAt.delete(job.k); failures.delete(job.k);
     return 'done';
   }
   return {
     loading, failedAt, jobs, slowStep,
     pending: () => loading.size + jobs.length,
-    canStart: k => !loading.has(k) && (failedAt.get(k) ?? -Infinity) <= now() - retryMs,
+    canStart: k => !loading.has(k) && (failedAt.get(k) ?? -Infinity) <= now() -
+      Math.min(maxRetryMs, retryMs * 2 ** Math.min(20, (failures.get(k) || 1) - 1)),
     // sync: build it all at once as soon as it has arrived (the start-up tiles)
     start(k, info = {}, sync = false) {
       if (!this.canStart(k)) return null;
       loading.add(k);
-      const job = { ...info, k, gen: null, next: undefined, partial: null, failed: false };
+      const job = { ...info, k, reload: failedAt.has(k), gen: null, next: undefined, partial: null, failed: false };
       return Promise.resolve().then(() => fetch(job)).then(data => {
         job.gen = build(job, data);
         if (sync) { while (stepOnce(job) === 'more'); } else jobs.push(job);

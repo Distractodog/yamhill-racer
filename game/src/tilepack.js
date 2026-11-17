@@ -39,7 +39,7 @@ export function* decodeTileSteps({ height, sbuf, trees, pbuf, json }) {
 }
 
 // the game's reader: fetch from a tile folder URL
-export const fetchReader = dir => name => fetch(dir + name).then(r => {
+export const fetchReader = (dir, options) => name => fetch(dir + name, options).then(r => {
   if (!r.ok) throw new Error(`${dir}${name}: ${r.status}`);
   return r.arrayBuffer();
 });

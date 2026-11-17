@@ -4,14 +4,15 @@
 // build step after part of it was built, one build returns nothing, one tile's finish throws. They are all queued
 // together and stepped by the frame loop's update. Each failure: no exception out of update, its job leaves the
 // queue, whatever it built is freed (its ground bitmaps closed), it no longer counts as loading (no stuck slot), finish
-// never gets undefined, and it can be tried again after 3 s (and then loads). A sync (start-up) build of a corrupt
+// never gets undefined, and it can be retried (and then loads). A sync (start-up) build of a corrupt
 // tile doesn't throw either. The good tile loads in the same frames.
 // The download (world.js fetchTile → fetchTileParts): when the data download fails while the ground bitmaps succeed —
 // some before the failure, some after it — or one bitmap fails, every bitmap made is closed; nothing leaks.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { makeTileDataSteps } from '../game/src/data.js';
-import { readTileRaw, decodeTileSteps } from '../game/src/tilepack.js';
+import { readTileRaw, decodeTileSteps, fetchReader } from '../game/src/tilepack.js';
 import { createTileQueue, fetchTileParts, frameBudget, CARRY_MAX_MS, FRAME_MAX_MS } from '../game/src/tilequeue.js';
 
 const A = 'game/assets/', WJ = JSON.parse(fs.readFileSync(A + 'world.json'));
@@ -59,9 +60,9 @@ for (const k of ['late', 'nothing', 'finish']) assert(jobsByKey[k].partial.freed
 assert.equal(closed, 4 * (bad.length - 1), 'the failed builds\' ground bitmaps are closed');
 for (const k of bad) assert(q.failedAt.has(k), `${k}: failure time kept`);
 assert(warnings.some(w => w.includes('json')) && warnings.some(w => w.includes('height')), 'the corrupt tiles report why');
-// retry: not within 3 s, then yes; a repaired tile then loads
-clock += 1000; assert.equal(q.canStart('json'), false, 'no retry within 3 s');
-clock += 2100; assert.equal(q.canStart('json'), true, 'retry after 3 s');
+// retry: not within 1.5 s, then yes; a repaired tile then loads
+clock += 1000; assert.equal(q.canStart('json'), false, 'no retry within 1.5 s');
+clock += 500; assert.equal(q.canStart('json'), true, 'retry after 1.5 s');
 TILES.json = { raw };
 await q.start('json', { tx: 0, tz: 0 });
 for (let frame = 0; frame < 5000 && q.jobs.length; frame++) { clock += 16; q.update(5, () => 0); }
@@ -70,6 +71,56 @@ assert(finished.includes('json') && !q.failedAt.has('json') && q.loading.size ==
 TILES.sync = { raw: { ...raw, json: raw.json.slice(0, 100) } };
 await q.start('sync', { tx: 0, tz: 0 }, true);
 assert(!q.loading.has('sync') && q.failedAt.has('sync') && !finished.includes('sync'), 'a corrupt start-up tile fails cleanly');
+
+// Persistent failures back off, but never give up. Retries after fetch AND build failures bypass the cache;
+// a success resets both the delay and reload flag, so a later visit starts normally.
+{
+  let t = 0, works = false;
+  const reloads = [];
+  const qr = createTileQueue({ now: () => t, warn: () => {},
+    fetch: job => { reloads.push(job.reload); if (!works) throw new Error('offline'); return {}; },
+    build: () => (function* () { return {}; })(), finish: () => {} });
+  for (const delay of [1500, 3000, 6000, 12000, 12000, 12000]) {
+    await qr.start('retry');
+    assert.equal(qr.loading.size, 0, 'failed fetch releases its slot');
+    t += delay - 1;
+    assert.equal(qr.canStart('retry'), false, `backoff waits ${delay} ms`);
+    t++;
+    assert.equal(qr.canStart('retry'), true, 'retry remains available without an attempt limit');
+  }
+  works = true;
+  await qr.start('retry', {}, true);
+  assert(!qr.failedAt.has('retry'), 'success clears failure state');
+  await qr.start('retry', {}, true);
+  assert.deepEqual(reloads, [false, true, true, true, true, true, true, false]);
+  works = false;
+  await qr.start('retry'); t += 1500;
+  assert(qr.canStart('retry'), 'success resets the backoff to 1.5 s');
+}
+// Real fetchReader → gunzip → stepwise decode: a valid gzip containing truncated JSON stays cached until reload.
+{
+  const originalFetch = globalThis.fetch, requests = [];
+  let t = 0, loaded = false;
+  try {
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options });
+      const name = url.split('/').at(-1);
+      if (name === 'tile.json.gz' && options?.cache !== 'reload') return new Response(gzipSync(raw.json.slice(0, 100)));
+      return new Response(fs.readFileSync(`${A}tiles/0_0/${name}`));
+    };
+    const qr = createTileQueue({ now: () => t, warn: () => {},
+      fetch: job => readTileRaw(fetchReader('tiles/0_0/', job.reload ? { cache: 'reload' } : undefined), WJ.packed),
+      build: (job, data) => decodeTileSteps(data), finish: () => { loaded = true; } });
+    await qr.start('cached', {}, true);
+    assert(!loaded && qr.failedAt.has('cached'), 'cached corrupt JSON fails during the build');
+    t = 1500;
+    await qr.start('cached', {}, true);
+    assert(loaded && !qr.failedAt.has('cached'), 'reload replaces the corrupt cached response and loads');
+    assert.equal(requests.length, 10, 'both attempts fetch all five data files');
+    assert(requests.slice(0, 5).every(r => r.options === undefined), 'first load keeps normal caching');
+    assert(requests.slice(5).every(r => r.options?.cache === 'reload'), 'every retry data file bypasses the cache');
+  } finally { globalThis.fetch = originalFetch; }
+}
 // ---- fetchTileParts
 const later = ms => new Promise(r => setTimeout(r, ms));
 const bmps = [];
@@ -119,5 +170,5 @@ assert(Math.abs(frameBudget(5, 25) - 7.5) < 1e-9, '40 fps: 1.5x'); assert.equal(
 assert.equal(frameBudget(9, 40), 9, 'at speed (9 ms) it stays 9'); assert.equal(frameBudget(13, 40), 13, 'a respawn hold base above the cap is kept');
 
 console.log(`PASS tile queue: budget carry (whole budget on average, ≤ budget + ${CARRY_MAX_MS} ms a frame), frameBudget by frame rate; ${bad.length} failing tiles (corrupt tile.json, corrupt heights, download, late step, empty build, finish) ` +
-  'dropped from the queue and freed, none stuck loading, retried after 3 s and loaded once repaired; the good tile loaded alongside; sync start-up build safe; ' +
+  'dropped from the queue and freed, none stuck loading, retried after 1.5 s with capped backoff and cache reload, loaded once repaired; the good tile loaded alongside; sync start-up build safe; ' +
   'fetchTileParts closes every bitmap when the data, the ground file or one bitmap fails, including bitmaps that arrive after the failure');

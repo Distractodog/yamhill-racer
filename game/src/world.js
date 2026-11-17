@@ -72,12 +72,16 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
 
   // data and ground bitmaps together; if either fails, the bitmaps made are closed (tilequeue.js fetchTileParts)
-  function fetchTile(tx, tz) {
+  function fetchTile(tx, tz, reload = false) {
     const dir = `${base}tiles/${tx}_${tz}/`;
+    const options = reload ? { cache: 'reload' } : undefined;
     return fetchTileParts(
-      () => readTileRaw(fetchReader(dir), W.packed),          // unzipped here, decoded in buildTile's steps: tilepack.js
+      () => readTileRaw(fetchReader(dir, options), W.packed), // unzipped here, decoded in buildTile's steps: tilepack.js
       // ground colours as four 1024^2 quarters (cropped off the main thread), so each uploads in its own slice
-      () => fetch(dir + groundFile(W.packed)).then(r => r.blob()).then(b => [0, 1, 2, 3].map(q =>
+      () => fetch(dir + groundFile(W.packed), options).then(r => {
+        if (!r.ok) throw new Error(`${dir}${groundFile(W.packed)}: ${r.status}`);
+        return r.blob();
+      }).then(b => [0, 1, 2, 3].map(q =>
         createImageBitmap(b, (q % 2) * 1024, (q >> 1) * 1024, 1024, 1024, { imageOrientation: 'none' }))));
   }
 
@@ -302,7 +306,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   // fetch → build in time slices → add to the world; a tile that fails is freed and retried later (tilequeue.js)
   const queue = createTileQueue({
-    fetch: job => fetchTile(job.tx, job.tz),
+    fetch: job => fetchTile(job.tx, job.tz, job.reload),
     build: (job, { data, img }) => { job.img = img; return buildTile(job.tx, job.tz, data, img, job); },
     finish: (job, v) => { world.add(v.td); vis.set(job.k, v); group.add(v.group); lastShadowAt = null; },
     free: job => {
