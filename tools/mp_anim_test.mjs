@@ -17,6 +17,7 @@ import { buildCarModel, WHEEL_POS } from '../game/src/carmodel.js';
 import { Bike, BIKE, buildBikeModel } from '../game/src/bike.js';
 import { Jet, buildJetModel } from '../game/src/jet.js';
 import { primeWheelArch } from '../game/src/wheeltravel.js';
+import { DROP } from '../game/src/fxpool.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg}: ${a} vs ${b} (±${eps})`);
 const V3 = THREE.Vector3;
@@ -211,26 +212,26 @@ console.log('jet: gear legs, flame, nose wheel, elevator / rudder / ailerons and
 
 // ---------------------------------------------------------------- effects through effects.js / drivingfx.js, glider
 const fx = R.fx; assert.ok(fx?.effects && fx.driving, 'shared remote effects made');
-const alive = (life, pred = () => true) => { let n = 0; for (let i = 0; i < life.length; i++) if (life[i] > 0 && pred(i)) n++; return n; };
+const alive = (pool, pred = () => true) => { let n = 0; for (let k = 0; k < pool.n; k++) if (pred(pool.alive[k])) n++; return n; };
 mp.emit('skin', { t: 'skin', from: 'g', skin: { vehicle: 'car', colors: {} } });
 play('car', 0.5, setCar(0, 1, 0, false, false, 0, 0, 0, [0.09, 0.09, 0.09, 0.09]), { speed: 25 });
-const marks0 = fx.effects.markI;
+const marks0 = fx.effects.marksBuf.total;
 for (let i = 0; i < 300; i++) { fx.effects.advance(1 / 60); fx.driving.advance(1 / 60); }    // nothing left from before
 L.car.surface = 4; L.car.wheels.forEach(w => { w.surf = 4; });    // a gravel drift: marks + smoke (asphalt throws none, as yours)
 play('car', 1.2, setCar(-1, 1, 0, true, true, 0.6, 18, 0, [0.09, 0.09, 0.09, 0.09]), { speed: 25 });
-const marks = fx.effects.markI - marks0;
+const marks = fx.effects.marksBuf.total - marks0;
 assert.ok(marks >= 6, `drift lays tyre marks (${marks} quads)`);
-const markY = fx.effects.markPos[(fx.effects.markI - 1) * 18 + 1];
+const markY = fx.effects.marksBuf.pos[((fx.effects.marksBuf.total - 1) % fx.effects.marksBuf.max) * 12 + 7];
 near(markY, world.heightAt() + 0.04, 1e-6, 'marks sit on the ground');
-const smoke = alive(fx.effects.pLife); assert.ok(smoke > 20, `drift smoke (${smoke} particles)`);
+const smoke = alive(fx.effects.puffs); assert.ok(smoke > 20, `drift smoke (${smoke} particles)`);
 L.car.surface = 4; L.car.wheels.forEach(w => { w.surf = 4; });
 for (let i = 0; i < 90; i++) { fx.effects.advance(1 / 60); fx.driving.advance(1 / 60); }    // let the smoke fade
 play('car', 1, setCar(0, 1, 0, false, false, 0, 0, 0, [0.09, 0.09, 0.09, 0.09]), { speed: 30 });
-const dust = alive(fx.effects.pLife), gravel = alive(fx.driving.life);
+const dust = alive(fx.effects.puffs), gravel = alive(fx.effects.chips);
 assert.ok(dust > 10 && gravel > 10, `gravel road: dust (${dust}) and thrown gravel (${gravel})`);
 L.car.surface = 5; L.car.onWater = true; L.car.wheels.forEach(w => { w.surf = 5; });
 play('car', 0.6, setCar(0, 1, 0, false, false, 0, 0, 0, [0.05, 0.05, 0.05, 0.05]), { speed: 30 });
-const spray = alive(fx.effects.pLife, i => fx.effects.pGrav[i] === 1);
+const spray = alive(fx.effects.puffs, i => fx.effects.puffs.kind[i] === DROP);
 assert.ok(spray > 20, `skimming water: splashes (${spray})`);
 L.car.surface = 3; L.car.onWater = false; L.car.wheels.forEach(w => { w.surf = 3; });
 play('car', 1.0, setCar(0, 1, 0, false, false, 0, 0, 0, [-1, -1, -1, -1]), { speed: 20, glide: true, y: 30 });
@@ -243,12 +244,13 @@ console.log(`effects: drift marks ${marks} + smoke ${smoke}, gravel dust ${dust}
 {
   L.car.surface = 4; L.car.wheels.forEach(w => { w.surf = 4; });
   play('car', 0.8, setCar(-1, 1, 0, true, true, 0.6, 18, 0, [0.09, 0.09, 0.09, 0.09]), { speed: 30 });
-  const shown = () => [fx.effects.pAlpha, fx.driving.alpha].map(a => a.filter(x => x > 0).length);
+  const shown = () => [fx.effects.points.visible ? fx.effects.puffGeo.instanceCount : 0, fx.effects.chipMesh.visible ? fx.effects.chipMesh.count : 0];
   const [smoke0, stones0] = shown();
   assert.ok(smoke0 > 10 && stones0 > 5, `in the air when they leave (${smoke0} smoke, ${stones0} stones)`);
   mp.emit('left', { t: 'left', id: 'g' }); assert.equal(R.count, 0);
+  const P = fx.effects.puffs, lifeLeft = () => { let s = 0; for (let k = 0; k < P.n; k++) s += P.life[P.alive[k]]; return s; }, life0 = lifeLeft();
   for (let i = 0; i < 30; i++) { mp.advance(1000 / 60); R.update(1 / 60); }
-  const [smoke1] = shown(); assert.ok(smoke1 < smoke0 || smoke1 === 0, 'still fading after they left');
+  assert.ok(lifeLeft() < life0 - 0.1 * smoke0, 'still fading after they left');
   for (let i = 0; i < 300; i++) { mp.advance(1000 / 60); R.update(1 / 60); }
   assert.deepEqual(shown(), [0, 0], 'all faded: nothing frozen in the air');
   assert.ok(fx.driving.trailA.every(a => a === 0), 'no trails left either');

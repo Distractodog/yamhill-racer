@@ -15,4 +15,4 @@ car.renderPos.z+=10000;fx.update(1/60,car);assert(!fx.trailLife.some(n=>n>0));
 for(const a of [fx.pos,fx.colors,fx.trailPos])assert(a.every(Number.isFinite));
 assert.equal(fx.life.length,220);assert.equal(fx.trailLife.length,80);
 fx.dispose();assert.equal(scene.children.length,0);
-console.log('PASS: gravel/sparks, wing trails, teleport reset, bounded buffers, disposal');
+console.log('PASS: sparks, wing trails, teleport reset, bounded buffers, disposal');

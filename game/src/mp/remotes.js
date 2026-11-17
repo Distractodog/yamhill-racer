@@ -713,7 +713,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     for (const s of slots) { s.voice.stop(); s.gain.disconnect(); s.pan?.disconnect(); }
     slots.length = 0;
     if (fx && !fxOpt) {
-      for (const o of [fx.effects.marks, fx.effects.points]) { o.removeFromParent(); o.geometry.dispose(); o.material.dispose(); }
+      fx.effects.dispose();
       fx.driving.dispose();
     }
     if (live === api) live = null;
