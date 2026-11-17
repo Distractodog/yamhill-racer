@@ -225,6 +225,8 @@ const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehi
   predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
 addEventListener('keydown', e => {
   if (e.gameUI || builder.open) return;
+  // Repeat continues an owned press; it must not resurrect one after key-up or focus/UI clearing.
+  if (e.repeat && !keys.has(e.code)) return;
   keys.add(e.code);
   if (/^[a-z]$/i.test(e.key)) letters.set(e.code, 'Key' + e.key.toUpperCase());
   audio.start();
@@ -550,6 +552,8 @@ addEventListener('resize', () => {
 });
 // for debugging / automated test drives
 window.game = { scene, sun, effects, setCam: m => { camMode = m; }, teleport: (x, z, cls = 2) => { car.reset(...world.placeOn(x, z, cls)); car.safe = []; }, car, world, input, keys, tuning, camera, renderer, minimap, challenges, pinGuide, directions };
+// Read-only snapshots let input stress tests distinguish physical keys, layout aliases and smoothed steering.
+window.game.inputState = () => ({ keys: [...keys], letters: [...letters] });
 window.game.glider = glider; window.game.bikeGlider = bikeGlider;
 window.game.vehicles = vehicles;
 window.game.audio = audio;              // tools/sound_check.mjs
