@@ -2,13 +2,14 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
-import { CAR_DAMAGE, refreshCarDamageAttachments, deformCarPoint } from '../game/src/cardamage.js';
+import { CAR_DAMAGE, refreshCarDamageAttachments, deformCarPoint, carDamageCacheInfo } from '../game/src/cardamage.js';
 import { applyVehicleType, typeModel, VEHICLE_TYPES, buildVehicleTypeModel } from '../game/src/vehicletypes.js';
 import { collideBuilding } from '../game/src/roofs.js';
 import { makeRaceBarriers } from '../game/src/racebarriers.js';
 import { resolveCollision } from '../game/src/mp/collide.js';
 import { paintedModel, createCosmetics } from '../game/src/cosmetics.js';
 import { createVehicleLightLenses, createVehicleLights } from '../game/src/lights.js';
+import { createWarmup } from '../game/src/warmup.js';
 import { Glider } from '../game/src/glider.js';
 import { beginTerrainStep } from '../game/src/steepterrain.js';
 
@@ -69,6 +70,19 @@ for (const { id } of VEHICLE_TYPES.car) {
   unchanged(wheels); unchanged(other); unchanged(preview);
   for (const { originalGeometry, p } of clean) assert.deepEqual(originalGeometry.attributes.position.array, p, 'shared original geometry is untouched');
   assert(clean.some(({ mesh, n }) => n && mesh.geometry.attributes.normal.array.some((v, i) => Math.abs(v - n[i]) > 1e-5)), `${id}: dent normals updated`);
+  // Optimized face normals and tight culling bounds must equal three's implementation.
+  for (const { mesh } of clean) {
+    const g = mesh.geometry; if (!g.boundingBox || !g.boundingSphere) continue;
+    const reference = g.clone(); reference.computeBoundingBox(); reference.computeBoundingSphere();
+    assert.deepEqual(g.boundingBox, reference.boundingBox, `${id}: tight box unchanged`);
+    assert.deepEqual(g.boundingSphere, reference.boundingSphere, `${id}: tight sphere unchanged`);
+    // Only damage-owned buffers recompute normals (wheel normals remain authored).
+    if (g !== clean.find(p => p.mesh === mesh).originalGeometry) {
+      reference.computeVertexNormals();
+      assert.deepEqual(g.attributes.normal.array, reference.attributes.normal.array, `${id}: exact three normals`);
+    }
+    reference.dispose();
+  }
   // Medium hit accumulates after separation, but sustained contact never crushes it further.
   c.reset(0, -10, 0); building(c, 12); c.damage.update(); const first = change(clean).total;
   for (let i = 0; i < 120; i++) { c.damage.step(dt); building(c, 12); }
@@ -210,6 +224,36 @@ for (const { id } of VEHICLE_TYPES.car) {
   lamps.forEach((m, i) => assert.deepEqual(m.geometry.attributes.position.array, pristine[i].p));
   glows.forEach((g, i) => assert.deepEqual(g.position.toArray(), referenceGlows[i].position.toArray()));
   lights.dispose(); pristineLights.dispose();
+}
+// Real warm-up task order prepares every local cached car, without a visible change or repair.
+{
+  const c = car('hatch'); building(c, 45); c.damage.update();
+  const before = snapshot(c.mesh), revision = c.damage.revision;
+  const warmup = createWarmup({ renderer: { compile() {} }, scene: new THREE.Scene(), camera: new THREE.PerspectiveCamera(),
+    vehicles: { vehicleFor: kind => kind === 'car' ? c : null } });
+  while (!warmup.done) warmup.step();
+  assert.equal(c.damage.revision, revision); unchanged(before);
+  for (const { id } of VEHICLE_TYPES.car) assert(carDamageCacheInfo(typeModel(c, id)).parts > 0, `${id}: cache prepared before driving`);
+}
+// A cache owns only current parts, handles geometry replacement, and stays constant
+// across repeated revisions. A detached attachment is not retained by its old bindings.
+{
+  const c = car('hatch'); building(c, 45); c.damage.update();
+  const initial = carDamageCacheInfo(c.mesh);
+  const part = new THREE.Mesh(new THREE.BoxGeometry(.2, .2, .2), new THREE.MeshBasicMaterial());
+  part.position.set(0, .2, 1.7); c.mesh.userData.bodyPivot.add(part);
+  refreshCarDamageAttachments(c.mesh);
+  assert.equal(carDamageCacheInfo(c.mesh).parts, initial.parts + 1);
+  part.geometry.dispose(); part.geometry = new THREE.BoxGeometry(.3, .2, .2);
+  const rest = part.geometry.attributes.position.array.slice();
+  refreshCarDamageAttachments(c.mesh);
+  assert.equal(carDamageCacheInfo(c.mesh).parts, initial.parts + 1, 'replacement releases old bindings');
+  c.damage.repair(); assert.deepEqual(part.geometry.attributes.position.array, rest, 'replacement repairs to its own rest shape');
+  building(c, 45); c.damage.update(); part.removeFromParent(); refreshCarDamageAttachments(c.mesh);
+  assert.deepEqual(carDamageCacheInfo(c.mesh), initial, 'detached bindings released');
+  for (let i = 0; i < 40; i++) { c.damage.step(.3); building(c, 45, i * .19); c.damage.update(); }
+  assert.deepEqual(carDamageCacheInfo(c.mesh), initial, 'cache bounded independently of history');
+  assert(initial.sources < initial.vertices / 2, 'duplicate vertices share field evaluations');
 }
 // The existing light rig moves only its cached beam origin when damage changes, and repairs it.
 {

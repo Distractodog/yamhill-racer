@@ -15,6 +15,9 @@ const bodyInverse = new THREE.Matrix4(), wheelInverse = new THREE.Matrix4(), whe
 
 export class CarDamage {
   constructor(car) { this.car = car; this.time = 0; this.sites = []; this.revision = 0; this.applied = -1; this.drawOffset = new THREE.Vector3(); }
+  // Spawn-map warm-up prepares owned buffers/bindings, without deforming or repairing.
+  // It is also safe on an already damaged cached type; existing rest data stays intact.
+  prepare(model = this.car.mesh) { capture(model, stateFor(model)); }
   // Capture only the cosmetic chassis offset, never its world translation. Physics may
   // advance several steps beyond renderPos before the next contact arrives.
   setDrawOffset(meshPosition, renderPosition, renderQuaternion) {
@@ -89,7 +92,7 @@ function capture(model, state) {
   // Remove detached/replaced livery parts: repeated Garage edits don't retain old buffers.
   for (const [mesh, part] of state.parts) {
     let o = mesh; while (o && o !== pivot) o = o.parent;
-    if (!o) { part.original.dispose(); state.parts.delete(mesh); }
+    if (!o || mesh.geometry !== part.geometry) { part.original.dispose(); state.parts.delete(mesh); }
   }
   for (const [glow] of state.glows) {
     let o = glow; while (o && o !== pivot) o = o.parent;
@@ -109,27 +112,79 @@ function capture(model, state) {
     for (const [key, attr] of Object.entries(original.attributes)) if (key !== 'position' && key !== 'normal') geometry.setAttribute(key, attr);
     mesh.geometry = geometry;
     const matrix = new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld);
-    state.parts.set(mesh, { original, rest: pos.array.slice(), normals: original.attributes.normal?.array.slice(),
-      matrix, inverse: matrix.clone().invert(), count: mesh.userData.damageVertexCount ?? pos.count });
+    const part = { original, geometry, rest: pos.array.slice(), normals: original.attributes.normal?.array.slice(),
+      matrix, inverse: matrix.clone().invert(), count: mesh.userData.damageVertexCount ?? pos.count };
+    bindSkin(model, part);
+    state.parts.set(mesh, part);
   });
+}
+// Compile each owned part once. Weld only EXACT rest positions (never normals/UVs),
+// using a temporary numeric hash table rather than allocating strings per soup vertex.
+// The resulting bindings belong to the part and disappear when an attachment detaches.
+function bindSkin(model, part) {
+  const { rest, count, matrix } = part, ids = new Uint32Array(count);
+  let size = 1; while (size < count * 2) size *= 2;
+  const table = new Int32Array(size).fill(-1), words = new Uint32Array(rest.buffer, rest.byteOffset, rest.length);
+  const representatives = [], corners = new Map(), sources = [], positions = [], bindings = [], weights = [];
+  const source = p => { const id = sources.length / 3; sources.push(p.x, p.y, p.z); return id; };
+  const corner = p => { let id = corners.get(p); if (id === undefined) { id = source(skinPoint.fromArray(p)); corners.set(p, id); } return id; };
+  for (let i = 0; i < count; i++) {
+    const k = i * 3;
+    // Canonicalize signed zero for the hash, consistent with numeric equality below.
+    const x = rest[k] === 0 ? 0 : words[k], y = rest[k + 1] === 0 ? 0 : words[k + 1], z = rest[k + 2] === 0 ? 0 : words[k + 2];
+    let hash = Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791);
+    hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+    let slot = (hash ^ (hash >>> 16)) & (size - 1);
+    while (table[slot] >= 0) {
+      const j = representatives[table[slot]] * 3;
+      if (rest[j] === rest[k] && rest[j + 1] === rest[k + 1] && rest[j + 2] === rest[k + 2]) break;
+      slot = (slot + 1) & (size - 1);
+    }
+    if (table[slot] >= 0) { ids[i] = table[slot]; continue; }
+    const id = representatives.length; table[slot] = id; ids[i] = id; representatives.push(i);
+    point.fromArray(rest, k).applyMatrix4(matrix); positions.push(point.x, point.y, point.z);
+    const tri = panelTriangle(point, model.userData.damagePanels, skinWeights);
+    if (tri) { bindings.push(corner(tri[0]), corner(tri[1]), corner(tri[2])); weights.push(skinWeights.x, skinWeights.y, skinWeights.z); }
+    else { bindings.push(source(point), -1, -1); weights.push(0, 0, 0); }
+  }
+  part.skin = { ids, sources: new Float64Array(sources), evaluated: new Float64Array(sources.length),
+    positions: new Float64Array(positions), bindings: new Int32Array(bindings), weights: new Float64Array(weights),
+    output: new Float32Array(positions.length) };
+}
+function evaluateSkin(model, part, sites) {
+  const { sources, evaluated, positions, bindings, weights, output } = part.skin;
+  for (let i = 0; i < sources.length; i += 3) {
+    point.fromArray(sources, i);
+    deform(point, sites, wheelWeight(model, point));
+    evaluated[i] = moved.x; evaluated[i + 1] = moved.y; evaluated[i + 2] = moved.z;
+  }
+  for (let i = 0; i < positions.length; i += 3) {
+    const a = bindings[i] * 3;
+    if (bindings[i + 1] < 0) moved.fromArray(evaluated, a);
+    else {
+      skinDelta.set(0, 0, 0);
+      for (let j = 0; j < 3; j++) {
+        const k = bindings[i + j] * 3;
+        skinPoint.fromArray(evaluated, k).sub(point.fromArray(sources, k));
+        skinDelta.addScaledVector(skinPoint, weights[i + j]);
+      }
+      moved.fromArray(positions, i).add(skinDelta);
+    }
+    moved.applyMatrix4(part.inverse);
+    output[i] = moved.x; output[i + 1] = moved.y; output[i + 2] = moved.z;
+  }
 }
 function wheelWeight(model, p) {
   let weight = 1;
-  const { wheels = [], wheelArch = [], bodyPivot } = model.userData;
+  const { bodyPivot } = model.userData;
   // Holders live in chassis space; skin/arch heights live in body space. Protect the
   // same tyre envelope after body roll, pitch and lift, without moving the tyres.
   wheelPoint.copy(p);
   if (bodyPivot) wheelPoint.applyMatrix4(bodyPivot.matrix);
-  for (let i = 0; i < wheels.length; i++) {
-    const w = wheels[i], h = w.holder.position;
-    // Keep the arch and its lip clear of the whole tyre travel envelope. Wheels, brakes and
-    // holders are outside bodyPivot; the race car's merged arms have an explicit vertex range.
-    const dx = Math.abs(wheelPoint.x - h.x) - (w.hubWidth ?? .5) / 2 - .07;
-    const dz = Math.abs(wheelPoint.z - h.z) - w.r - .07;
-    const e = wheelInverse.elements, arch = wheelArch[i] ?? w.restY + w.r;
-    // Solve the body-frame ceiling plane at this CHASSIS-space hub x/z (as wheeltravel).
-    const ceiling = Math.abs(e[5]) > 1e-6 ? (arch - e[1] * h.x - e[9] * h.z - e[13]) / e[5] : h.y + w.r;
-    const dy = wheelPoint.y - Math.max(ceiling, h.y + w.r) - .05;
+  for (const w of wheelBoxes) {
+    const dx = Math.abs(wheelPoint.x - w.x) - w.halfWidth - .07;
+    const dz = Math.abs(wheelPoint.z - w.z) - w.radius - .07;
+    const dy = wheelPoint.y - w.ceiling - .05;
     weight = Math.min(weight, clamp(Math.max(dx, dz, dy) / .2, 0, 1));
   }
   return weight;
@@ -167,9 +222,20 @@ function deformSkin(model, p, sites) {
   }
   return moved.copy(p).add(skinDelta);
 }
+const wheelBoxes = [];
 function prepareWheelFrame(model) {
-  const pivot = model.userData.bodyPivot;
+  const { bodyPivot: pivot, wheels = [], wheelArch = [] } = model.userData;
   if (pivot) { pivot.updateMatrix(); wheelInverse.copy(pivot.matrix).invert(); } else wheelInverse.identity();
+  const e = wheelInverse.elements;
+  wheelBoxes.length = wheels.length;
+  for (let i = 0; i < wheels.length; i++) {
+    const w = wheels[i], h = w.holder.position, arch = wheelArch[i] ?? w.restY + w.r;
+    const box = wheelBoxes[i] ||= {};
+    box.x = h.x; box.z = h.z; box.halfWidth = (w.hubWidth ?? .5) / 2; box.radius = w.r;
+    // Solve the body-frame ceiling plane once per revision, at the chassis-space hub.
+    const ceiling = Math.abs(e[5]) > 1e-6 ? (arch - e[1] * h.x - e[9] * h.z - e[13]) / e[5] : h.y + w.r;
+    box.ceiling = Math.max(ceiling, h.y + w.r);
+  }
 }
 function deformModel(model, sites) {
   prepareWheelFrame(model);
@@ -181,24 +247,67 @@ function deformModel(model, sites) {
   }
   for (const [mesh, part] of state.parts) {
     const g = mesh.geometry, pos = g.attributes.position;
+    evaluateSkin(model, part, sites);
+    const { ids, output } = part.skin;
+    let changed = !part.deformed || part.count !== pos.count;
     for (let i = 0; i < part.count; i++) {
-      point.fromArray(part.rest, i * 3).applyMatrix4(part.matrix);
-      deformSkin(model, point, sites).applyMatrix4(part.inverse);
-      pos.setXYZ(i, moved.x, moved.y, moved.z);
+      const k = ids[i] * 3;
+      const j = i * 3;
+      if (pos.array[j] !== output[k] || pos.array[j + 1] !== output[k + 1] || pos.array[j + 2] !== output[k + 2]) changed = true;
+      pos.array[j] = output[k]; pos.array[j + 1] = output[k + 1]; pos.array[j + 2] = output[k + 2];
     }
+    // Leave pending uploads alone when this part did not change. Animated merged arms
+    // still need their face normals, and the first deformation establishes computed normals.
+    if (!changed) continue;
+    part.deformed = true;
     pos.clearUpdateRanges(); pos.addUpdateRange(0, part.count * 3); pos.needsUpdate = true;
-    g.computeVertexNormals(); g.computeBoundingBox(); g.computeBoundingSphere();
+    updateNormals(g); updateBounds(g);
   }
+}
+// Same Float32 intermediate and normalization as three's triangle-soup normals, but
+// one cross/normalization per face instead of clearing and normalizing every duplicate.
+// Indexed lamp/attachment geometry keeps three's shared-vertex implementation.
+function updateNormals(g) {
+  if (g.index || !g.attributes.normal) { g.computeVertexNormals(); return; }
+  const p = g.attributes.position.array, n = g.attributes.normal.array;
+  for (let i = 0; i < p.length; i += 9) {
+    const ax = p[i] - p[i + 3], ay = p[i + 1] - p[i + 4], az = p[i + 2] - p[i + 5];
+    const bx = p[i + 6] - p[i + 3], by = p[i + 7] - p[i + 4], bz = p[i + 8] - p[i + 5];
+    let x = Math.fround(by * az - bz * ay), y = Math.fround(bz * ax - bx * az), z = Math.fround(bx * ay - by * ax);
+    const scale = 1 / (Math.sqrt(x * x + y * y + z * z) || 1); x *= scale; y *= scale; z *= scale;
+    for (let j = i; j < i + 9; j += 3) { n[j] = x; n[j + 1] = y; n[j + 2] = z; }
+  }
+  g.attributes.normal.needsUpdate = true;
+}
+// Reuse the box's min/max for the sphere; three's separate calls scan the box twice.
+// These are the same tight bounds, including the merged race-car suspension vertices.
+function updateBounds(g) {
+  const p = g.attributes.position.array;
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    x0 = Math.min(x0, p[i]); y0 = Math.min(y0, p[i + 1]); z0 = Math.min(z0, p[i + 2]);
+    x1 = Math.max(x1, p[i]); y1 = Math.max(y1, p[i + 1]); z1 = Math.max(z1, p[i + 2]);
+  }
+  g.boundingBox ||= new THREE.Box3(); g.boundingSphere ||= new THREE.Sphere();
+  g.boundingBox.min.set(x0, y0, z0); g.boundingBox.max.set(x1, y1, z1);
+  const c = g.boundingBox.getCenter(g.boundingSphere.center); let radius2 = 0;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = c.x - p[i], y = c.y - p[i + 1], z = c.z - p[i + 2]; radius2 = Math.max(radius2, x * x + y * y + z * z);
+  }
+  g.boundingSphere.radius = Math.sqrt(radius2);
 }
 function restore(model) {
   const state = models.get(model); if (!state) return;
   for (const [mesh, part] of state.parts) {
     const g = mesh.geometry;
+    if (g !== part.geometry) { part.original.dispose(); state.parts.delete(mesh); continue; }
+    if (!part.deformed) continue;
+    part.deformed = false;
     // Merged animated suspension vertices remain owned by linkage.update().
     g.attributes.position.array.set(part.rest.subarray(0, part.count * 3));
     g.attributes.position.clearUpdateRanges(); g.attributes.position.addUpdateRange(0, part.count * 3); g.attributes.position.needsUpdate = true;
     if (part.normals) { g.attributes.normal.array.set(part.normals); g.attributes.normal.needsUpdate = true; }
-    g.computeBoundingBox(); g.computeBoundingSphere();
+    updateBounds(g);
   }
   for (const [glow, part] of state.glows) glow.position.copy(part.rest);
   state.sites = []; state.version++;
@@ -216,4 +325,15 @@ export function deformCarPoint(model, p) {
   const state = models.get(model);
   if (state?.sites.length) { prepareWheelFrame(model); p.copy(deformSkin(model, p, state.sites)); }
   return p;
+}
+
+// On-demand diagnostics for profiling/attachment lifetime tests; no traversal in steady frames.
+export function carDamageCacheInfo(model) {
+  const state = models.get(model), result = { parts: 0, vertices: 0, unique: 0, sources: 0, bytes: 0 };
+  if (state) for (const part of state.parts.values()) {
+    result.parts++; result.vertices += part.count; result.unique += part.skin.positions.length / 3;
+    result.sources += part.skin.sources.length / 3;
+    for (const array of Object.values(part.skin)) result.bytes += array.byteLength;
+  }
+  return result;
 }
