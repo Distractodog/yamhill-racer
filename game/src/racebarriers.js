@@ -86,7 +86,8 @@ export function makeRaceBarriers(points, world) {
     car.hit = Math.max(car.hit || 0, hit * 0.5);
     return hit;
   }
-  return { segments, prepare, collide };
+  const canLoad = s => !world.mapContains || (world.mapContains(s.ax, s.az, 0) && world.mapContains(s.bx, s.bz, 0));
+  return { segments, prepare, collide, canLoad };
 }
 
 // Entire footprint must leave the corridor. A landing is final; otherwise allow a second to recover in the air.

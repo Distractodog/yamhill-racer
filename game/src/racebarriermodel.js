@@ -51,9 +51,14 @@ export function buildRaceBarrierModel(layer) {
     }
   }
   update();
+  const near = (s, points, radius) => (!layer.canLoad || layer.canLoad(s)) &&
+    points.some(([x, z]) => Math.hypot((s.ax + s.bx) / 2 - x, (s.az + s.bz) / 2 - z) < radius);
   return { mesh, update,
+    loadPoints(points, radius = 150) {
+      return layer.segments.filter(s => near(s, points, radius)).flatMap(s => [[s.ax, s.az], [s.bx, s.bz]]);
+    },
     readyNear(points, radius = 150) {
-      return ![...pending].some(s => points.some(([x, z]) => Math.hypot((s.ax + s.bx) / 2 - x, (s.az + s.bz) / 2 - z) < radius));
+      return ![...pending].some(s => near(s, points, radius));
     },
     dispose() { geometry.dispose(); material.dispose(); } };
 }

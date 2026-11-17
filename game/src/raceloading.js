@@ -25,8 +25,8 @@ export function raceGroundProgress(world, points) {
   return needed.filter(([x, z]) => world.loadedAt(x, z)).length / needed.length;
 }
 
-// now is monotonic milliseconds; sync uses the independent relay clock. Readiness is never inferred from elapsed time.
-export function createRaceLoadState({ now = () => performance.now(), minimum = 800, timeout = 30000, fade = 250, sync = null } = {}) {
+// now is monotonic milliseconds; sync uses the independent relay clock. The deadline releases failed downloads and shader compilation as well as a stalled relay clock.
+export function createRaceLoadState({ now = () => performance.now(), minimum = 800, timeout = 20000, fade = 250, sync = null } = {}) {
   const began = now();
   let fadeAt = null, cancelled = false, timedOut = false;
   return {
@@ -34,10 +34,10 @@ export function createRaceLoadState({ now = () => performance.now(), minimum = 8
     update({ ground = 0, furniture = false, compiled = false } = {}) {
       if (cancelled) return { phase: 'cancelled', progress: 0, timedOut };
       const at = now(), ready = ground === 1 && furniture && compiled;
-      timedOut ||= at - began >= timeout && !ready;
+      timedOut ||= at - began >= timeout && (!ready || (!!sync && sync.at - sync.now() > 3000));
       const progress = Math.min(1, ground * .8 + Number(furniture) * .1 + Number(compiled) * .1);
       if ((ready || timedOut) && at - began >= minimum) {
-        if (sync && sync.at - sync.now() > 3000) return { phase: 'waiting', progress: 1, timedOut };
+        if (!timedOut && sync && sync.at - sync.now() > 3000) return { phase: 'waiting', progress: 1, timedOut };
         fadeAt ??= at;
       }
       return { phase: fadeAt === null ? 'loading' : at - fadeAt >= fade ? 'done' : 'fading', progress, timedOut };
@@ -45,7 +45,7 @@ export function createRaceLoadState({ now = () => performance.now(), minimum = 8
   };
 }
 
-export function createRaceLoadingView({ fmtTime, base }) {
+export function createRaceLoadingView({ fmtTime, base, onCancel }) {
   // The race manager also runs in Node physics tests without a browser DOM.
   if (typeof window === 'undefined') return { show() {}, update() {}, hide() {} };
   const style = document.createElement('style');
@@ -54,6 +54,7 @@ export function createRaceLoadingView({ fmtTime, base }) {
 #race-loading{position:fixed;inset:0;z-index:90;display:grid;place-items:center;background:#06100df2;color:#edf7ef;padding:20px;box-sizing:border-box;font:14px/1.4 system-ui,sans-serif;opacity:1;transition:opacity .25s}
 #race-loading.fading{opacity:0}
 #race-loading .rl-panel{width:min(520px,100%);max-height:90dvh;overflow:auto;background:#12251ff7;border:1px solid #eac17c55;border-radius:20px;box-shadow:0 24px 80px #0009;padding:22px;box-sizing:border-box}
+#race-loading .rl-cancel{display:block;margin:0 0 12px auto;padding:6px 12px;border:1px solid #eac17c55;border-radius:8px;background:#21402f;color:inherit;font:inherit;cursor:pointer}
 #race-loading h2{font-size:24px;margin:4px 0 16px}
 #race-loading canvas{width:100%;height:auto;border-radius:10px;background:#21402f;display:block}
 #race-loading .rl-facts{color:#e7c68a;margin:12px 0}
@@ -64,8 +65,9 @@ export function createRaceLoadingView({ fmtTime, base }) {
   document.head.append(style);
   const root = document.createElement('section'); root.id = 'race-loading'; root.hidden = true;
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-labelledby', 'rl-title');
-  root.innerHTML = `<div class="rl-panel"><h2 id="rl-title"></h2><canvas width="704" height="396" aria-label="Race route"></canvas><p class="rl-facts"></p><div class="rl-targets"></div><progress max="1" value="0" aria-label="Race loading progress"></progress><p class="rl-status" role="status" aria-live="polite"></p></div>`;
+  root.innerHTML = `<div class="rl-panel"><button type="button" class="rl-cancel" aria-label="Cancel race loading">Cancel (Esc)</button><h2 id="rl-title"></h2><canvas width="704" height="396" aria-label="Race route"></canvas><p class="rl-facts"></p><div class="rl-targets"></div><progress max="1" value="0" aria-label="Race loading progress"></progress><p class="rl-status" role="status" aria-live="polite"></p></div>`;
   document.body.append(root);
+  root.querySelector('.rl-cancel').addEventListener('click', onCancel);
   let revision = 0;
   return {
     show(race) {

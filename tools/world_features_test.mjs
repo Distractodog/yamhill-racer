@@ -49,3 +49,17 @@ layer.set({ version: 1, pieces: [{ id: 'platform', type: 'platform', x: 0, y, z:
 world.setPlacedPieces(layer); assert(world.heightAt(0, 0) >= y);
 world.setPlacedPieces(null); assert(world.heightAt(0, 0) < y);
 console.log('PASS integrated world: real campus tile built; seam geometry, tree FX warmup/breaks, all graphics levels, night uniform and placed surfaces coexist (stub renderer; no GPU validation)');
+
+// Race cancellation must return to resident ground even after the camera has crossed the map.
+world.setRaceReturnPoint({ x: 0, z: 0 });
+world.setRaceLoadPoints([[20000, 20000]]);
+assert.equal(world.raceLoadProgress(), 1, 'tiles absent from the manifest never block race readiness');
+world.updateLOD(new THREE.Vector3(20000, 100, 20000), null, 8);
+assert(world.loadedAt(0, 0), 'race departure tile is retained beyond the normal drop radius');
+assert(world.buildStatus.budget >= 13, 'race loading receives the base plus accelerated build budget');
+world.setRaceReturnPoint(null); world.setRaceLoadPoints([]);
+world.updateLOD(new THREE.Vector3(0, 100, 0));
+assert(world.loadedAt(0, 0), 'cancel can resume immediately on retained ground');
+world.updateLOD(new THREE.Vector3(20000, 100, 20000));
+assert(!world.loadedAt(0, 0), 'normal disposal resumes after race preparation releases the departure');
+console.log('PASS race streaming: manifest filtering, retained departure, accelerated budget and pin release');

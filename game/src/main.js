@@ -410,7 +410,9 @@ function updateCamera(dt) {
     const cx = Math.sin(camYaw), cz = Math.cos(camYaw);
     tmp.set(car.renderPos.x - cx * dist, camY + high - Math.sin(camPitch) * dist, car.renderPos.z - cz * dist);
     tmp.y = Math.min(tmp.y, chaseCeiling(tmp, rp, car.vel, dt));
-    camPos.lerp(tmp, 1 - Math.exp(-dt * 22));
+    // Race start/cancel teleports: focus streaming on the destination immediately, like the aircraft camera.
+    if (camPos.distanceToSquared(tmp) > 10000) camPos.copy(tmp);
+    else camPos.lerp(tmp, 1 - Math.exp(-dt * 22));
     clampChaseCamera(rp, 0.9);
     camera.position.copy(camPos);
     camera.position.x += Math.sin(shakeT * 1.3) * amp; camera.position.y += Math.sin(shakeT * 1.7 + 1) * amp;
@@ -510,8 +512,9 @@ function frame(now) {
   if (builder.open) builder.update(dt); else updateCamera(dt);
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
+  // Race loading always builds/renders, even if a map gesture was left active behind its overlay.
   // Paused for ground to load: build faster (not while the spawn map waits for a click: the player may zoom any moment)
-  const mapBusy = minimap.busy;
+  const raceLoading = challenges.blocked, mapBusy = minimap.busy && !raceLoading;
   if (!mapBusy) world.updateLOD(camera.position, builder.open ? null : car.vel, respawnHold.blocked || challenges.blocked || sessionSpawn.loading ? 8 : 0);
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
@@ -521,13 +524,13 @@ function frame(now) {
   rimRing?.update(car.renderPos);
   remotes.update(dt);
   // vehicle shader warm-up / pictures: not while the full map is open (a shader compile is a long frame), except while
-  // the chosen start point loads
-  const holdWarmup = minimap.open && !(sessionSpawn.loading && !mapBusy);
+  // the chosen start point loads. Race loading owns scene compilation; defer unrelated vehicle warm-up.
+  const holdWarmup = raceLoading || (minimap.open && !(sessionSpawn.loading && !mapBusy));
   if (!holdWarmup) warmup.step();
   if (!holdWarmup && warmup.done && !vehicleThumbs.started) vehicleThumbs.start(['car', 'bike', 'jet'].map(k => [k, vehicles.getType(k)]));
   // the full map (M, or the spawn map) covers the screen: the 3D view, dimmed behind it, holds its last frame (one is
   // drawn if there is none yet: the spawn map opens before the first frame); in multiplayer ~4 times a second (mapview.js)
-  if (draw3D({ open: minimap.open, drawn: drawn3D, multiplayer: mp.inGame, spawn: sessionSpawn.blocked, busy: mapBusy, now, last: last3D })) {
+  if (raceLoading || draw3D({ open: minimap.open, drawn: drawn3D, multiplayer: mp.inGame, spawn: sessionSpawn.blocked, busy: mapBusy, now, last: last3D })) {
     renderer.render(scene, camera); drawn3D = true; last3D = now;
   }
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);

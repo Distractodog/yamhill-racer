@@ -328,7 +328,8 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
   // extraMs: more build time while the game is paused for the ground to load (a respawn hold, respawnhold.js)
   // The budget is for a 60 Hz frame; slower frames get more (tilequeue.js frameBudget), by the frame interval measured
   // here (smoothed; gaps over 250 ms, a hidden tab or a held frame, are left out).
-  let lastAt = 0, frameMs = REF_FRAME_MS, raceLoadTiles = [];
+  let lastAt = 0, frameMs = REF_FRAME_MS, raceLoadTiles = [], raceReturnTiles = [];
+  const buildStatus = { budget: 0 };
   function update(cam, vel, extraMs = 0) {
     const at = performance.now(), gap = at - lastAt; lastAt = at;
     if (gap > 0 && gap < 250) frameMs += (gap - frameMs) * 0.1;
@@ -340,7 +341,7 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
     for (const [tx, tz] of raceLoadTiles) {
       if (available.has(world.key(tx, tz))) want.set(world.key(tx, tz), [tx, tz]);
     }
-    const pinned = new Set(raceLoadTiles.map(([tx, tz]) => world.key(tx, tz)));
+    const pinned = new Set([...raceLoadTiles, ...raceReturnTiles].map(([tx, tz]) => world.key(tx, tz)));
     const nx = (cam.x + ax) / 2, nz = (cam.z + az) / 2, d2 = ([tx, tz]) => (tx * T - nx) ** 2 + (tz * T - nz) ** 2;
     // at most 3 tiles in flight, but the tile under the camera never waits behind look-ahead tiles from before a
     // respawn / teleport
@@ -353,7 +354,8 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
     }
     // build steps within this frame's budget, nearest tile first, by the same point the loads are ordered by (after a
     // respawn / teleport the queue can still hold tiles from where the vehicle was)
-    queue.update(frameBudget(FRAME_BUDGET_MS + Math.min(4, sp / 60), frameMs) + extraMs, j => d2([j.tx, j.tz]));
+    buildStatus.budget = frameBudget(FRAME_BUDGET_MS + Math.min(4, sp / 60), frameMs) + extraMs;
+    queue.update(buildStatus.budget, j => d2([j.tx, j.tz]));
   }
 
   // shadow casters: only trees near the car (that's all the shadow area covers); invisible in the normal view
@@ -424,6 +426,11 @@ export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) 
   }
   return Object.assign(world, { treeFX, group, updateLOD, updateShadows, townRange, setDetail, graphicsDetail: () => ({ ...detail }), setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); nightUniform.value = nightAmount; },
     tick(t) { treeFX.update(t); waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
+    // Keep the departure ground resident until loading finishes or is cancelled. It is not part of race readiness.
+    setRaceReturnPoint(point) {
+      raceReturnTiles = point ? wanted(point.x, point.z, 500).filter(t => vis.has(world.key(...t))) : [];
+    },
+    buildStatus,
     setRaceLoadPoints(points = []) {
       const tiles = new Map();
       for (const [x, z] of points) for (const tile of wanted(x, z, 160)) tiles.set(world.key(...tile), tile);

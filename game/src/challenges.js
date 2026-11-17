@@ -189,8 +189,8 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   const saveBest = () => { try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch {} };
   // the race menu, built the first time it opens; menuClosed: it closed itself (Esc, ✕, a click outside), the finish
   // panel comes back if it was up
-  let raceMenu = null, loading = null;
-  const loadingView = createRaceLoadingView({ fmtTime, base });
+  let raceMenu = null, loading = null, loadStatus = null, departure = null;
+  const loadingView = createRaceLoadingView({ fmtTime, base, onCancel: () => quit() });
   const menuUI = () => raceMenu ||= createRaceMenu({ list, best: () => best, medals, rewards, fmtTime, base, racing: () => state !== 'idle',
     onStart: i => start(i), onInvite: i => mpHook?.pick?.(i), canInvite: () => !!mpHook?.canInvite?.(), onClose: () => menuClosed() });
 
@@ -285,69 +285,87 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     if (!opts.mp) mpHook?.onLocalStart?.();
     loading?.cancel(); loadingView.hide(); world.setRaceLoadPoints?.([]);
     sync = opts.sync || null;
-    ghost.stop();
-    ch = list[i]; sel = i; result = null; returning = false; wrongWayTime = 0;
-    closeMenu(); done.style.display = 'none';
-    vehicles?.switchTo(ch.vehicle || 'car', { place: false });
-    car.glide?.cancel();
-    // jet races: a crash (or R) puts you back in the air at the last ring you flew through
-    if (vehicles) vehicles.jet.respawn = ch.vehicle === 'jet' ? () => {
-      if (state !== 'running' || next < 2) return null;
-      const g = ch.gates[next - 1]; return [g.x, g.y, g.z, g.yaw, 450];
-    } : null;
-    state = 'placing'; count.style.display = 'none';
-    loadingView.show(ch);
-    buildArches();
-    const points = ch.vehicle !== 'jet' && ch.track
-      ? raceTrack(opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track, ch.gates.at(-1)) : null;
-    track = points ? makeTrack(points) : null;
-    if (track) {
-      const layer = makeRaceBarriers(points, world);
-      world.setRaceBarriers?.(layer); bounds = raceBounds(track);
-      barrierModel = buildRaceBarrierModel(layer); group.add(barrierModel.mesh); barrierTick = 0;
-    }
-    state = 'placing'; next = 1; t = 0; splits = [];
-    hud.style.display = 'block'; renderHud();
-    const startPose = opts.mp && opts.grid ? opts.grid : ch.start;
-    const token = ++placeToken, run = ch;
-    const samples = raceLoadPoints(run, startPose);
-    world.setRaceLoadPoints?.(samples);
+    // Preserve the original departure across a replacement start, before switching vehicles or teleporting.
+    departure ||= { kind: car.kind, pos: car.pos.clone(), quat: car.quat.clone(), yaw: car.heading(),
+      vel: car.vel.clone(), air: car.mode === 'air', safe: car.safe.slice() };
+    world.setRaceReturnPoint?.(departure.pos);
     const load = loading = createRaceLoadState({ sync });
-    onPlace();
-    car.pos.set(startPose.x, car.pos.y, startPose.z); car.vel.set(0, 0, 0); car._lastLoaded = null;
-    car.savePrev?.(); car.interpolate?.(0);
-    let compiled = false, compiling = false, status;
-    do {
-      if (token !== placeToken || loading !== load) return;
-      // Placement keeps ownership if a crash/remote control requests a respawn during the wait.
-      onPlace(); car.pos.x = startPose.x; car.pos.z = startPose.z; car.vel.set(0, 0, 0); car._lastLoaded = null;
+    loadStatus = null;
+    try {
+      ghost.stop();
+      ch = list[i]; sel = i; result = null; returning = false; wrongWayTime = 0;
+      closeMenu(); done.style.display = 'none';
+      vehicles?.switchTo(ch.vehicle || 'car', { place: false });
+      car.glide?.cancel();
+      // jet races: a crash (or R) puts you back in the air at the last ring you flew through
+      if (vehicles) vehicles.jet.respawn = ch.vehicle === 'jet' ? () => {
+        if (state !== 'running' || next < 2) return null;
+        const g = ch.gates[next - 1]; return [g.x, g.y, g.z, g.yaw, 450];
+      } : null;
+      state = 'placing'; count.style.display = 'none';
+      loadingView.show(ch);
+      buildArches();
+      const points = ch.vehicle !== 'jet' && ch.track
+        ? raceTrack(opts.mp ? gridTrack(ch.track, ch.start, opts.gridCount, ch.vehicle) : ch.track, ch.gates.at(-1)) : null;
+      track = points ? makeTrack(points) : null;
+      if (track) {
+        const layer = makeRaceBarriers(points, world);
+        world.setRaceBarriers?.(layer); bounds = raceBounds(track);
+        barrierModel = buildRaceBarrierModel(layer); group.add(barrierModel.mesh); barrierTick = 0;
+      }
+      state = 'placing'; next = 1; t = 0; splits = [];
+      hud.style.display = 'block'; renderHud();
+      const startPose = opts.mp && opts.grid ? opts.grid : ch.start;
+      const token = ++placeToken, run = ch;
+      const samples = raceLoadPoints(run, startPose);
+      const nearbyArches = arches.filter(a => (!world.mapContains || world.mapContains(a.grp.position.x, a.grp.position.z, 0)) &&
+        samples.some(([x, z]) => Math.hypot(a.grp.position.x - x, a.grp.position.z - z) < 150));
+      // Readiness and requests share the same furniture footprint, including long wall segment endpoints.
+      world.setRaceLoadPoints?.([...samples, ...(barrierModel?.loadPoints(samples) || []),
+        ...nearbyArches.map(a => [a.grp.position.x, a.grp.position.z])]);
+      onPlace();
+      car.pos.set(startPose.x, car.pos.y, startPose.z); car.vel.set(0, 0, 0); car._lastLoaded = null;
       car.savePrev?.(); car.interpolate?.(0);
-      barrierModel?.update();
-      // Only the prepared part of the course must be placed now; distant checkpoints stream normally during play.
-      for (const a of arches) if (!a.placed && world.loadedAt(a.grp.position.x, a.grp.position.z)) {
-        a.grp.position.y = world.heightAt(a.grp.position.x, a.grp.position.z) - .2; a.placed = true;
-      }
-      const ground = world.raceLoadProgress?.() ?? raceGroundProgress(world, samples);
-      const furniture = (!barrierModel || barrierModel.readyNear(samples)) && arches.every(a => a.placed ||
-        !samples.some(([x, z]) => Math.hypot(a.grp.position.x - x, a.grp.position.z - z) < 150));
-      if (ground === 1 && furniture && !compiling) {
-        compiling = true;
-        onPlace(); car.reset(startPose.x, startPose.z, startPose.yaw); car.safe = []; car._lastLoaded = null;
-        styleArches(); car.syncMesh?.(0);
-        // Compile the race scene (including the active vehicle, arches and new barrier material) with its real lights.
-        Promise.resolve().then(() => token === placeToken && compileRace()).then(() => { compiled = true; }).catch(e => console.warn('race loading compile:', e));
-      }
-      status = load.update({ ground, furniture, compiled });
-      loadingView.update(status);
-      if (status.phase !== 'done') await new Promise(r => setTimeout(r, 50));
-    } while (status.phase !== 'done');
-    if (token !== placeToken || loading !== load) return;
-    loading = null; loadingView.hide(); world.setRaceLoadPoints?.([]);
-    onPlace(); car.reset(startPose.x, startPose.z, startPose.yaw); car.safe = []; car._lastLoaded = null;
-    if (status.timedOut) { split.textContent = 'Course still loading — starting with available scenery'; split.style.opacity = 1; splitT = 6; }
-    if (opts.mp && sync) car.ghostUntil = Math.max(car.ghostUntil || 0, sync.at + 3000);
-    state = 'countdown'; cd = sync ? (sync.at - sync.now()) / 1000 : COUNTDOWN; styleArches();
-    count.style.display = 'block'; count.textContent = String(sync ? Math.max(1, Math.ceil(cd)) : 3); blip(440, 0.15);
+      let compiled = false, compiling = false, status;
+      do {
+        if (token !== placeToken || loading !== load) return;
+        // Placement keeps ownership if a crash/remote control requests a respawn during the wait.
+        onPlace(); car.pos.x = startPose.x; car.pos.z = startPose.z; car.vel.set(0, 0, 0); car._lastLoaded = null;
+        car.savePrev?.(); car.interpolate?.(0);
+        barrierModel?.update();
+        // Only the prepared part of the course must be placed now; distant checkpoints stream normally during play.
+        for (const a of arches) if (!a.placed && world.loadedAt(a.grp.position.x, a.grp.position.z)) {
+          a.grp.position.y = world.heightAt(a.grp.position.x, a.grp.position.z) - .2; a.placed = true;
+        }
+        const ground = world.raceLoadProgress?.() ?? raceGroundProgress(world, samples);
+        const furniture = (!barrierModel || barrierModel.readyNear(samples)) && nearbyArches.every(a => a.placed);
+        if (ground === 1 && furniture && !compiling) {
+          compiling = true;
+          onPlace(); car.reset(startPose.x, startPose.z, startPose.yaw); car.safe = []; car._lastLoaded = null;
+          styleArches(); car.syncMesh?.(0);
+          // Compile the race scene (including the active vehicle, arches and new barrier material) with its real lights.
+          Promise.resolve().then(() => token === placeToken && compileRace()).then(() => { compiled = true; }).catch(e => console.warn('race loading compile:', e));
+        }
+        status = load.update({ ground, furniture, compiled });
+        loadStatus = { ...status, ground, furniture, compiled, compiling };
+        loadingView.update(status);
+        if (status.phase !== 'done') await new Promise(r => setTimeout(r, 50));
+      } while (status.phase !== 'done');
+      if (token !== placeToken || loading !== load) return;
+      // A missing start tile cannot support a race. The deadline still releases loading, returning to retained ground.
+      if (!world.loadedAt(startPose.x, startPose.z)) { quit(); car.say?.('Course unavailable — returned to your starting point', 6); return; }
+      loading = null; loadingView.hide(); world.setRaceLoadPoints?.([]);
+      onPlace(); car.reset(startPose.x, startPose.z, startPose.yaw); car.safe = []; car._lastLoaded = null;
+      if (status.timedOut) { split.textContent = 'Course still loading — starting with available scenery'; split.style.opacity = 1; splitT = 6; }
+      if (opts.mp && sync) car.ghostUntil = Math.max(car.ghostUntil || 0, sync.at + 3000);
+      state = 'countdown'; cd = sync ? (sync.at - sync.now()) / 1000 : COUNTDOWN; styleArches();
+      count.style.display = 'block'; count.textContent = String(sync ? Math.max(1, Math.ceil(cd)) : 3); blip(440, 0.15);
+      departure = null; world.setRaceReturnPoint?.(null);
+    } catch (error) {
+      quit();
+      console.warn('race loading failed:', error);
+      car.say?.('Course unavailable — returned to your starting point', 6);
+    }
   }
 
   function quit() {
@@ -355,6 +373,16 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     ghost.stop();
     loading?.cancel(); loading = null; loadingView.hide(); world.setRaceLoadPoints?.([]);
     returning = false; wrongWayTime = 0; placeToken++; state = 'idle'; ch = null; clearArches();
+    onPlace(); // cancel any respawn hold created during preparation, even when no return is needed
+    if (departure) {
+      const p = departure; departure = null;
+      vehicles?.switchTo(p.kind, { place: false });
+      car.reset(p.pos.x, p.pos.z, p.yaw);
+      if (p.air && car.placeInAir) car.placeInAir(p.pos.x, p.pos.y, p.pos.z, p.yaw, p.vel.length() * 3.6);
+      car.pos.copy(p.pos); car.quat.copy(p.quat); car.vel.copy(p.vel); car.safe = p.safe; car._lastLoaded = null;
+      car.savePrev?.(); car.interpolate?.(0);
+    }
+    world.setRaceReturnPoint?.(null);
     if (vehicles) vehicles.jet.respawn = null;
     hud.style.display = 'none'; count.style.display = 'none'; done.style.display = 'none'; split.style.opacity = 0;
     minimap.setOverlay?.(null);
@@ -484,6 +512,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   // capture phase: runs before the map's own Esc handler, so Esc with the full map open only closes the map
   addEventListener('keydown', e => {
     if (e.gameUI) return;
+    if (state === 'placing' && e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); quit(); return; }
     if (state === 'placing' && e.code !== 'Escape' && e.code !== 'KeyH') { e.preventDefault(); e.stopImmediatePropagation(); return; }
     // Let the focused finish action receive its native Enter/Space click instead of
     // interpreting every Enter as retry (or Space as a driving input).
@@ -510,6 +539,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   return {
     get blocked() { return state === 'placing'; },
+    get loadingStatus() { return loadStatus; },
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
     set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, track: ch.track, route: ch.route, next, state, t },
     dnf, rewards, medals, get raceMenu() { return menuUI(); }, markers, best: () => best, start, quit, openMenu, closeMenu, get result() { return result; },
