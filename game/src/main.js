@@ -399,9 +399,8 @@ const vmsgEl = Object.assign(document.createElement('div'), { id: 'veh-msg' }); 
 const vlineEl = Object.assign(document.createElement('div'), { id: 'veh-line' });
 vlineEl.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px;font-variant-numeric:tabular-nums;';
 speedEl.before(vlineEl);
-// speed number + unit label (km/h ⇄ mph). The label is clickable; U does the same. Display only.
+// speed number + unit label (km/h ⇄ mph). U and Settings change the display units.
 const speedNumEl = document.getElementById('speed-num'), speedUnitEl = document.getElementById('speed-unit');
-speedUnitEl.addEventListener('click', e => { e.stopPropagation(); toggleUnits(); speedUnitEl.blur(); });
 const showUnits = () => {
   speedUnitEl.textContent = speedUnit();
   document.querySelectorAll('[data-kmh]').forEach(el => { el.textContent = fmtKmh(+el.dataset.kmh); });

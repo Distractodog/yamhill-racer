@@ -1,5 +1,5 @@
 // Display units: metric (km/h, m, km) or imperial (mph, ft, mi). Display only — physics, tuning and saved
-// records stay metric; everything here converts at draw time. U toggles, or click the unit next to the speed.
+// records stay metric; everything here converts at draw time. U toggles, or choose in Settings.
 const KEY = 'yr-units-1';
 const MPH = 1 / 1.609344, FT = 3.28084, MI = 1609.344;
 
