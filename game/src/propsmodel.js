@@ -7,7 +7,6 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { placeProps } from './props.js';
 
 export const PROP_R = 250;
-const R2 = PROP_R * PROP_R;
 const MOVE2 = 30 * 30;
 
 const up = new THREE.Vector3(0, 1, 0);
@@ -114,7 +113,9 @@ export function* addProps(group, lods, td, geos, mat) {
 }
 
 // Copies nearby instances into the live meshes. No work when the camera has stayed put.
-export function showProps(lods, cam) {
+// r: Settings → Graphics shortens it (world.js setDetail)
+export function showProps(lods, cam, r = PROP_R) {
+  const r2 = r * r;
   for (const tile of lods) {
     const dx = tile.x - cam.x, dz = tile.z - cam.z;
     if (dx * dx + dz * dz < MOVE2) continue;
@@ -124,7 +125,7 @@ export function showProps(lods, cam) {
       const dst = t.mesh.instanceMatrix.array;
       for (let i = 0; i < t.n; i++) {
         const ox = t.xz[i * 2] - cam.x, oz = t.xz[i * 2 + 1] - cam.z;
-        if (ox * ox + oz * oz > R2) continue;
+        if (ox * ox + oz * oz > r2) continue;
         dst.set(t.src.subarray(i * 16, i * 16 + 16), n * 16);
         n++;
       }

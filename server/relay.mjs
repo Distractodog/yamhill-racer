@@ -1,3 +1,4 @@
+import { validChunk, acceptChunk } from '../game/src/builder/wire.js';
 // Transport-independent protocol. Clients provide send(JSON text) and close(code, reason).
 export const MAX_PLAYERS = 16;
 export const MAX_MESSAGE_BYTES = 16384;
@@ -21,6 +22,7 @@ export class Room {
     this.now = now;
     this.clients = new Map();
     this.world = null;
+    this.layout = null; this.layoutPending = null;
   }
   get host() { return [...this.clients.values()].find(s => s.player?.host); }
   get players() { return [...this.clients.values()].filter(s => s.player).map(s => s.player); }
@@ -68,6 +70,7 @@ export class Room {
       this.broadcast({ t: 'joined', player: session.player }, client);
       this.roster();
       if (this.world) this.send(client, this.world);
+      if (this.layout) for (const chunk of this.layout) this.send(client, chunk);
       return;
     }
     const srvT = this.now();
@@ -86,12 +89,26 @@ export class Room {
       if (!['host', 'own'].includes(msg.mode) || !object(msg.settings)) return;
       this.world = forwarded;
       this.broadcast(forwarded);
+    } else if (msg.t === 'layout' && session.player.host && validChunk(msg)) {
+      const { pending, complete } = acceptChunk(this.layoutPending, { t: 'layout', revision: msg.revision, index: msg.index, total: msg.total, data: msg.data, from: session.id, srvT });
+      this.layoutPending = pending;
+      if (complete) { this.layout = complete; for (const chunk of complete) this.broadcast(chunk, client); }
     } else if (msg.t === 'kick' && session.player.host) {
       const target = [...this.clients].find(([, s]) => s.id === msg.id && s.player && !s.player.host);
       if (!target) return;
       this.send(target[0], { t: 'kicked' });
       this.leave(target[0]);
       this.close(target[0], 'kicked');
+    } else if (msg.t === 'tree-break') {
+      if (typeof msg.id !== 'string' || !/^-?\d{1,3}_-?\d{1,3}:\d{1,6}$/.test(msg.id)) return;
+      this.broadcast({ t: 'tree-break', id: msg.id, from: session.id, srvT });
+    } else if (msg.t === 'tree-sync' && session.player.host) {
+      if (!Array.isArray(msg.trees) || msg.trees.length > 128 || !msg.trees.every(tree => object(tree) &&
+        typeof tree.id === 'string' && /^-?\d{1,3}_-?\d{1,3}:\d{1,6}$/.test(tree.id) &&
+        Number.isFinite(tree.remainingMs) && tree.remainingMs > 0 && tree.remainingMs <= 300000)) return;
+      const target = [...this.clients].find(([, s]) => s.id === msg.to && s.player && !s.player.host);
+      if (target) this.send(target[0], { t: 'tree-sync', to: msg.to, from: session.id, srvT,
+        trees: msg.trees.map(({ id, remainingMs }) => ({ id, remainingMs })) });
     } else if (RACES.has(msg.t)) {
       this.broadcast(forwarded);
     }
@@ -106,6 +123,7 @@ export class Room {
     this.clients.delete(client);
     if (session.player?.host) {
       this.world = null;
+      this.layout = null; this.layoutPending = null;
       const remaining = [...this.clients.keys()];
       this.clients.clear(); // Remove before close callbacks can reenter.
       for (const peer of remaining) this.reject(peer, 'host-left');

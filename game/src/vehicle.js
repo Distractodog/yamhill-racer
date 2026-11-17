@@ -5,6 +5,7 @@
 // normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt / loadedAt / extent for bookkeeping).
 // The car keeps its own (older) copies of the collision helpers so its handling is byte-for-byte unchanged.
 import * as THREE from 'three';
+import { breakTrunk } from './treebreak.js';
 import { createVehicleWorld, collideBuilding } from './roofs.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
@@ -57,10 +58,11 @@ export class Vehicle {
     for (const zo of offsets) {
       _w.set(0, 0, zo).applyQuaternion(this.quat).add(this.pos);
       if (_w.y - this.world.heightAt(_w.x, _w.z, _w.y) > 14) continue;
-      this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr) => {
+      this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr, h, broad, id) => {
         const dx = _w.x - tx, dz = _w.z - tz, d = Math.hypot(dx, dz), min = R + tr;
         if (d < min && d > 1e-4) {
           const nx = dx / d, nz = dz / d, pen = min - d;
+          if (breakTrunk(this, id, h, this.vel.x * nx + this.vel.z * nz)) return;
           this.pos.x += nx * pen; this.pos.z += nz * pen; _w.x += nx * pen; _w.z += nz * pen;
           const vn = this.vel.x * nx + this.vel.z * nz;
           if (vn < 0) {

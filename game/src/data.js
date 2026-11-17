@@ -3,6 +3,7 @@
 // data is loaded separately (makeTileData) and registered with the world (makeWorld), which routes every query
 // to the tile that contains the point.
 import * as THREE from 'three';
+import { createTreeBreaks, treeId } from './treebreak.js';
 import { sidewalkSides, KERB } from './roads.js';
 import { roadHalfWidth, roadEdge, triangleHeight } from './ramps.js';
 import { bridgeJunction } from './bridgequeries.js';
@@ -238,16 +239,17 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
     const gz = Math.min(GN - 1, Math.max(0, Math.floor((trees[t * 4 + 1] - z0) / GC)));
     const k = gz * GN + gx; let l = tgrid.get(k); if (!l) tgrid.set(k, l = []); l.push(t);
   }
+  const brokenTrees = new Set();
   function treesNear(x, z, r, cb) {
     const a0 = Math.max(0, Math.floor((x - r - x0) / GC)), a1 = Math.min(GN - 1, Math.floor((x + r - x0) / GC));
     const b0 = Math.max(0, Math.floor((z - r - z0) / GC)), b1 = Math.min(GN - 1, Math.floor((z + r - z0) / GC));
     for (let gz = b0; gz <= b1; gz++) for (let gx = a0; gx <= a1; gx++) {
       const l = tgrid.get(gz * GN + gx); if (!l) continue;
-      for (const t of l) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]), trees[t * 4 + 2], trees[t * 4 + 3]);   // x, z, trunk r, height, broadleaf?
+      for (const t of l) if (!brokenTrees.has(t)) cb(trees[t * 4], trees[t * 4 + 1], trunkRadius(trees[t * 4 + 2], trees[t * 4 + 3]), trees[t * 4 + 2], trees[t * 4 + 3], treeId(tx, tz, t));   // stable tree id is the sixth argument
     }
   }
   yield 'tiledata';
-  const td = { tx, tz, x0, z0, gx0, gz0, NN, hs: HS, H, surf, trees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
+  const td = { tx, tz, x0, z0, gx0, gz0, NN, hs: HS, H, surf, trees, brokenTrees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
     sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
     pondId, pondLevel, waterLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear, deckNormal,
     heightAt: (x, z, y) => Math.max(terrainAt(x, z), overlayAt(x, z, y)) };
@@ -260,12 +262,20 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
 
 // ---------------------------------------------------------------- the whole world: routes queries to tiles
 export function makeWorld(W) {
+  let placedPiecesRevision = 0;
+  let placedPieces = null; // Optional builder layer; absent means the original query path.
   const knownRoadTiles = new Map();
   const T = W.tile, tiles = new Map(), [EX0, EZ0, EX1, EZ1] = W.extent;
   const key = (tx, tz) => tx * 1000 + tz;
   const tileIndex = (x, z) => [Math.floor((x + T / 2) / T), Math.floor((z + T / 2) / T)];
   // Map membership comes from the manifest, independently of streamed/loaded tiles.
   const available = new Set(W.tiles.map(([tx, tz]) => key(tx, tz)));
+  const treeTiles = new Set(W.tiles.map(([tx, tz]) => `${tx}_${tz}`));
+  const treeBreaks = createTreeBreaks((tx, tz, index) => treeTiles.has(`${tx}_${tz}`) && (!tiles.has(key(tx, tz)) || index < tiles.get(key(tx, tz)).treeCount));
+  treeBreaks.onChange(e => {
+    const tile = tiles.get(key(e.ref[0], e.ref[1]));
+    if (tile) { if (e.broken) tile.brokenTrees.add(e.ref[2]); else tile.brokenTrees.delete(e.ref[2]); }
+  });
   function mapContains(x, z, margin = 0) {
     // A vehicle-sized square spans at most four cells (margin is much less than half a tile).
     for (const dx of [-margin, margin]) for (const dz of [-margin, margin]) {
@@ -308,10 +318,14 @@ export function makeWorld(W) {
   function setRamps(list) { challengeRamps = prepRamps(list); ramps = fixedRamps.concat(challengeRamps); }
   function setFixedRamps(list) { fixedRamps = prepRamps(list); ramps = fixedRamps.concat(challengeRamps); }
   function groundAt(x, z, y) { const t = at(x, z); return t ? t.heightAt(x, z, y) : 0; }     // without ramps
-  function heightAt(x, z, y) { const g = groundAt(x, z, y); return ramps.length ? g + rampAt(x, z) : g; }
-  function surfaceAt(x, z, y) { const t = tileAt(x, z); return t ? t.surfaceAt(x, z, y) : 0; }
-  function waterLevelAt(x, z) { const t = tileAt(x, z); return t ? t.waterLevelAt(x, z) : -Infinity; }
+  function heightAt(x, z, y) { const g = groundAt(x, z, y); const h = ramps.length ? g + rampAt(x, z) : g; return placedPieces ? Math.max(h, placedPieces.sample(x, z, y)?.h ?? -Infinity) : h; }
+  function surfaceAt(x, z, y) {
+    if (placedPieces) { const p = placedPieces.sample(x, z, y); if (p && p.h >= groundAt(x, z, y) + (ramps.length ? rampAt(x, z) : 0)) return p.surface; }
+    const t = tileAt(x, z); return t ? t.surfaceAt(x, z, y) : 0;
+  }
+  function waterLevelAt(x, z) { const t = tileAt(x, z), h = t ? t.waterLevelAt(x, z) : -Infinity; return placedPieces ? Math.max(h, placedPieces.waterLevelAt(x, z)) : h; }
   function normalAt(x, z, out = new THREE.Vector3(), y) {
+    if (placedPieces) { const p = placedPieces.sample(x, z, y); if (p && p.h >= groundAt(x, z, y) + (ramps.length ? rampAt(x, z) : 0)) return out.set(-p.gx, 1, -p.gz).normalize(); }
     const e = W.hstep * 0.5, t = at(x, z);
     if (t?.deckNormal?.(x, z, y, out)) out.multiplyScalar(2 * e);
     else {
@@ -324,12 +338,14 @@ export function makeWorld(W) {
   function treesNear(x, z, r, cb) {
     const [a0, b0] = tileIndex(x - r, z - r), [a1, b1] = tileIndex(x + r, z + r);
     for (let tz = b0; tz <= b1; tz++) for (let tx = a0; tx <= a1; tx++) { const t = tiles.get(key(tx, tz)); if (t) t.treesNear(x, z, r, cb); }
+    placedPieces?.treesNear(x, z, r, cb);
   }
   const _b = [];
   function buildingsNear(x, z, r = 40) {
     _b.length = 0;
     const [a0, b0] = tileIndex(x - r, z - r), [a1, b1] = tileIndex(x + r, z + r);
     for (let tz = b0; tz <= b1; tz++) for (let tx = a0; tx <= a1; tx++) { const t = tiles.get(key(tx, tz)); if (t) for (const b of t.buildings) _b.push(b); }
+    placedPieces?.buildingsNear(x, z, r, _b);
     return _b;
   }
   // nearest point of a given surface class, facing along it (spawns, teleports)
@@ -348,12 +364,18 @@ export function makeWorld(W) {
     return [best[0], best[1], yaw];
   }
   return {
+    baseHeightAt(x, z, y) { const g = groundAt(x, z, y); return ramps.length ? g + rampAt(x, z) : g; },
+    get placedPiecesRevision() { return placedPiecesRevision; },
+    setPlacedPieces(layer) { placedPieces = layer; placedPiecesRevision++; },
+    treeBreaks, breakTree: (id, impact, remote) => treeBreaks.break(id, impact, remote),
     W, tiles, knownRoadTiles, extent: W.extent, spawn: W.spawn, tileIndex, tileAt, key, mapContains,
     wetness: 0,
     setWetness(value) { this.wetness = Math.max(0, Math.min(1, Number(value) || 0)); },
     add(t) {
       // Retain only placement metadata after a streamed tile's physics/render data is released.
       knownRoadTiles.set(key(t.tx, t.tz), { sourcePaths: (t.sourcePaths || []).filter(p => p.kind === 'asphalt'), sourceJunctions: t.sourceJunctions });
+      (t.brokenTrees ??= new Set()).clear();
+      for (const e of treeBreaks.broken.values()) if (e.ref[0] === t.tx && e.ref[1] === t.tz) t.brokenTrees.add(e.ref[2]);
       tiles.set(key(t.tx, t.tz), t); last = null;
     },
     remove(tx, tz) { tiles.delete(key(tx, tz)); last = null; },

@@ -7,6 +7,7 @@
 //   * drifting starts on the handbrake (or when the car slides too far) and ends when you straighten out.
 // A ground "snap" stops the car floating off small crests; big ramps still launch it.
 import * as THREE from 'three';
+import { breakTrunk } from './treebreak.js';
 import { wetGrip, wetBraking } from './wetgrip.js';
 import { buildCarModel, WHEEL_POS } from './carmodel.js';
 import { Vehicle } from './vehicle.js';
@@ -399,10 +400,11 @@ export class Car extends Vehicle {
     for (const zo of [-1.4, 0, 1.4]) {
       _w.set(0, 0, zo * (this.typePhysics?.length ?? 1)).applyQuaternion(this.quat).add(this.pos);
       if (_w.y - this.world.heightAt(_w.x, _w.z, _w.y) > 14) continue;
-      this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr) => {
+      this.world.treesNear(_w.x, _w.z, R + 1.2, (tx, tz, tr, h, broad, id) => {
         const dx = _w.x - tx, dz = _w.z - tz, d = Math.hypot(dx, dz), min = R + tr;
         if (d < min && d > 1e-4) {
           const nx = dx / d, nz = dz / d, pen = min - d;
+          if (breakTrunk(this, id, h, this.vel.x * nx + this.vel.z * nz)) return;
           this.pos.x += nx * pen; this.pos.z += nz * pen; _w.x += nx * pen; _w.z += nz * pen;
           const vn = this.vel.x * nx + this.vel.z * nz;
           if (vn < 0) {

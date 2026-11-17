@@ -23,6 +23,7 @@ export class RelayRoom {
   constructor(ctx, env) {
     this.env = env;
     this.ctx = ctx;
+    this.layoutStored = new Map();
     const sockets = ctx.getWebSockets();
     const first = sockets[0]?.deserializeAttachment();
     this.room = new Room(first?.code);
@@ -32,9 +33,20 @@ export class RelayRoom {
       else ws.close(1000, 'invalid-session');
     }
     ctx.blockConcurrencyWhile(async () => {
-      if (this.room.host) this.room.world = (await ctx.storage.get('world')) ?? null;
+      if (this.room.host) {
+        this.room.world = (await ctx.storage.get('world')) ?? null;
+        const layout = await ctx.storage.get('layout');
+        if (layout) {
+          for (const key of layout.keys || []) this.layoutStored.set(key, await ctx.storage.get(key));
+          this.room.layout = layout.complete?.map(key => this.layoutStored.get(key)) ?? null;
+          this.room.layoutPending = layout.pending ? { ...layout.pending, chunks: Object.fromEntries(layout.pending.keys.map(key => { const c = this.layoutStored.get(key); return [c.index, c]; })) } : null;
+        }
+      }
       else {
         await ctx.storage.delete('world');
+        const layout = await ctx.storage.get?.('layout');
+        for (const key of layout?.keys || []) await ctx.storage.delete(key);
+        await ctx.storage.delete('layout');
         for (const ws of this.room.clients.keys()) {
           if (this.room.session(ws).player) this.room.removeRejected(ws, 'no-host');
         }
@@ -74,6 +86,20 @@ export class RelayRoom {
       if (!this.room.clients.has(peer)) this.saveSession(peer);
     }
     await this.saveWorld(oldWorld);
+    let type; try { type = JSON.parse(message)?.t; } catch {}
+    if (type === 'layout' || (hadHost && !this.room.host)) await this.saveLayout();
+  }
+  async saveLayout() {
+    // Each storage value stays small too, not just the WebSocket frames.
+    const next = new Map(), keyOf = c => `layout:${c.revision}:${c.index}`;
+    const complete = this.room.layout?.map(c => { const key = keyOf(c); next.set(key, c); return key; }) ?? null;
+    const p = this.room.layoutPending;
+    const pending = p ? { revision: p.revision, total: p.total, keys: Object.values(p.chunks).map(c => { const key = keyOf(c); next.set(key, c); return key; }) } : null;
+    for (const [key, chunk] of next) if (this.layoutStored.get(key) !== chunk) await this.ctx.storage.put(key, chunk);
+    if (next.size) await this.ctx.storage.put('layout', { complete, pending, keys: [...next.keys()] });
+    else await this.ctx.storage.delete('layout');
+    for (const key of this.layoutStored.keys()) if (!next.has(key)) await this.ctx.storage.delete(key);
+    this.layoutStored = next;
   }
   async saveWorld(oldWorld) {
     if (this.room.world === oldWorld) return;
@@ -86,6 +112,7 @@ export class RelayRoom {
     this.room.leave(ws);
     for (const peer of oldClients) this.saveSession(peer);
     await this.saveWorld(oldWorld);
+    await this.saveLayout();
     try { ws.close(1000, 'disconnected'); } catch { /* Already closed. */ }
   }
   webSocketError(ws) { return this.webSocketClose(ws); }

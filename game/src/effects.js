@@ -215,6 +215,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 export class Effects {
   // shadows: false = no contact shadows (mp/remotes.js: other players' vehicles, which also need no document)
   constructor(scene, { shadows = true, caps = FX_CAPS } = {}) {
+    this.maxCaps = { ...caps }; this.caps = { ...caps };
     this.scene = scene; this.time = 0; this.cam = new THREE.Vector3(); this.camSeen = false;
     Object.assign(this, Effects.vehicleState());
     const fog = () => THREE.UniformsUtils.clone(THREE.UniformsLib.fog);
@@ -295,6 +296,26 @@ export class Effects {
     this.bodyBlob = mk(2.4, 4.9, 0.5);
   }
 
+  // Settings → Graphics: reuse the allocated buffers and shaders; smaller rings overwrite sooner.
+  // Clear on a change so expanding the limits cannot bring old particles or marks back.
+  setCaps(caps = this.maxCaps) {
+    const next = {};
+    for (const k of Object.keys(this.maxCaps)) next[k] = Number.isFinite(caps[k])
+      ? Math.max(1, Math.min(this.maxCaps[k], Math.floor(caps[k]))) : this.maxCaps[k];
+    if (Object.keys(next).every(k => next[k] === this.caps[k])) return;
+    this.caps = next;
+    for (const [R, geo, mesh, cap] of [[this.puffs, this.puffGeo, this.points, next.puffs],
+      [this.chips, this.chipGeo, this.chipMesh, next.chips]]) {
+      R.clear(); R.data.fill(0); R.cap = cap; R.cursor = R.total = R.fresh = R.first = 0;
+      geo.instanceCount = 0; mesh.visible = false;
+    }
+    const M = this.marksBuf;
+    M.max = next.marks; M.i = M.total = 0; M.changed.length = 0;
+    this.marks.geometry.setDrawRange(0, 0);
+    this.tyres = [];  // fresh trails: never join the old ribbon after its ring was cleared
+    this.discCap = next.discs; this.discN = this.discs.count = 0; this.discs.visible = false;
+  }
+
   placeBlob(m, x, z, yaw, above, world, y) {
     const h = world.heightAt(x, z, y);
     m.position.set(x, h + 0.03, z);
@@ -332,7 +353,7 @@ export class Effects {
     this.blur(dt, car, mw);
     if (!dt) return;
     // far from the camera: fewer puffs (none past ~260 m), the marks stay
-    const far = this.camSeen ? smooth(260, 110, rp.distanceTo(this.cam)) : 1;
+    const far = (this.camSeen ? smooth(260, 110, rp.distanceTo(this.cam)) : 1) * this.caps.puffs / this.maxCaps.puffs;
     if (car.burning && car.mode === 'crashed') {               // jet wreck: black smoke
       for (this.wreck += dt * 30 * far; this.wreck >= 1; this.wreck--) this.puff(car.pos, car.vel, SOOT, 1.8, 0.6, 0.15, 2.4, 3, 4, car.pos.y - 1.5);
     }

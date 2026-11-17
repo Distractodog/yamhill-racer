@@ -107,6 +107,15 @@ export function createSettings() {
     get open() { return current !== null || welcomeOpen || external !== null || menu.open; }, close() { menu.close(); close(); closeExternal(); }, showWelcome, closeWelcome,
     openExternal(panel, onClose) { menu.close(); closeExternal(); closeWelcome(); close(); beforeOpen(); external = { panel, close: onClose }; changed(); },
     get welcomeOpen() { return welcomeOpen; },
+    bindBuilder(builder) {
+      const section = document.createElement('section');
+      section.innerHTML = '<h3>Builder</h3><label><input type="checkbox" id="builder-enabled"> Builder mode</label><p>Place your own ramps, roads and scenery. Press B to build or drive.</p><button type="button">Open builder</button><p class="builder-host-note" hidden>The host controls the shared layout.</p>';
+      tuning.append(section);
+      const toggle = section.querySelector('input'), open = section.querySelector('button'), note = section.querySelector('p.builder-host-note');
+      toggle.addEventListener('change', () => builder.setEnabled(toggle.checked));
+      open.addEventListener('click', () => { close(); builder.show(); });
+      builder.subscribe(() => { toggle.checked = builder.enabled; toggle.disabled = builder.readOnly; open.disabled = !builder.enabled || builder.readOnly; note.hidden = !builder.readOnly; });
+    },
     bindTuning(gui) {
       closeTuning = () => gui.foldersRecursive().forEach(folder => folder.close());
       closeTuning();

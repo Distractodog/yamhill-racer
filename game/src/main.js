@@ -1,6 +1,7 @@
 import { createWind } from './wind.js';
 import { createWindView } from './windview.js';
 import * as THREE from 'three';
+import { connectTreeBreaks } from './treebreak.js';
 import GUI from 'lil-gui';
 import { loadWorld } from './world.js';
 import { createRimRing } from './rimring.js';
@@ -29,11 +30,14 @@ import { createSpawn } from './spawn.js';
 import { createRespawnHold } from './respawnhold.js';
 import { createWarmup } from './warmup.js';
 import { createSettings } from './settings.js';
+import { createBuilder } from './builder/builder.js';
 import { createMPMenu } from './mp/menu.js';
 import { makeRim } from './rim.js';
 import { createCollisions } from './mp/collide.js';
 import { createRemotes } from './mp/remotes.js';
 import { toggleUnits, onUnits, speedUnit, speedValue, fmtKmh } from './units.js';
+import { createGraphics } from './graphicsapply.js';
+import { bindGraphicsSettings } from './graphicsui.js';
 
 const sessionSpawn = createSpawn();
 const settings = createSettings();
@@ -60,6 +64,8 @@ Object.assign(sun.shadow.camera, { left: -SH, right: SH, top: SH, bottom: -SH, n
 sun.shadow.bias = -0.0002; sun.shadow.normalBias = 0.04;   // small bias: shadows start right at the tyres
 scene.add(sun, sun.target);
 const SUN_DIR = new THREE.Vector3(-0.45, 0.8, 0.35).normalize();
+// Settings → Graphics (graphicsapply.js): pixel ratio, shadows, view distance, world detail; High = the settings above
+const graphics = createGraphics({ renderer, scene, camera, sun });
 
 // ---------------------------------------------------------------- tuning (remembered per browser)
 const tuning = { ...TUNING_DEFAULTS };
@@ -82,7 +88,7 @@ const save = () => { try { localStorage.setItem('yr-tuning-2', JSON.stringify(tu
 
 const loadingEl = document.getElementById('loading');
 preloadMinimap();          // the map picture's levels are made (in a worker) while the world loads: the spawn map needs them
-const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Loading map… ${n}/${of}`; });
+const world = await loadWorld(renderer, (n, of) => { loadingEl.textContent = `Loading map… ${n}/${of}`; }, graphics.worldDetail);
 const rim = makeRim(world.W.rim);
 scene.add(world.group);
 const rimRing = createRimRing({ scene, rim: world.W.rim });
@@ -112,7 +118,9 @@ const drivingFX = new DrivingFX(scene);
 const atmosphere = createAtmosphere({ scene, sun, sunDirection: SUN_DIR, world, speed: Number(new URLSearchParams(location.search).get('daySpeed')) || 1 });
 settings.bindAtmosphere(atmosphere, atmosphere.presets);
 const vehicleLights = createVehicleLights(scene);
+graphics.attach({ world, effects, lights: vehicleLights }); bindGraphicsSettings(graphics);
 const audio = new CarAudio();
+connectTreeBreaks(world, mp, audio);
 settings.bindSound(audio);              // Settings → Sound: master / engines / effects volumes
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
@@ -126,6 +134,7 @@ for (const v of [vehicles.car, vehicles.bike, ...vehicles.aircraft]) v.wind = wi
 const windView = createWindView({ scene, wind, current: () => vehicles.current });
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 const remotes = await createRemotes({ scene, camera, minimap, world, audio, night: () => atmosphere.night });   // other players' vehicles, tags and map dots (multiplayer)
+await world.treeFX.warmup(renderer, camera, scene);
 document.getElementById('loading').remove();
 const cosmetics = createCosmetics(vehicles, { isUnlocked: id => challenges.rewards.has(id) });
 const gliderColors = createGliderColors({ car: glider, bike: bikeGlider });
@@ -192,14 +201,22 @@ const keys = new Set();                 // physical keys held (e.code)
 // (there it sends code KeyZ / Comma). Physical WASD keeps working as well.
 const letters = new Map();              // e.code → 'KeyW' etc. from e.key
 const clearKeys = () => { keys.clear(); letters.clear(); };
+const builder = createBuilder({ scene, camera, renderer, world, vehicle: car, mp, clearKeys,
+  canOpen: () => !sessionSpawn.blocked && !respawnHold.blocked && challenges.state === 'idle' && !settings.open,
+  beforeOpen: () => { settings.closeWelcome(); settings.close(); garage.close(); vehicles.close(); challenges.closeMenu(); minimap.toggle(false); },
+  onDrive: (hit, yaw) => { respawnHold.cancel(); car.reset(hit.x, hit.z, yaw); car.pos.y = Math.max(car.pos.y, hit.y + (car.wheelReach?.() || 1)); car.savePrev(); },
+});
+settings.bindBuilder(builder);
+
 settings.ready(clearKeys, () => {
+  builder.close(false);
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
 const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, wind, gui, beforeOpen: () => garage.close() });
 const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft],
   predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
 addEventListener('keydown', e => {
-  if (e.gameUI) return;
+  if (e.gameUI || builder.open) return;
   keys.add(e.code);
   if (/^[a-z]$/i.test(e.key)) letters.set(e.code, 'Key' + e.key.toUpperCase());
   audio.start();
@@ -235,7 +252,7 @@ function activePad() {
 }
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
-  const k = c => !settings.open && !garage.open && !vehicles.open && held(c);
+  const k = c => !builder.open && !settings.open && !garage.open && !vehicles.open && held(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
@@ -248,7 +265,7 @@ function readInput() {
   J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
   J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
   const gp = activePad();
-  if (gp && !settings.open && !garage.open && !vehicles.open) {
+  if (gp && !builder.open && !settings.open && !garage.open && !vehicles.open) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
     if (gp.buttons[6]?.value > 0.05) input.brake = gp.buttons[6].value;
@@ -456,10 +473,10 @@ function frame(now) {
   challenges.holdInput(input);
   respawnHold.update(dt);
   // the V picker pauses the game like the Garage (race clock too), except in multiplayer where the others play on
-  const picking = vehicles.open && !mp.inGame, frozen = garage.open || picking;
+  const picking = vehicles.open && !mp.inGame, frozen = garage.open || picking || builder.open;
   acc += sessionSpawn.blocked || frozen || respawnHold.blocked ? 0 : dt;
-  while (acc >= STEP && !respawnHold.blocked) { car.savePrev(); car.step(STEP, input); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
-  challenges.update(picking ? 0 : dt);
+  while (acc >= STEP && !respawnHold.blocked && !builder.open) { car.savePrev(); car.step(STEP, input); builder.step(vehicles.current); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
+  challenges.update(picking || builder.open ? 0 : dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
   car.syncMesh(dt);
@@ -471,17 +488,19 @@ function frame(now) {
   cosmetics.setWetness(atmosphere.wetness);
   cosmetics.update(frozen || sessionSpawn.blocked ? 0 : dt, vehicles.current);
   atmosphere.update(dt, camera);
+  // after the atmosphere's fog: view distance; Auto measures only frames of real play
+  graphics.frame(dt, !(sessionSpawn.blocked || frozen || respawnHold.blocked || builder.open || minimap.open || settings.open || !warmup.done || document.hidden));
   windView.update(dt);
   garage.update(dt);
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
   audio.update(car, input, dt, atmosphere);
-  updateCamera(dt);
+  if (builder.open) builder.update(dt); else updateCamera(dt);
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
   // Paused for ground to load: build faster (not while the spawn map waits for a click: the player may zoom any moment)
   const mapBusy = minimap.busy;
-  if (!mapBusy) world.updateLOD(camera.position, car.vel, respawnHold.blocked || sessionSpawn.loading ? 8 : 0);
+  if (!mapBusy) world.updateLOD(camera.position, builder.open ? null : car.vel, respawnHold.blocked || sessionSpawn.loading ? 8 : 0);
   world.updateShadows(car.renderPos);
   sun.position.copy(car.renderPos).addScaledVector(SUN_DIR, 160);   // shadow camera spans 60..260 m from the sun
   sun.target.position.copy(car.renderPos);
@@ -530,6 +549,6 @@ window.game.audio = audio;              // tools/sound_check.mjs
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim, vehicles });
 window.game.sessionSpawn = sessionSpawn;
 
-Object.assign(window.game, { wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
+Object.assign(window.game, { graphics, builder, wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
 Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

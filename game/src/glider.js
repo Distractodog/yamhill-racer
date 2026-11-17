@@ -9,6 +9,7 @@ import { driftAir } from './wind.js';
 //   * touch down upright and not too fast downward → back on your wheels; anything else is a crash and a tumble
 // Physics only reads the world through heightAt / normalAt / waterLevelAt / treesNear / buildingsNear, like the car.
 import * as THREE from 'three';
+import { breakTreeClip } from './treebreak.js';
 import { normalizeGliderColors } from './glidercolors.js';
 import { fmtKmh } from './units.js';
 
@@ -219,13 +220,13 @@ export class Glider {
   hitTree() {
     const c = this.car, W = c.world, reach = 1.2 + 2.6 * this.open;
     let hx = 0, hz = 0, hit = false;
-    W.treesNear(c.pos.x, c.pos.z, 16, (tx, tz, tr, h, broad) => {
+    W.treesNear(c.pos.x, c.pos.z, 16, (tx, tz, tr, h, broad, id) => {
       if (hit || h === undefined) return;
       const y = c.pos.y - W.terrainAt(tx, tz);
       if (y > h + 0.5 || y < 0) return;
       const crown = broad ? (y > h * 0.3 ? h * 0.3 : tr) : h * 0.15 * (1 - y / h) + tr;
       const d = Math.hypot(c.pos.x - tx, c.pos.z - tz);
-      if (d < crown + reach) { hit = true; hx = tx; hz = tz; }
+      if (d < crown + reach && !breakTreeClip(c, id, d, crown, tr, h, y)) { hit = true; hx = tx; hz = tz; }
     });
     if (!hit) return false;
     let nx = c.pos.x - hx, nz = c.pos.z - hz; const d = Math.hypot(nx, nz) || 1; nx /= d; nz /= d;
