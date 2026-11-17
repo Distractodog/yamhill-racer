@@ -106,8 +106,8 @@ export function buildSuvModel(type, p, suspension) {
   // arch circles a little above the parked wheel centres, r = tyre + gap
   const arches = [wheels[0], wheels[2]].map(w => ({ z: w.holder.position.z, y: w.holder.position.y + .03, r: p.radius + .07 }));
   const near = body(false, arches), far = body(true, arches);
-  lodBody(bodyPivot, near.shape.meshes(mats), far.shape.meshes(mats));
-  root.userData = { bodyPivot, wheels, lightMount: bodyPivot, blob: [2.4 * p.width, 4.6 * p.length],
+  lodBody(bodyPivot, near.shape.meshes(mats, near.car.panels), far.shape.meshes(mats, far.car.panels));
+  root.userData = { bodyPivot, damagePanels: near.car.panels, wheels, lightMount: bodyPivot, blob: [2.4 * p.width, 4.6 * p.length],
     // lit lenses over the headlight, and the tail lamp above its reversing light
     lights: panelLights(near.car, { at: [.90, .295], pts: [[.66, .205], [1.14, .205], [1.14, .345], [1.08, .385], [.70, .385]] },
       { at: [1.0, .34], pts: [[.854, .22], [1.135, .22], [1.135, .46], [.90, .46]] }, [4, 3]),

@@ -1,6 +1,7 @@
 // Player-car cosmetic dents. Collision code reports a world contact, outward normal and the
 // pre-response normal closing speed. Nothing here writes vehicle physics or interprets `hit`.
 import * as THREE from 'three';
+import { panelTriangle } from './models/panelskin.js';
 
 export const CAR_DAMAGE = Object.freeze({
   threshold: 3.5, fullSpeed: 45, hitDepth: .24, siteCap: .42, displacementCap: .45,
@@ -10,9 +11,15 @@ export const CAR_DAMAGE = Object.freeze({
 const models = new WeakMap();
 const point = new THREE.Vector3(), normal = new THREE.Vector3(), inverse = new THREE.Quaternion();
 const clamp = THREE.MathUtils.clamp;
+const bodyInverse = new THREE.Matrix4(), wheelInverse = new THREE.Matrix4(), wheelPoint = new THREE.Vector3();
 
 export class CarDamage {
-  constructor(car) { this.car = car; this.time = 0; this.sites = []; this.revision = 0; this.applied = -1; }
+  constructor(car) { this.car = car; this.time = 0; this.sites = []; this.revision = 0; this.applied = -1; this.drawOffset = new THREE.Vector3(); }
+  // Capture only the cosmetic chassis offset, never its world translation. Physics may
+  // advance several steps beyond renderPos before the next contact arrives.
+  setDrawOffset(meshPosition, renderPosition, renderQuaternion) {
+    this.drawOffset.copy(meshPosition).sub(renderPosition).applyQuaternion(inverse.copy(renderQuaternion).invert());
+  }
   // Simulation time, including gliding. Contact chatter cannot become repeated full crashes.
   step(dt) { this.time += dt; }
   impact(x, y, z, nx, ny, nz, speed, source = 'wall') {
@@ -21,6 +28,12 @@ export class CarDamage {
     inverse.copy(this.car.quat).invert();
     point.set(x, y, z).sub(this.car.pos).applyQuaternion(inverse);
     normal.set(nx, ny, nz).applyQuaternion(inverse).normalize();
+    point.sub(this.drawOffset);
+    const pivot = this.car.mesh?.userData.bodyPivot;
+    if (pivot) {
+      pivot.updateMatrix(); bodyInverse.copy(pivot.matrix).invert();
+      point.applyMatrix4(bodyInverse); normal.transformDirection(bodyInverse);
+    }
     if (normal.lengthSq() < .9) return;
     // The few coarse physics shapes (building circle, barrier box) can be inside the drawn
     // bonnet. Preserve tangential contact placement; extend the dent through that outer skin.
@@ -102,14 +115,21 @@ function capture(model, state) {
 }
 function wheelWeight(model, p) {
   let weight = 1;
-  const { wheels = [], wheelArch = [] } = model.userData;
+  const { wheels = [], wheelArch = [], bodyPivot } = model.userData;
+  // Holders live in chassis space; skin/arch heights live in body space. Protect the
+  // same tyre envelope after body roll, pitch and lift, without moving the tyres.
+  wheelPoint.copy(p);
+  if (bodyPivot) wheelPoint.applyMatrix4(bodyPivot.matrix);
   for (let i = 0; i < wheels.length; i++) {
     const w = wheels[i], h = w.holder.position;
     // Keep the arch and its lip clear of the whole tyre travel envelope. Wheels, brakes and
     // holders are outside bodyPivot; the race car's merged arms have an explicit vertex range.
-    const dx = Math.abs(p.x - h.x) - (w.hubWidth ?? .5) / 2 - .07;
-    const dz = Math.abs(p.z - h.z) - w.r - .07;
-    const dy = p.y - (wheelArch[i] ?? w.restY + w.r) - .05;
+    const dx = Math.abs(wheelPoint.x - h.x) - (w.hubWidth ?? .5) / 2 - .07;
+    const dz = Math.abs(wheelPoint.z - h.z) - w.r - .07;
+    const e = wheelInverse.elements, arch = wheelArch[i] ?? w.restY + w.r;
+    // Solve the body-frame ceiling plane at this CHASSIS-space hub x/z (as wheeltravel).
+    const ceiling = Math.abs(e[5]) > 1e-6 ? (arch - e[1] * h.x - e[9] * h.z - e[13]) / e[5] : h.y + w.r;
+    const dy = wheelPoint.y - Math.max(ceiling, h.y + w.r) - .05;
     weight = Math.min(weight, clamp(Math.max(dx, dz, dy) / .2, 0, 1));
   }
   return weight;
@@ -133,21 +153,40 @@ function deform(p, sites, weight) {
   if (p.z * delta.z < 0) delta.z = Math.sign(delta.z) * Math.min(Math.abs(delta.z), Math.abs(p.z) * .45);
   return moved.copy(p).add(delta);
 }
+const skinWeights = new THREE.Vector3(), skinPoint = new THREE.Vector3(), skinDelta = new THREE.Vector3();
+function deformSkin(model, p, sites) {
+  const triangle = panelTriangle(p, model.userData.damagePanels, skinWeights);
+  if (!triangle) return deform(p, sites, wheelWeight(model, p));
+  // The shell and every overlay use precisely the same affine displacement within each
+  // original shell triangle. Their authored layer offsets survive regardless of topology.
+  skinDelta.set(0, 0, 0);
+  for (let i = 0; i < 3; i++) {
+    skinPoint.fromArray(triangle[i]);
+    deform(skinPoint, sites, wheelWeight(model, skinPoint));
+    skinDelta.addScaledVector(moved.sub(skinPoint), skinWeights.getComponent(i));
+  }
+  return moved.copy(p).add(skinDelta);
+}
+function prepareWheelFrame(model) {
+  const pivot = model.userData.bodyPivot;
+  if (pivot) { pivot.updateMatrix(); wheelInverse.copy(pivot.matrix).invert(); } else wheelInverse.identity();
+}
 function deformModel(model, sites) {
+  prepareWheelFrame(model);
   const state = stateFor(model); state.sites = sites; state.version++;
   capture(model, state);
   for (const [glow, part] of state.glows) {
     point.copy(part.rest).applyMatrix4(part.matrix);
-    glow.position.copy(deform(point, sites, wheelWeight(model, point)).applyMatrix4(part.inverse));
+    glow.position.copy(deformSkin(model, point, sites).applyMatrix4(part.inverse));
   }
   for (const [mesh, part] of state.parts) {
     const g = mesh.geometry, pos = g.attributes.position;
     for (let i = 0; i < part.count; i++) {
       point.fromArray(part.rest, i * 3).applyMatrix4(part.matrix);
-      deform(point, sites, wheelWeight(model, point)).applyMatrix4(part.inverse);
+      deformSkin(model, point, sites).applyMatrix4(part.inverse);
       pos.setXYZ(i, moved.x, moved.y, moved.z);
     }
-    pos.clearUpdateRanges(); pos.needsUpdate = true;
+    pos.clearUpdateRanges(); pos.addUpdateRange(0, part.count * 3); pos.needsUpdate = true;
     g.computeVertexNormals(); g.computeBoundingBox(); g.computeBoundingSphere();
   }
 }
@@ -157,7 +196,7 @@ function restore(model) {
     const g = mesh.geometry;
     // Merged animated suspension vertices remain owned by linkage.update().
     g.attributes.position.array.set(part.rest.subarray(0, part.count * 3));
-    g.attributes.position.clearUpdateRanges(); g.attributes.position.needsUpdate = true;
+    g.attributes.position.clearUpdateRanges(); g.attributes.position.addUpdateRange(0, part.count * 3); g.attributes.position.needsUpdate = true;
     if (part.normals) { g.attributes.normal.array.set(part.normals); g.attributes.normal.needsUpdate = true; }
     g.computeBoundingBox(); g.computeBoundingSphere();
   }
@@ -175,6 +214,6 @@ export function refreshCarDamageAttachments(model) {
 export const carDamageVersion = model => models.get(model)?.version ?? 0;
 export function deformCarPoint(model, p) {
   const state = models.get(model);
-  if (state?.sites.length) p.copy(deform(p, state.sites, wheelWeight(model, p)));
+  if (state?.sites.length) { prepareWheelFrame(model); p.copy(deformSkin(model, p, state.sites)); }
   return p;
 }

@@ -506,6 +506,7 @@ export class Car extends Vehicle {
       g.holder.position.y = drawnWheelY(m, i, g.restY + 0.3 - drop - (RADIUS - g.r));
       g.spin.rotation.x = wh.spin;
     });
+    this.damage?.setDrawOffset(m.position, this.renderPos, this.renderQuat);
     ud.linkage?.update();      // a model's suspension arms follow its wheels (models/racecar.js)
   }
 }

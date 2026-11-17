@@ -1,4 +1,5 @@
 import { refreshCarDamageAttachments, carDamageVersion, deformCarPoint } from './cardamage.js';
+import { splitPanelGeometry } from './models/panelskin.js';
 // Vehicle-space anchors: +x left, +z forward. Remotes use lenses only.
 // A model's userData.lights (all in its lightMount's space unless said otherwise):
 //   head / tail: [Vector3] lens centres on the drawn lamps; nav: { left, right, tail, strobe } (aircraft)
@@ -104,7 +105,8 @@ export function createVehicleLightLenses(mesh, kind = 'car') {
   const glowPlane = new THREE.PlaneGeometry(1, 1); geometries.push(glowPlane);
   function add(position, color, role, outline) {
     let geometry = ball;
-    if (role === 'head' || role === 'tail') geometries.push(geometry = lensGeometry(position, outline, role));
+    if (role === 'head' || role === 'tail') geometries.push(geometry = splitPanelGeometry(
+      lensGeometry(position, outline, role), mesh.userData.damagePanels, new THREE.Matrix4().makeTranslation(...position)));
     const material = materialFor(color);
     const lens = new THREE.Mesh(geometry, material); lens.position.copy(position);
     lens.name = `vehicle-light-${role}`;

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
-import { CAR_DAMAGE, refreshCarDamageAttachments } from '../game/src/cardamage.js';
+import { CAR_DAMAGE, refreshCarDamageAttachments, deformCarPoint } from '../game/src/cardamage.js';
 import { applyVehicleType, typeModel, VEHICLE_TYPES, buildVehicleTypeModel } from '../game/src/vehicletypes.js';
 import { collideBuilding } from '../game/src/roofs.js';
 import { makeRaceBarriers } from '../game/src/racebarriers.js';
@@ -231,6 +231,122 @@ const count = bounded.damage.revision;
 bounded.recordImpact(NaN, 0, 0, 0, 0, -1, 45); assert.equal(bounded.damage.revision, count);
 
 console.log(`PASS distractodog car damage: ${parity} exact collision physics comparisons; broken trees, relative vehicle speed, barriers, slams, glider, terrain, bounded state`);
+
+// GPU uploads: emulate WebGLAttributes consuming updateRanges after real syncMesh calls.
+// A new attribute gets its initial full buffer; subsequent uploads must include skin edits
+// even when suspension animation runs after damage.update/repair in the same frame.
+{
+  const c = car(), uploads = new Map();
+  const sync = () => { c.savePrev(); c.interpolate(1); c.syncMesh(1 / 60); };
+  const position = () => c.mesh.userData.lod.levels[0].object.children[0].geometry.attributes.position;
+  const upload = () => {
+    const a = position(); let gpu = uploads.get(a);
+    if (!gpu) { gpu = a.array.slice(); uploads.set(a, gpu); }
+    else if (!a.updateRanges.length) gpu.set(a.array);
+    else for (const r of a.updateRanges) gpu.set(a.array.subarray(r.start, r.start + r.count), r.start);
+    assert.deepEqual(gpu, a.array, 'simulated GPU sees every skin/arm change');
+    a.clearUpdateRanges();
+  };
+  sync(); upload();
+  const skinCount = c.mesh.userData.lod.levels[0].object.children[0].userData.damageVertexCount * 3;
+  const skinQueued = label => assert(position().updateRanges.some(r => r.start === 0 && r.count >= skinCount), label);
+  building(c, 15); c.latAcc = 12; sync(); skinQueued('first dent + lean uploads skin'); upload();
+  c.damage.step(.3); building(c, 45); c.latAcc = -22; sync(); skinQueued('accumulated dent + changed lean uploads skin'); upload();
+  c.reset(0, -10, 0); c.latAcc = 20; c.lonAcc = -15; sync(); skinQueued('repair + changed lean uploads skin'); upload();
+  c.latAcc = -20; c.lonAcc = 15; sync();
+  assert(position().updateRanges.length && position().updateRanges.every(r => r.start >= skinCount), 'undamaged animation stays arms-only'); upload();
+  for (let i = 0; i < 30; i++) { c.latAcc = i % 2 ? 20 : -20; sync(); }
+  assert.equal(position().updateRanges.length, 1, 'pending arm animation does not grow ranges without a render'); upload();
+  building(c, 45); sync(); upload(); const raceMesh = c.mesh;
+  applyVehicleType(c, 'hatch'); applyVehicleType(c, 'race'); assert.equal(c.mesh, raceMesh);
+  c.latAcc = 15; sync(); skinQueued('cached type repair uploads skin'); upload();
+  console.log('PASS distractodog GPU ranges: real syncMesh, first/repeated dents, repair/cache, lean, arms-only and renderer consumption');
+}
+
+// Contacts use current physics pose + the cached cosmetic offset, not stale mesh world
+// translation/quaternion. Pivot lean/lift and a chassis draw rise are distinct transforms.
+for (const type of ['race', 'suv']) for (const transformed of [false, true]) {
+  const c = car(type), pivot = c.mesh.userData.bodyPivot;
+  if (transformed) {
+    c.pos.set(31, 5, -17); c.quat.setFromEuler(new THREE.Euler(.25, .73, -.12));
+    pivot.position.set(.05, .27, -.03); pivot.rotation.set(.12, -.06, .17);
+  }
+  pivot.updateMatrix();
+  const offset = new THREE.Vector3(0, transformed ? .23 : 0, 0);
+  const stalePosition = new THREE.Vector3(-90, 10, 84), staleQuaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(-.2, -1, .15));
+  c.damage.setDrawOffset(offset.clone().applyQuaternion(staleQuaternion).add(stalePosition), stalePosition, staleQuaternion);
+  c.mesh.position.set(1e5, -1e4, 1e5); c.mesh.quaternion.copy(staleQuaternion);
+  const local = new THREE.Vector3(.2, .3, 2), n = new THREE.Vector3(0, 0, -1);
+  const point = local.clone().applyMatrix4(pivot.matrix).add(offset).applyQuaternion(c.quat).add(c.pos);
+  const normal = n.clone().transformDirection(pivot.matrix).applyQuaternion(c.quat), before = physics(c);
+  c.recordImpact(...point, ...normal, 45);
+  assert(c.damage.sites[0].point.distanceTo(local) < 1e-10, `${type}: body-local point with transformed=${transformed}`);
+  assert(c.damage.sites[0].normal.distanceTo(n) < 1e-10, `${type}: body-local normal`);
+  assert.deepEqual(physics(c), before, 'mapping never writes physics');
+  c.damage.repair(); assert.equal(c.damage.sites.length, 0);
+  // Missing body pivot falls back to chassis coordinates (stand-in models/headless callers).
+  c.mesh.userData.bodyPivot = null;
+  const plain = local.clone().add(offset).applyQuaternion(c.quat).add(c.pos);
+  c.recordImpact(...plain, ...n.clone().applyQuaternion(c.quat), 45);
+  assert(c.damage.sites[0].point.distanceTo(local) < 1e-10);
+  c.mesh.userData.bodyPivot = pivot; c.damage.repair();
+  // Tyre envelopes are in holder/chassis space, even when the body is leaning/lifted.
+  pivot.position.set(.6, .3, 0); pivot.rotation.set(.12, 0, .22); pivot.updateMatrix();
+  const wheel = c.mesh.userData.wheels[0], tyreTop = wheel.holder.position.clone().add(new THREE.Vector3(0, wheel.r, 0));
+  const bodyTyre = tyreTop.clone().applyMatrix4(pivot.matrix.clone().invert());
+  const contact = tyreTop.clone().add(offset).applyQuaternion(c.quat).add(c.pos);
+  const force = new THREE.Vector3(-1, 0, 0).applyQuaternion(c.quat);
+  c.recordImpact(...contact, ...force, 45); c.damage.update();
+  assert(deformCarPoint(c.mesh, bodyTyre.clone()).distanceTo(bodyTyre) < 1e-9, 'leaned/lifted body leaves the tyre envelope intact');
+  c.reset(0, -10, 0); assert.equal(c.damage.sites.length, 0);
+  applyVehicleType(c, type === 'race' ? 'suv' : 'race'); applyVehicleType(c, type);
+  assert.equal(c.damage.sites.length, 0);
+}
+// The real syncMesh publishes draw rise even if its world position changes next step.
+{
+  const c = car(); c.pos.y = .1; c.savePrev(); c.interpolate(1); c.syncMesh(1 / 60);
+  const expected = c.mesh.position.clone().sub(c.renderPos).applyQuaternion(c.renderQuat.clone().invert());
+  assert(expected.length() > .05 && c.damage.drawOffset.distanceTo(expected) < 1e-10);
+}
+console.log('PASS distractodog contact coordinates: physics orientation, body lean/lift, draw rise, stale render pose, zero/null poses and tyre frame');
+
+// Ray-cast triangle INTERIORS, not just vertices: independently triangulated layers used
+// to sink behind the shell/grille frame. Track the visible surface colour and order at
+// many grille, lamp, plate and trim points after real front/side building collisions.
+for (const type of ['hatch', 'suv']) for (const level of [0, 1]) {
+  const c = car(type), body = c.mesh.userData.bodyPivot.children.find(o => o.isLOD).levels[level].object;
+  const meshes = []; body.traverse(o => { if (o.isMesh) meshes.push(o); });
+  c.mesh.position.set(0, 0, 0); c.mesh.quaternion.identity(); c.mesh.updateMatrixWorld(true);
+  const ray = new THREE.Raycaster(), z = c.mesh.userData.damagePanels[0].z;
+  const surface = point => {
+    ray.set(new THREE.Vector3(point.x, point.y, z + 2), new THREE.Vector3(0, 0, -1));
+    const hit = ray.intersectObjects(meshes, false)[0]; assert(hit, `${type}: front sample must intersect at ${point.toArray()}`);
+    const g = hit.object.geometry, colours = g.attributes.color, vertex = g.index ? g.index.getX(hit.faceIndex * 3) : hit.faceIndex * 3;
+    const colour = colours ? [colours.getX(vertex), colours.getY(vertex), colours.getZ(vertex)] : hit.object.material.color.toArray();
+    return { point: hit.point.clone(), colour: colour.map(v => v.toFixed(5)).join('/') };
+  };
+  const samples = [];
+  const xs = type === 'suv' ? [-.52, -.38, -.21, .12, .27, .46, .78, .99] : [-.3, -.19, -.08, .14, .28, .48, .57, .73];
+  const ys = type === 'suv' ? [-.04, .02, .09, .22, .31] : [.13, .155, .19, .23];
+  for (const x of xs) for (const y of ys) samples.push(surface(new THREE.Vector3(x, y, z)));
+  for (const speed of [15, 45]) {
+    c.reset(0, -10, 0); building(c, speed); c.damage.update(); c.mesh.updateMatrixWorld(true);
+    for (const original of samples) {
+      const expected = deformCarPoint(c.mesh, original.point.clone()), hit = surface(expected);
+      assert.equal(hit.colour, original.colour, `${type}/${speed}: front layer colour at ${original.point.toArray()}`);
+      assert(hit.point.distanceTo(expected) < 2e-5, `${type}: front layer remains attached to its shell triangle`);
+    }
+  }
+  for (const yaw of [0, Math.PI / 2, -Math.PI / 2]) { c.damage.step(.3); building(c, 45, yaw); }
+  c.damage.update();
+  for (const original of samples) {
+    const hit = surface(deformCarPoint(c.mesh, original.point.clone()));
+    assert.equal(hit.colour, original.colour, `${type}: repeated impacts preserve layer order`);
+  }
+  c.reset(0, -10, 0);
+  for (const original of samples) assert.equal(surface(original.point).colour, original.colour);
+  console.log(`PASS distractodog ${type} ${level ? 'far' : 'near'}: ${samples.length} grille/lamp/trim interior rays, medium/high/repeated/reset, no layer inversion`);
+}
 
 // Optional one-tile rehearsal of the browser runner's exact site and approach. It proves
 // the low-speed setup actually reaches a real wall and every type/angle creates contact.

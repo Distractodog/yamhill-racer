@@ -474,7 +474,15 @@ export function buildRaceCarModel(wheelPos, colors = {}) {
       }
       if (!moved) return;
       posed = pos;                       // (a baked copy, mp/remotes.js, is a new buffer: posed in full once)
-      pos.clearUpdateRanges(); pos.addUpdateRange(armStart * 3, (armEnd - armStart) * 3); pos.needsUpdate = true;
+      // Damage/repair can already have queued the skin. Extend that pending upload;
+      // after the renderer consumes it, ordinary animation still uploads only the arms.
+      const start = armStart * 3, end = armEnd * 3;
+      const pending = pos.updateRanges.find(r => r.start <= end && r.start + r.count >= start);
+      if (pending) {
+        const stop = Math.max(end, pending.start + pending.count);
+        pending.start = Math.min(start, pending.start); pending.count = stop - pending.start;
+      } else pos.addUpdateRange(start, end - start);
+      pos.needsUpdate = true;
     },
     // the arms' largest |swing| (rad) and stretch as last drawn, and as the wheels asked (tests)
     extent() {

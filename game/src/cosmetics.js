@@ -1,4 +1,5 @@
 import { refreshCarDamageAttachments } from './cardamage.js';
+import { splitPanelGeometry } from './models/panelskin.js';
 import * as THREE from 'three';
 import { buildCarModel } from './carmodel.js';
 import { buildBikeModel } from './bike.js';
@@ -138,7 +139,7 @@ function applyBinding(binding, config, wear) {
   if (config.livery === 'classic') { refreshCarDamageAttachments(binding.model); return; }
   const texture = decalTexture(config); if (!texture) return;
   const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
-  const add = (w, h, x, y, z, rx, ry = 0) => { const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material); mesh.position.set(x,y,z); mesh.rotation.set(rx,ry,0); mesh.renderOrder = 3; decals.add(mesh); };
+  const add = (w, h, x, y, z, rx, ry = 0) => { const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material); mesh.position.set(x,y,z); mesh.rotation.set(rx,ry,0); mesh.updateMatrix(); mesh.geometry = splitPanelGeometry(mesh.geometry, binding.model.userData.damagePanels, mesh.matrix); mesh.renderOrder = 3; decals.add(mesh); };
   if (binding.model.userData.decalPanels) { for (const panel of binding.model.userData.decalPanels) add(...panel); }
   else if (kind === 'car') { add(.38,.65,0,.32,1.0,-Math.PI/2); for (const side of [-1,1]) add(.58,.72,side*.58,.272,-.2,-Math.PI/2); }
   if (kind === 'bike' && !binding.model.userData.decalPanels) for (const side of [-1,1]) add(.3,.16,side*.174,.22,-.45,0,side*Math.PI/2);
