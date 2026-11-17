@@ -590,7 +590,8 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
       let s = slots.find(x => !x.owner);
       if (!s && slots.length < VOICES) {
         const gain = ctx.createGain(), pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-        gain.gain.value = 0; if (pan) gain.connect(pan).connect(ctx.destination); else gain.connect(ctx.destination);
+        const bus = audio.engineBus || ctx.destination;     // Settings → Sound: Master and Engines volumes
+        gain.gain.value = 0; if (pan) gain.connect(pan).connect(bus); else gain.connect(bus);
         s = { voice: new CarAudio({ ctx, out: gain }), gain, pan, owner: null, idle: 0 }; slots.push(s);
       }
       if (s) { s.owner = r; s.voice.gear = 1; }
