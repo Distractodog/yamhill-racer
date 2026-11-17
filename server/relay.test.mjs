@@ -226,6 +226,7 @@ test('bad JSON, binary, oversized and unknown messages do not crash or forward',
 
 test('Durable Object restores sessions, rate timestamps and stored world after hibernation', async () => {
   const { room, host, join, send } = fixture();
+  room.host.heartbeat = Date.now();
   const guest = join(2);
   send(host, { t: 'state' });
   send(host, { t: 'world', mode: 'host', settings: { atmosphere: { hour: 7 } } });
@@ -316,6 +317,7 @@ test('builder layouts are host-only, atomic, bounded and replayed to late joiner
 test('builder layout chunks survive relay hibernation, including an incomplete transfer', async () => {
   const { layoutChunks } = await import('../game/src/builder/wire.js');
   const { room, host, join }=fixture(),guest=join(2),data=new Map();
+  room.host.heartbeat = Date.now();
   let ready;
   for(const ws of [host,guest])ws.serializeAttachment({code,session:room.session(ws)});
   const ctx={getWebSockets:()=>[host,guest],blockConcurrencyWhile(fn){ready=fn();},storage:{get:async k=>data.get(k),put:async(k,v)=>data.set(k,structuredClone(v)),delete:async k=>data.delete(k)}};

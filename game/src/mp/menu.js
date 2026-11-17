@@ -62,6 +62,25 @@ export function createWorldSettings({ mp, tuning, atmosphere, wind, refresh = ()
   };
 }
 
+// One request per open generation; a closed/reopened menu never accepts an old response.
+export function createGameListing({ load, render, available = () => true }) {
+  let version = 0, opened = false, pending = null;
+  return {
+    open() { opened = true; version++; pending = null; render([], 'Looking for games…'); return this.refresh(); },
+    close() { opened = false; version++; pending = null; },
+    async refresh() {
+      if (!opened || !available() || pending === version) return;
+      const request = version; pending = request;
+      try {
+        const games = await load();
+        if (opened && request === version && available()) render(games, games.length ? '' : 'No one is hosting right now — host a game');
+      } catch {
+        if (opened && request === version && available()) render([], 'Could not refresh open games. Trying again…');
+      } finally { if (pending === request) pending = null; }
+    },
+  };
+}
+
 export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, beforeOpen = () => {} }) {
   const button = document.getElementById('mp-button');
   const panel = document.createElement('section');
@@ -78,7 +97,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
   document.body.append(panel);
   const $ = id => panel.querySelector('#mp-' + id);
   const toast = document.createElement('div'); toast.id = 'mp-toasts'; toast.setAttribute('role', 'status'); toast.setAttribute('aria-live', 'polite'); document.body.append(toast);
-  let toastTimer, busy = false, pollTimer = null, pollVersion = 0, listing = false;
+  let toastTimer, busy = false, pollTimer = null;
   let games = [], listSignature = '', declineMessage = '';
   const requests = document.createElement('section'); requests.id = 'mp-requests'; requests.hidden = true;
   requests.setAttribute('aria-label', 'Join requests'); requests.setAttribute('aria-live', 'polite'); document.body.append(requests);
@@ -109,17 +128,10 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
       ask.addEventListener('click', () => connect(game)); row.append(label, ask); $('games').append(row);
     }
   }
-  async function refreshGames() {
-    if (panel.hidden || mp.inGame || listing) return;
-    const version = pollVersion; listing = true;
-    try {
-      const next = await mp.listGames();
-      if (version !== pollVersion || panel.hidden || mp.inGame) return;
-      games = next; $('empty').textContent = games.length ? '' : 'No one is hosting right now — host a game'; drawGames();
-    } catch { if (version === pollVersion) $('empty').textContent = 'Could not load open games. Trying again…'; }
-    finally { listing = false; }
-  }
-  function startPolling() { clearInterval(pollTimer); refreshGames(); pollTimer = setInterval(refreshGames, 5000); }
+  const listing = createGameListing({ load: () => mp.listGames(), available: () => !panel.hidden && !mp.inGame,
+    render(next, message) { games = next; $('empty').textContent = message; drawGames(); } });
+  const refreshGames = () => listing.refresh();
+  function startPolling() { clearInterval(pollTimer); listing.open(); pollTimer = setInterval(refreshGames, 5000); }
   function validName(value) { const name = value.trim(); return name.length >= 2 && name.length <= 16 && /^[A-Za-z0-9 _.-]+$/.test(name); }
   function updateName() {
     const valid = validName($('name').value); $('name-hint').hidden = valid; $('host').disabled = !valid || busy;
@@ -160,7 +172,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
     }
     names = new Map([...names, ...mp.players]);
   }
-  function close() { clearInterval(pollTimer); pollTimer = null; pollVersion++; panel.hidden = true; document.body.append(requests); button.setAttribute('aria-expanded', 'false'); (document.getElementById('menu-button') || button).focus({ preventScroll: true }); }
+  function close() { clearInterval(pollTimer); pollTimer = null; listing.close(); panel.hidden = true; document.body.append(requests); button.setAttribute('aria-expanded', 'false'); (document.getElementById('menu-button') || button).focus({ preventScroll: true }); }
   button.disabled = false;
   button.addEventListener('click', () => {
     if (!panel.hidden) { settings.close(); return; }
@@ -192,13 +204,14 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
   mp.on('join-declined', ({ name }) => { declineMessage = `${name} declined`; $('status').textContent = declineMessage; say(declineMessage); });
   mp.on('join-request', request => { if (mp.isHost) { pending.set(request.id, request); showRequests(); } });
   mp.on('join-resolved', ({ id }) => { pending.delete(id); showRequests(); });
-  mp.on('connected', () => { if (mp.isHost) $('anyone').checked = false; });
+  mp.on('connected', () => { listing.close(); if (mp.isHost) $('anyone').checked = false; });
   $('world').addEventListener('change', e => { if (e.target.id === 'mp-bump') world.setBump(e.target.value === 'on'); else world.setMode(e.target.value); render(); });
   $('leave').addEventListener('click', () => { world.restore(); mp.leave(); render(); });
   mp.on('joined', ({ player }) => { if (player.id !== mp.me.id) say(`${player.name} joined`); render(); });
   mp.on('left', ({ id }) => { say(`${names.get(id)?.name || 'A player'} left`); render(); });
   mp.on('kicked', () => { say('You were removed'); render(); });
   mp.on('closed', ({ reason }) => { say(reason === 'full' ? 'This game is full' : reason === 'no-host' ? 'This game is no longer available' : reason === 'host-left' ? 'The host left — game over' : 'Could not join this game'); render(); });
+  mp.on('disconnected', () => { if (!panel.hidden) listing.open(); });
   for (const event of ['connected', 'disconnected', 'roster', 'world']) mp.on(event, render);
   render();
   return { world, open: () => button.click() };
