@@ -125,20 +125,20 @@ void main() {
   #include <colorspace_fragment>
   #include <fog_fragment>
 }`;
-const DISC_VS = `attribute float aAlpha; varying vec2 vUv; varying float vA;
+const DISC_VS = `attribute float aAlpha; attribute vec3 aColor; varying vec2 vUv; varying float vA; varying vec3 vColor;
 #include <fog_pars_vertex>
 void main() {
-  vUv = uv; vA = aAlpha;
+  vUv = uv; vA = aAlpha; vColor = aColor;
   vec4 mvPosition = viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
 }`;
-const DISC_FS = `uniform vec3 uLight; varying vec2 vUv; varying float vA;
+const DISC_FS = `uniform vec3 uLight; varying vec2 vUv; varying float vA; varying vec3 vColor;
 #include <fog_pars_fragment>
 void main() {
   float r = length(vUv - 0.5) * 2.0;                       // a spinning rim seen as a blur: hub, smeared spokes, lip
-  vec3 c = mix(vec3(0.16), vec3(0.46), smoothstep(0.2, 0.36, r)) * (0.9 + 0.1 * sin(r * 46.0));
-  c = mix(c, vec3(0.09), smoothstep(0.8, 0.9, r));
+  float shade = mix(0.35, 1.0, smoothstep(0.2, 0.36, r)) * (0.9 + 0.1 * sin(r * 46.0));
+  vec3 c = vColor * mix(shade, 0.2, smoothstep(0.8, 0.9, r));
   float a = vA * (1.0 - smoothstep(0.92, 1.0, r));
   if (a < 0.004) discard;
   gl_FragColor = vec4(c * uLight, a);
@@ -211,6 +211,7 @@ function ringAttributes(geo, ring, names) {
 
 const _f = new THREE.Vector3(), _s = new THREE.Vector3(), _v = new THREE.Vector3(), _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
+const UNPAINTED_RIM = new THREE.Color('#8a9099');
 
 export class Effects {
   // shadows: false = no contact shadows (mp/remotes.js: other players' vehicles, which also need no document)
@@ -267,7 +268,9 @@ export class Effects {
     // ---------------- wheel blur: a soft disc over each side of a fast-turning wheel (hides the spokes)
     const dg = new THREE.CircleGeometry(1, 20).rotateY(Math.PI / 2);
     this.discA = new THREE.InstancedBufferAttribute(new Float32Array(caps.discs), 1).setUsage(THREE.DynamicDrawUsage);
+    this.discColor = new THREE.InstancedBufferAttribute(new Float32Array(caps.discs * 3), 3).setUsage(THREE.DynamicDrawUsage);
     dg.setAttribute('aAlpha', this.discA);
+    dg.setAttribute('aColor', this.discColor);
     this.discs = new THREE.InstancedMesh(dg, new THREE.ShaderMaterial({
       uniforms: { ...fog(), uLight }, vertexShader: DISC_VS, fragmentShader: DISC_FS, fog: true, transparent: true,
       depthWrite: false, side: THREE.DoubleSide }), caps.discs);
@@ -510,8 +513,10 @@ export class Effects {
       if (t.blur < 0.02 || this.discN + 2 > this.discCap) return;
       g.holder.updateWorldMatrix(true, false);
       const info = wheelInfo(g), rd = g.r * 0.72;
+      const color = g.rimColor || g.spin.children[1]?.material?.color || UNPAINTED_RIM;
       for (const s of [-1, 1]) {
         _m.makeScale(rd, rd, rd).setPosition(s * (info.hw + 0.006), 0, 0).premultiply(g.holder.matrixWorld);
+        this.discColor.setXYZ(this.discN, color.r, color.g, color.b);
         this.discs.setMatrixAt(this.discN, _m); this.discA.array[this.discN++] = t.blur;
       }
     });
@@ -562,6 +567,7 @@ export class Effects {
     if (dn) {
       this.discs.instanceMatrix.clearUpdateRanges(); this.discs.instanceMatrix.addUpdateRange(0, dn * 16); this.discs.instanceMatrix.needsUpdate = true;
       this.discA.clearUpdateRanges(); this.discA.addUpdateRange(0, dn); this.discA.needsUpdate = true;
+      this.discColor.clearUpdateRanges(); this.discColor.addUpdateRange(0, dn * 3); this.discColor.needsUpdate = true;
     }
     this.discN = 0;
   }

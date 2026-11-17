@@ -6,6 +6,8 @@ import { createCosmetics, COSMETIC_KEY, DEFAULT_COSMETICS, disposeCosmeticPrevie
 import { TUNING_DEFAULTS } from '../game/src/car.js';
 import { VEHICLE_TYPES, VEHICLE_TYPE_KEY } from '../game/src/vehicletypes.js';
 import { createWarmup } from '../game/src/warmup.js';
+import { Effects } from '../game/src/effects.js';
+import { bakeParts } from '../game/src/mp/remotes.js';
 
 const world = { extent: [-1e5, -1e5, 1e5, 1e5], spawn: [0, 0],
   heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0, surfaceAt: () => 3,
@@ -13,6 +15,25 @@ const world = { extent: [-1e5, -1e5, 1e5, 1e5], spawn: [0, 0],
   loadedAt: () => true, mapContains: () => true, treesNear() {}, buildingsNear: () => [] };
 const colors = { car: '#da219b', bike: '#17b967' };
 let checks = 0;
+const fx = new Effects(new THREE.Scene(), { shadows: false, caps: { puffs: 1, chips: 1, marks: 1, discs: 16 } });
+function checkBlur(model, expected, label) {
+  // The rendered overlay hides otherwise correctly painted rims once the wheels spin.
+  const wheels = model.userData.wheels.map(() => ({ spin: 0 }));
+  fx.tyres = wheels.map(() => ({ spin: 0, w: 0, xrate: 0, blur: 0, extra: 0 }));
+  const vehicle = { wheels, kind: model.userData.lean ? 'bike' : 'car' };
+  for (let frame = 0; frame < 60; frame++) {
+    wheels.forEach(w => { w.spin += 2; }); // 120 rad/s: visible blur on every type
+    fx.blur(1 / 60, vehicle, model.userData.wheels); fx.advance(1 / 60);
+  }
+  assert.equal(fx.discs.count, wheels.length * 2, `${label}: both wheel faces blurred`);
+  const color = fx.discs.geometry.getAttribute('aColor'), want = new THREE.Color(expected);
+  assert.ok(color, `${label}: blur has the wheel paint, not a hard-coded silver shader`);
+  assert.deepEqual(color.updateRanges, [{ start: 0, count: fx.discs.count * 3 }], `${label}: current paint uploaded`);
+  for (let i = 0; i < fx.discs.count; i++) {
+    assert.ok(Math.abs(color.getX(i) - want.r) + Math.abs(color.getY(i) - want.g) + Math.abs(color.getZ(i) - want.b) < 1e-6,
+      `${label}: blur disc ${i} uses the current rim colour`); checks++;
+  }
+}
 function check(model, expected, label) {
   const hex = expected.slice(1).toLowerCase();
   for (const [i, wheel] of model.userData.wheels.entries()) {
@@ -53,6 +74,12 @@ for (const style of ['factory', 'sport', 'rally']) for (const kind of ['car', 'b
   while (!warmup.done) warmup.step();
   inspect('warm-up');
   vehicles.switchTo(kind); inspect('vehicle switch');
+  checkBlur(vehicles.current.mesh, colors[kind], `${kind}/${id}/${style}: local blur`);
+  const batched = paintedModel(kind, cosmetics.get(kind), id);
+  bakeParts(batched);
+  checkBlur(batched, colors[kind], `${kind}/${id}/${style}: remote blur after batching`);
+  // bakeParts uses a shared material; don't dispose that material with this model.
+  batched.traverse(o => o.geometry?.dispose());
   for (let round = 0; round < 2; round++) for (const type of VEHICLE_TYPES[kind]) {
     vehicles.setType(kind, type.id); inspect(`type ${type.id}, round ${round}`);
     vehicles.current.reset(0, 0, 0); inspect('reset');
@@ -67,5 +94,28 @@ for (const style of ['factory', 'sport', 'rally']) for (const kind of ['car', 'b
   check(vehicles.all[kind].mesh, DEFAULT_COSMETICS[kind].wheels, 'Garage factory reset');
   cosmetics.set(kind, { wheels: colors[kind] });
   inspect('Garage repaint after reset');
+  cosmetics.set(kind, { wheels: '#000000' });
+  checkBlur(vehicles.current.mesh, '#000000', `${kind}/${style}: black stays black while spinning`);
+  cosmetics.set(kind, { wheels: colors[kind] });
+  cosmetics.setWetness(1); cosmetics.update(.2, vehicles.current);
+  checkBlur(vehicles.current.mesh, vehicles.current.mesh.userData.wheels[0].spin.children[1].material.color,
+    `${kind}/${style}: live wet finish`);
+  cosmetics.setWetness(0); cosmetics.wash(kind);
+  checkBlur(vehicles.current.mesh, colors[kind], `${kind}/${style}: washed paint`);
 }
-console.log(`PASS wheel colours: ${checks} rim/disc/spoke checks across saved load, warm-up, type changes, switches, resets, previews and remotes`);
+// Different players share one draw call: each wheel must carry its own colour, not a global shader uniform.
+for (const [kind, id] of [['car', 'race'], ['bike', 'dirt']]) {
+  const model = paintedModel(kind, { wheels: colors[kind] }, id);
+  fx.tyres = model.userData.wheels.map(() => ({ blur: .9, extra: 0 }));
+  fx.blur(0, { kind, wheels: fx.tyres }, model.userData.wheels);
+  disposeCosmeticPreview(model);
+}
+fx.advance(0);
+assert.equal(fx.discs.count, 12, 'two players in one blur draw');
+for (let i = 0; i < 12; i++) {
+  const want = new THREE.Color(colors[i < 8 ? 'car' : 'bike']);
+  assert.ok(Math.abs(fx.discColor.getX(i) - want.r) + Math.abs(fx.discColor.getY(i) - want.g) + Math.abs(fx.discColor.getZ(i) - want.b) < 1e-6);
+  checks++;
+}
+fx.dispose();
+console.log(`PASS wheel colours: ${checks} checks across saved load, warm-up, type changes, switches, resets, previews, remote batching and spinning rims (repaint, wet/wash, mixed players)`);
