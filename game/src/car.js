@@ -464,7 +464,7 @@ export class Car extends Vehicle {
     ud.bodyPivot.rotation.x += (pitch - ud.bodyPivot.rotation.x) * Math.min(1, dt * 10);
     // ...but never into the road, nor an arch onto a tyre on it (bodyclearance.js)
     // (exactly, while landing or tumbling: moving fast along its own up, or far from upright)
-    keepBodyAboveGround(m, ud.bodyPivot, W ? (x, z) => W.heightAt(x, z, ref) : null, Math.abs(this.vel?.dot(_bu) ?? 0) > 4 || _bu.y < 0.9);
+    ud.bodyLift = keepBodyAboveGround(m, ud.bodyPivot, W ? (x, z) => W.heightAt(x, z, ref) : null, Math.abs(this.vel?.dot(_bu) ?? 0) > 4 || _bu.y < 0.9, dt);
     this.wheels.forEach((wh, i) => {
       const g = ud.wheels[i];
       // (a remote puppet keeps the springs as sent: only the rise above is from the road)

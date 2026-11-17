@@ -12,7 +12,8 @@ import * as THREE from 'three';
 import { ConvexHull } from 'three/addons/math/ConvexHull.js';
 import { wheelArch } from './wheeltravel.js';
 
-export const BODY_CLEAR = 0.03;
+export const BODY_CLEAR = 0.003;              // only reserve a few mm above the actual ground
+const FALL_TIME = 0.4;                       // seconds: immediate rise, exponential release
 const CELL = 0.4, STEP = 0.3, NEAR = 0.01;      // m: NEAR = how close to the limit (estimated) a point is looked up
 const GX = 3, GZ = 4;
 const RESAMPLE = 0.25;   // m: points this close to the limit get their ground again after the body moved (≤ a few cm sideways)
@@ -150,12 +151,26 @@ function gridGround(entry, x, z) {
 // (scaled back) and position.y (its parked height + any lift), or raises model.position when it's far from upright.
 // Returns how far the body was lifted (m), 0 normally. exact: landing or tumbling (the grid estimate assumes a body
 // over the road, level-ish): every point near the road gets its exact ground.
-export function keepBodyAboveGround(model, pivot, ground, exact = false) {
+export function keepBodyAboveGround(model, pivot, ground, exact = false, dt = 1 / 60) {
   let entry = cache.get(pivot);
   if (!entry) cache.set(pivot, entry = build(model, pivot));
   pivot.position.y = entry.base;
-  if (!ground) return 0;
+  if (!ground) { entry.lift = 0; return 0; }
   model.updateMatrix();
+  const upY = model.matrix.elements[5], whole = upY < 0.7;
+  // Retain the falling envelope before testing clearance, so the final pose (including sideways motion along the
+  // model's tilted up) is checked against the ground as usual. Each model owns its history, including remote puppets.
+  // Switching to/from a wreck's whole-model lift starts fresh; it uses a different direction and contact surface.
+  let retained = entry.whole === whole ? (entry.lift || 0) * Math.exp(-Math.max(0, dt) / FALL_TIME) : 0;
+  if (retained < 1e-5) retained = 0;
+  let lifted = 0;
+  entry.whole = whole;
+  const lift = need => {
+    if (whole) { model.position.y += need; model.updateMatrix(); } else pivot.position.y += need / upY;
+    entry.lift = lifted += need;
+  };
+  entry.lift = 0;
+  lift(retained);
   const rx = pivot.rotation.x, rz = pivot.rotation.z;
   pose(_p1, model, pivot, rx, rz); pose(_p0, model, pivot, 0, 0);
   // the coarse ground: GX × GZ exact heights under the level body's footprint
@@ -174,7 +189,7 @@ export function keepBodyAboveGround(model, pivot, ground, exact = false) {
   for (let i = 0; i < GX * GZ; i++) top = Math.max(top, entry.gh[i]);
   let riseMax = 0;
   for (let i = 0; i < entry.rise.length; i++) riseMax = Math.max(riseMax, entry.rise[i]);
-  if (Math.min(boxLow(_p1, entry.box), boxLow(_p0, entry.box)) - top >= (exact ? 1.5 : riseMax + BODY_CLEAR + NEAR)) return 0;
+  if (Math.min(boxLow(_p1, entry.box), boxLow(_p0, entry.box)) - top >= (exact ? 1.5 : riseMax + BODY_CLEAR + NEAR)) return lifted;
   // tilted (c1) and level (c0) clearance of each point; the exact ground only where the grid can't rule out the limit.
   // Those points are kept (pivot frame + ground) for the lift. The tilt is scaled by k so no point comes within BODY_CLEAR.
   let k = 1, nc = 0;
@@ -201,9 +216,7 @@ export function keepBodyAboveGround(model, pivot, ground, exact = false) {
   // drawn body) the whole model, straight up: it rests on its bodywork
   // Scaling the tilt and lifting along a tilted up move the points sideways too, so each pass looks the ground up again
   // where the points near the road are now, until nothing is left to lift.
-  if (!nc) return 0;
-  const upY = model.matrix.elements[5], whole = upY < 0.7;
-  let lifted = 0;
+  if (!nc) return lifted;
   for (let pass = 0; pass < 4; pass++) {
     pose(_p1, model, pivot, rx * k, rz * k);
     let low = Infinity;
@@ -215,8 +228,7 @@ export function keepBodyAboveGround(model, pivot, ground, exact = false) {
     }
     if (!(low < BODY_CLEAR - 1e-4)) break;
     const need = BODY_CLEAR - low;
-    if (whole) { model.position.y += need; model.updateMatrix(); } else pivot.position.y += need / upY;
-    lifted += need;
+    lift(need);
   }
   return lifted;
 }
