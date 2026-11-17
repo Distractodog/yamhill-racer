@@ -16,7 +16,7 @@ try {
     watchErrors(page, i ? 'guest' : 'host', errors);
     await page.setViewport({ width: 1280, height: 800 });
     // past the spawn map (it covers the menu bar) and the welcome card, tiles loaded
-    await startGame(page, { relay: RELAY_URL, storage: { 'yr-mp-name-1': i ? 'Guest' : 'Host' } });
+    await startGame(page, { relay: RELAY_URL, storage: {} });
     await page.waitForFunction(() => window.game?.multiplayer);
     assert.equal(await page.evaluate(() => window.YR_MP_RELAY), RELAY_URL, 'relay override is installed before game startup');
   }));
@@ -25,7 +25,8 @@ try {
   await host.evaluate(() => { game.tuning.accel = 51; game.multiplayer.tuning.bike.accel = 33; game.multiplayer.tuning.jet.thrust = 30; game.atmosphere.setPreset('night', false); });
   await guest.evaluate(() => { game.tuning.accel = 21; game.atmosphere.setPreset('golden', false); });
   const own = await current(guest), guestSaved = await saved(guest);
-  await openMenu(host); await host.click('#mp-button'); await host.click('#mp-host');
+  await openMenu(host); await host.click('#mp-button'); await host.locator('#mp-name').fill('Host');
+  await host.waitForSelector('#mp-host:not([disabled])'); await host.click('#mp-host');
   await host.waitForFunction(() => game.multiplayer.mp.inGame);
   assert.equal(await host.$eval('#menu-button', el => el.textContent), 'Menu · MP');
   const room = await host.evaluate(() => game.multiplayer.mp.roomCode);
@@ -34,7 +35,8 @@ try {
   await openMenu(guest); await guest.click('#mp-button');
   await guest.waitForSelector(`#mp-games button[data-game="${room}"]`);
   assert.equal(await guest.$('#mp-join-code'), null, 'no codes in the menu');
-  await guest.click('#mp-name', { clickCount: 3 }); await guest.type('#mp-name', 'Guest');
+  await guest.locator('#mp-name').fill('Guest');
+  await guest.waitForFunction(room => !document.querySelector(`#mp-games button[data-game="${room}"]`).disabled, {}, room);
   assert.equal(await guest.evaluate(() => game.keys.size), 0, 'typing in the menu does not drive');
   const ask = async (action = 'accept') => {
     await guest.waitForSelector(`#mp-games button[data-game="${room}"]:not([disabled])`);

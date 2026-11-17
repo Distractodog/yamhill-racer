@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { Net, defaultRelay, LOCAL_RELAY, DEPLOYED_RELAY } from '../game/src/mp/net.js';
 
+{
+  const store = new Map([['yr-mp-name-1', 'Racer042']]);
+  const storage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: k => store.delete(k) };
+  const old = new Net({ storage }); assert.equal(old.me.name, ''); assert.equal(store.has('yr-mp-name-1'), false);
+  old.setName('  River Pilot  '); assert.equal(old.me.name, 'River Pilot'); assert.equal(store.get('yr-mp-name-1'), 'River Pilot');
+  old.setName('bad/name'); assert.equal(old.me.name, ''); assert.equal(store.has('yr-mp-name-1'), false);
+  const again = new Net({ storage }); assert.equal(again.me.name, '');
+}
+
 // Deterministic timers exercise the actual send and reconnect loops without sockets or sleeps.
 class Time {
   t = 1000; next = 0; jobs = new Map();
@@ -75,7 +84,7 @@ const storage = { getItem: k => store.get(k), setItem: (k, v) => store.set(k, v)
 const f = fixture(), host = f.create(storage), same = f.create(storage);
 assert.deepEqual(host.me, same.me, 'identity survives a new client');
 assert.match(host.me.id, /^[A-Z2-9]{12}$/); assert.match(host.me.code, /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{5}$/);
-assert.match(host.me.name, /^Racer\d{3}$/);
+assert.equal(host.me.name, '');
 host.setName(' Test Driver '); assert.equal(f.create(storage).me.name, 'Test Driver');
 assert.equal(f.time.jobs.size, 0, 'single-player starts no timers');
 assert.equal(host.send({ t: 'state' }), false);

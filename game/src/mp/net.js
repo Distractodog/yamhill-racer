@@ -79,8 +79,9 @@ export class Net {
     this.me = {
       id: read('yr-mp-id-1', v => typeof v === 'string' && /^[A-Za-z0-9]{12}$/.test(v), () => randomText(12)),
       code: read('yr-mp-code-1', v => CODE.test(v), () => randomText(5)),
-      name: read('yr-mp-name-1', v => typeof v === 'string' && !!v.trim(), () => `Racer${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`),
+      name: read('yr-mp-name-1', v => validName(v) && !/^Racer\d{3}$/.test(v.trim()), () => ''),
     };
+    if (!this.me.name) try { storage?.removeItem('yr-mp-name-1'); } catch {}
     this.inGame = false; this.isHost = false; this.roomCode = null; this.players = new Map();
     this._offset = 0; this._pings = new Map(); this._socket = null; this._pending = null;
     this._heartbeatTimer = null; this._stateTimer = null; this._pingTimer = null; this._timeout = null; this._retryTimer = null;
@@ -91,8 +92,9 @@ export class Net {
   // Read only at 15 Hz while connected, including colours changed without storage access.
   setVehicleSource(source) { this._source = source; }
   setName(name) {
-    this.me.name = String(name ?? '').trim() || 'Racer';
-    try { this._storage?.setItem('yr-mp-name-1', this.me.name); } catch {}
+    const value = String(name ?? '').trim();
+    this.me.name = validName(value) ? value : '';
+    try { if (this.me.name) this._storage?.setItem('yr-mp-name-1', this.me.name); else this._storage?.removeItem('yr-mp-name-1'); } catch {}
     // The wire protocol carries names in hello; the new name applies on the next connection.
   }
   on(type, fn) {
@@ -253,5 +255,7 @@ export class Net {
   }
   leave() { this._end('left'); }
 }
+
+function validName(value) { return typeof value === 'string' && value.trim().length >= 2 && value.trim().length <= 16 && /^[A-Za-z0-9 _.-]+$/.test(value.trim()); }
 
 export const mp = new Net();

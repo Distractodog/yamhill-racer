@@ -97,7 +97,7 @@ const step = (ms, ...ps) => { for (let i = 0; i < ms; i += 100) { advance(100); 
 async function settle(promise) { advance(0); return promise; }
 
 // ---------------------------------------------------------------- nobody hosting yet: a join is refused
-const A = player('Alice', 0), B = player('Bob', 4321), C = player('<Cara>', -2500);
+const A = player('Alice', 0), B = player('Bob', 4321), C = player('Cara', -2500);
 await assert.rejects(settle(B.mp.join(A.mp.me.code)), e => e.reason === 'no-host');
 assert.equal(B.mp.inGame, false);
 assert.equal(B.last('closed').reason, 'no-host');
@@ -120,7 +120,7 @@ for (const p of [A, B, C]) {
   assert.deepEqual([...p.mp.players.keys()].sort(), [A, B, C].map(q => q.mp.me.id).sort(), `${p.name} roster`);
   assert.equal(p.mp.players.get(A.mp.me.id).host, true); assert.equal(p.mp.players.get(B.mp.me.id).host, false);
 }
-assert.equal(C.mp.players.get(C.mp.me.id).name, '<Cara>', 'names are not filtered');
+assert.equal(C.mp.players.get(C.mp.me.id).name, 'Cara', 'chosen names are sent to the roster');
 assert.equal(A.of('joined').length, 2); assert.equal(B.of('joined').length, 1);
 assert.deepEqual(A.of('connected').map(m => m.isHost), [true]);
 for (const m of wire.filter(m => m.t === 'hello')) assert.deepEqual(Object.keys(m).sort(), ['code', 'from', 'host', 'name', 'skin', 't']);

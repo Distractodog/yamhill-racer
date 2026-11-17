@@ -54,7 +54,7 @@ export function createRaceCore({ mp, challenges, ui = {}, timers = globalThis, p
   const routes = new Map();
   const routeOf = info => routes.get(info.id) || (routes.set(info.id, makeRoute(info)), routes.get(info.id));
   const raceName = id => list.find(c => c.id === id)?.name || 'a race';
-  const nameOf = id => id === mp.me.id ? mp.me.name : mp.players.get(id)?.name || 'Racer';
+  const nameOf = id => (id === mp.me.id ? mp.me.name : mp.players.get(id)?.name) || 'no name';
   const busy = () => ['placing', 'countdown', 'running'].includes(challenges.state);
   let seq = 0;
   const newId = () => `${mp.me.id}-${Date.now().toString(36)}${(seq++).toString(36)}`;

@@ -67,7 +67,8 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
   const panel = document.createElement('section');
   panel.id = 'mp-panel'; panel.hidden = true; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-labelledby', 'mp-title');
   panel.innerHTML = `<header class="panel-heading"><h2 id="mp-title">Play multiplayer</h2><button id="mp-close" aria-label="Close multiplayer">×</button></header>
-    <label>Your name <input id="mp-name" maxlength="80" autocomplete="nickname"></label>
+    <label>Your name <input id="mp-name" maxlength="16" placeholder="Choose a name" autocomplete="nickname"></label>
+    <p id="mp-name-hint" role="status">Choose a name first</p>
     <div id="mp-connect"><button id="mp-host" class="menu-button">Host a game</button>
       <h3>Open games</h3><p id="mp-empty" role="status">Looking for games…</p><ul id="mp-games"></ul>
       <button id="mp-cancel" class="menu-button" hidden>Cancel request</button></div>
@@ -98,13 +99,13 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
     }
   }
   function drawGames() {
-    const signature = JSON.stringify([games, busy]); if (signature === listSignature) return; listSignature = signature;
+    const signature = JSON.stringify([games, busy, validName($('name').value)]); if (signature === listSignature) return; listSignature = signature;
     $('games').replaceChildren();
     for (const game of games) {
       const row = document.createElement('li'), label = document.createElement('span'), ask = document.createElement('button');
       label.textContent = `${game.name} · ${game.players} / ${game.max}`;
       ask.className = 'menu-button'; ask.textContent = 'Ask to join'; ask.dataset.game = game.id;
-      ask.disabled = busy || game.players >= game.max;
+      ask.disabled = busy || !validName($('name').value) || game.players >= game.max;
       ask.addEventListener('click', () => connect(game)); row.append(label, ask); $('games').append(row);
     }
   }
@@ -119,6 +120,11 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
     finally { listing = false; }
   }
   function startPolling() { clearInterval(pollTimer); refreshGames(); pollTimer = setInterval(refreshGames, 5000); }
+  function validName(value) { const name = value.trim(); return name.length >= 2 && name.length <= 16 && /^[A-Za-z0-9 _.-]+$/.test(name); }
+  function updateName() {
+    const valid = validName($('name').value); $('name-hint').hidden = valid; $('host').disabled = !valid || busy;
+    $('name').setAttribute('aria-invalid', String(!valid)); drawGames();
+  }
 
   function say(text) { toast.textContent = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.textContent = ''; }, 4500); }
   const note = document.createElement('p'); note.id = 'mp-settings-note'; note.hidden = true; note.textContent = 'The host controls tuning, time of day and weather while everyone uses the host’s settings.';
@@ -162,9 +168,10 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
   });
   $('close').addEventListener('click', () => settings.close());
   $('name').value = mp.me.name;
-  $('name').addEventListener('change', () => { mp.setName($('name').value); $('name').value = mp.me.name; });
+  $('name').addEventListener('input', updateName);
+  $('name').addEventListener('change', () => { if (validName($('name').value)) mp.setName($('name').value); $('name').value = mp.me.name; updateName(); });
   async function connect(game) {
-    if (busy) return;
+    if (busy || !validName($('name').value)) { updateName(); return; }
     busy = true; declineMessage = ''; $('host').disabled = true; $('cancel').hidden = !game;
     $('status').textContent = game ? `Asking ${game.name} to join…` : 'Connecting…'; drawGames();
     try { mp.setName($('name').value); await (game ? mp.requestJoin(game.id) : mp.host()); $('status').textContent = ''; }
@@ -174,9 +181,10 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
         'left': 'Request cancelled.', 'timeout': 'The request timed out. Try again.', 'lobby-unavailable': 'Open games are unavailable. Try again.' };
       $('status').textContent = declineMessage || messages[error?.reason] || `Could not connect: ${error?.message || error}`;
     }
-    finally { busy = false; $('host').disabled = false; $('cancel').hidden = true; render(); refreshGames(); }
+    finally { busy = false; $('cancel').hidden = true; render(); updateName(); refreshGames(); }
   }
   $('host').addEventListener('click', () => connect());
+  updateName();
   $('cancel').addEventListener('click', () => mp.leave());
   $('anyone').addEventListener('change', () => mp.send({ t: 'join-policy', anyone: $('anyone').checked }));
   mp.on('join-policy', ({ anyone }) => { $('anyone').checked = anyone; });
