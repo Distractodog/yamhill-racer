@@ -77,6 +77,9 @@ function bindModel(model, kind) {
   const trim = new THREE.MeshLambertMaterial({ color: '#ffffff', flatShading: true });
   const hubs = [];
   for (const w of wheels) {
+    // Effects' spinning-rim overlay uses the same live paint (including wear). Keep the colour on the wheel
+    // record: remote batching replaces its meshes with vertex-coloured geometry, but retains this record.
+    w.rimColor = trim.color;
     const g = new THREE.CylinderGeometry(w.r * .72, w.r * .72, w.hubWidth ?? (kind === 'car' ? .48 : .17), 12).rotateZ(Math.PI / 2);
     const hub = new THREE.Mesh(g, trim); hub.visible = false; w.spin.add(hub); hubs.push(hub);
   }

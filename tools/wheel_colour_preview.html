@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- Offline visual check: actual painted models + wheel blur, and the game's HUD CSS. No map or network needed.
+     tools/wheel_colour_preview.html[?speed=0][&remote] — stationary/spinning, local/batched remote models. -->
+<html lang="en"><head><meta charset="utf-8"><title>Wheel colour check loading</title>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<div id="hud"><div id="speed"><span id="speed-num">200</span><span id="speed-unit">km/h</span></div><div id="info">Garage wheel paint · spinning rims</div></div>
+<script type="module">
+import * as THREE from 'three';
+import { paintedModel } from '../game/src/cosmetics.js';
+import { VEHICLE_TYPES } from '../game/src/vehicletypes.js';
+import { Effects } from '../game/src/effects.js';
+import { bakeParts } from '../game/src/mp/remotes.js';
+
+// Read the production rules, so a preview cannot quietly duplicate and miss the actual HUD regression.
+const html = await (await fetch('../game/index.html')).text();
+const css = document.createElement('style'); css.textContent = html.match(/<style>([\s\S]*?)<\/style>/)[1]; document.head.append(css);
+const skin = document.createElement('link'); skin.rel = 'stylesheet'; skin.href = '../game/presentation.css';
+await new Promise((resolve, reject) => { skin.onload = resolve; skin.onerror = reject; document.head.append(skin); });
+const labelCSS = document.createElement('style');
+labelCSS.textContent = '.wheel-label{position:absolute;color:#fff;background:#142016dd;padding:4px 8px;font:13px system-ui}#hud{left:auto;right:30px;bottom:35px}';
+document.head.append(labelCSS);
+const query = new URLSearchParams(location.search), speed = Number(query.get('speed') ?? 200), remote = query.has('remote');
+document.getElementById('speed-num').textContent = speed;
+document.getElementById('info').textContent = `${remote ? 'Remote' : 'Local'} Garage rims · ${speed ? 'spinning' : 'stationary'}`;
+const unitStyle = getComputedStyle(document.getElementById('speed-unit'));
+if (unitStyle.fontSize !== '16px' || parseFloat(unitStyle.letterSpacing) < 0) throw Error('Speed unit font/spacing regression');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(innerWidth, innerHeight);
+renderer.setScissorTest(true); document.body.append(renderer.domElement);
+const width = innerWidth / 4, height = innerHeight / 2;
+renderer.setClearColor('#7991a0'); renderer.setScissor(0, 0, innerWidth, innerHeight); renderer.clear();
+let index = 0, discs = 0;
+for (const kind of ['car', 'bike']) for (const { id, name } of VEHICLE_TYPES[kind]) {
+  const color = id === 'sports' ? '#000000' : kind === 'car' ? '#da219b' : '#17b967';
+  const model = paintedModel(kind, { wheels: color }, id);
+  if (remote) bakeParts(model);
+  const scene = new THREE.Scene(); scene.add(model);
+  scene.add(new THREE.HemisphereLight('#e3f3ff', '#655a47', 1.4));
+  const sun = new THREE.DirectionalLight('#fff0db', 2.4); sun.position.set(4, 8, 5); scene.add(sun);
+  const fx = new Effects(scene, { shadows: false, caps: { puffs: 1, chips: 1, marks: 1, discs: 8 } });
+  const wheels = model.userData.wheels.map(() => ({ spin: 0 }));
+  fx.tyres = wheels.map(() => ({ spin: 0, w: 0, xrate: 0, blur: 0, extra: 0 }));
+  for (let frame = 0; frame < 60; frame++) {
+    wheels.forEach((w, i) => { w.spin += speed / 3.6 / model.userData.wheels[i].r / 60; });
+    fx.blur(1 / 60, { kind, wheels }, model.userData.wheels); fx.advance(1 / 60);
+  }
+  const count = fx.stats().discs; discs += count;
+  if (count !== (speed ? wheels.length * 2 : 0)) throw Error(`${id}: unexpected blur count ${count}`);
+  const camera = new THREE.PerspectiveCamera(36, width / height, .05, 100);
+  const scale = kind === 'bike' ? .65 : id === 'truck' ? 1.3 : 1;
+  camera.position.set(6 * scale, 1.5 * scale, 5 * scale); camera.lookAt(0, .1, 0);
+  const x = index % 4 * width, y = innerHeight - (Math.floor(index / 4) + 1) * height;
+  renderer.setViewport(x, y, width, height); renderer.setScissor(x, y, width - 2, height - 2); renderer.render(scene, camera);
+  const label = document.createElement('div'); label.className = 'wheel-label'; label.textContent = `${name} · ${color}`;
+  label.style.left = `${x + 6}px`; label.style.top = `${innerHeight - y - height + 6}px`; document.body.append(label);
+  index++;
+}
+document.title = `PASS wheel colours: ${index} ${remote ? 'remote' : 'local'} types, ${discs} blur discs, HUD 16px / ${unitStyle.letterSpacing}`;
+window.done = true;
+</script></body></html>
