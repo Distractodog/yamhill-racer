@@ -55,6 +55,7 @@ serve `game/` with any static web server.
 - Elevation: USGS 3D Elevation Program; imagery used to colour the ground: USDA NAIP (both public domain).
 - Tree heights: Meta & World Resources Institute, *High Resolution Canopy Height Maps* (CC BY 4.0).
 - Engine sounds: the hatchback's are real BMW 120d recordings by GiocoSound on [Freesound](https://freesound.org/people/GiocoSound/packs/22622/) (CC0); every other engine is synthesised for this game (`tools/make_engine_sounds.py`, CC0). Details: `game/assets/audio/CREDITS.md`.
+- Recorded effects: tyre squeal by audible-edge, edited by qubodup (CC BY 3.0), and impact by Eldritch Grim (CC0), trimmed and normalised for this game. Source links, licences and edits: [audio credits](game/assets/audio/CREDITS.md). Procedural sounds remain as loading/error fallbacks.
 - Rendering: [three.js](https://threejs.org) (MIT).
 
 ### Road directions

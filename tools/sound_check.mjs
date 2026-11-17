@@ -17,6 +17,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: 'new', args: ['--window-size=1280,800', '--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal', '--autoplay-policy=no-user-gesture-required'] });
 const errors = [], failed = [], warnings = [], results = [];
+let effectResults = null;
 let ok = true;
 try {
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 800 });
@@ -65,6 +66,18 @@ try {
     if (!own) { ok = false; console.log('  FAIL: loaded another type\'s loops'); }
     if (r.on?.layers === 0) { ok = false; console.log('  FAIL: loops not playing after 2.5 s'); }
   }
+  // Exercise both recorded effects without moving physics. First impact uses
+  // synthesis during loading; the next uses the decoded sample on the same bus.
+  effectResults = await page.evaluate(async () => {
+    const { recordedEffect, effectSoundLog } = await import('./src/audio/recordings.js');
+    const fx = game.audio.effects, ctx = game.audio.ctx;
+    fx.loadSqueal(); fx.shot('impact', .1);
+    await Promise.all(['squeal', 'impact'].map(name => recordedEffect(ctx, name).ready));
+    fx.shot('impact', .1);
+    return { loaded: effectSoundLog, ready: ['squeal', 'impact'].every(name => !!recordedEffect(ctx, name).buffer) };
+  });
+  console.log('Recorded effects:', JSON.stringify(effectResults));
+  if (!effectResults.ready || effectResults.loaded.some(l => l.error)) ok = false;
   // Settings → Sound: slider moves the Engines level and is saved
   await page.evaluate(() => { game.vehicles.choose('car', 'race'); document.getElementById('settings-button').click(); });
   await wait(300);
@@ -81,7 +94,7 @@ try {
   const total = results.flatMap(r => r.loaded || []).reduce((s, l) => s + (l.bytes || 0), 0);
   console.log(`\nloops fetched: ${results.flatMap(r => r.loaded || []).length} files, ${(total / 1024).toFixed(0)} KB in all`);
 } finally {
-  fs.writeFileSync(path.join(out, 'sound_check.json'), JSON.stringify({ results, errors, failed, warnings }, null, 2));
+  fs.writeFileSync(path.join(out, 'sound_check.json'), JSON.stringify({ results, effectResults, errors, failed, warnings }, null, 2));
   await browser.close();
 }
 if (warnings.length) console.log('audio warnings:\n  ' + warnings.join('\n  '));

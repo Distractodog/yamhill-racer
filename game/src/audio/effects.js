@@ -1,4 +1,6 @@
-// Procedural effects: no downloads. Buffers are built once per AudioContext and shared by remote voices.
+// Recorded tyre squeal/impact with procedural fallback. Other effects remain
+// procedural; all buffers are shared by voices on the same AudioContext.
+import { recordedEffect } from './recordings.js';
 const clamp = (v, max = 1) => Math.min(max, Math.max(0, Number.isFinite(v) ? v : 0));
 const caches = new WeakMap();
 const DRY = Object.freeze({});
@@ -62,26 +64,49 @@ export class EffectsAudio {
       ['spray', 'bandpass', 1000, .6], ['pebbles', 'highpass', 1600, .7, 'pebbles'],
     ]) {
       const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
+      const fallback = name === 'squeal' ? ctx.createGain() : null;
       source.buffer = effectBuffer(ctx, buffer || 'noise'); source.loop = true;
       filter.type = type; filter.frequency.value = frequency; filter.Q.value = q; gain.gain.value = 0;
-      source.connect(filter).connect(gain).connect(this.output); source.start(0, Math.random() * source.buffer.duration);
-      this.sources.push(source); this.nodes.push(source, filter, gain); this.channels[name] = { source, filter, gain };
+      if (fallback) { fallback.gain.value = 1; filter.connect(fallback).connect(gain); this.nodes.push(fallback); }
+      else filter.connect(gain);
+      source.connect(filter); gain.connect(this.output); source.start(0, Math.random() * source.buffer.duration);
+      this.sources.push(source); this.nodes.push(source, filter, gain); this.channels[name] = { source, filter, fallback, gain };
     }
     this.reset();
   }
   reset() { this.vehicle = null; this.hit = this.landing = 0; this.wet = false; this.mode = null; this.lastImpact = -Infinity; }
   shift() { this.shot('shift', .13); }
   setVolume(volume) { this.output.gain.setTargetAtTime(clamp(volume), this.ctx.currentTime, .04); }
+  loadSqueal() {
+    const channel = this.channels.squeal;
+    if (channel.requested || this.stopped) return;
+    channel.requested = true;
+    recordedEffect(this.ctx, 'squeal').ready.then(buffer => {
+      if (!buffer || this.stopped) return;
+      const source = this.ctx.createBufferSource(), blend = this.ctx.createGain();
+      source.buffer = buffer; source.loop = true; blend.gain.value = 0;
+      // The recording already contains tyre resonances; bypass the synthetic
+      // squeal's narrow bandpass. Both branches still use the same effect bus.
+      source.connect(blend).connect(channel.gain); source.start();
+      blend.gain.setTargetAtTime(1, this.ctx.currentTime, .08);
+      channel.fallback.gain.setTargetAtTime(0, this.ctx.currentTime, .08);
+      this.sources.push(source); this.nodes.push(source, blend);
+    });
+  }
   shot(name, level) {
-    if (level <= 0 || this.shots.size >= 6) return;
+    if (this.stopped || level <= 0 || this.shots.size >= 6) return;
     const source = this.ctx.createBufferSource(), gain = this.ctx.createGain();
-    source.buffer = effectBuffer(this.ctx, name); gain.gain.value = clamp(level);
+    // First event plays immediately using synthesis while loading. Never replay
+    // an old impact when a download finishes; subsequent events use the sample.
+    source.buffer = recordedEffect(this.ctx, name)?.buffer || effectBuffer(this.ctx, name); gain.gain.value = clamp(level);
     source.connect(gain).connect(this.output); this.shots.set(source, gain);
     source.onended = () => { source.disconnect(); gain.disconnect(); this.shots.delete(source); };
     source.start();
   }
   update(v, dt, weather = DRY) {
+    if (this.stopped) return;
     const t = this.ctx.currentTime, levels = effectLevels(v, this.remote ? DRY : weather, this.levels);
+    if (levels.squeal > 0) this.loadSqueal();
     if (this.vehicle !== v || this.type !== v.type) { this.reset(); this.vehicle = v; this.type = v.type; this.wet = levels.wet; this.mode = v.mode; }
     for (const name in this.channels) this.channels[name].gain.gain.setTargetAtTime(levels[name], t, name === 'wind' ? .15 : .05);
     this.channels.squeal.filter.frequency.setTargetAtTime(levels.pitch, t, .05);
@@ -98,6 +123,7 @@ export class EffectsAudio {
     this.hit = hit; this.landing = landing; this.wet = levels.wet; this.mode = v.mode;
   }
   stop() {
+    this.stopped = true;
     for (const source of [...this.sources, ...this.shots.keys()]) { source.onended = null; try { source.stop(); } catch {} source.disconnect(); }
     for (const gain of this.shots.values()) gain.disconnect();
     for (const node of this.nodes) node.disconnect();
