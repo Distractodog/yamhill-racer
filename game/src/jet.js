@@ -13,6 +13,7 @@ import { driftAir } from './wind.js';
 //     then back to the last safe spot (or the challenge's respawn point) after 3 s.
 // World queries only: heightAt / surfaceAt / normalAt / treesNear / buildingsNear / waterLevelAt (+ terrainAt).
 import * as THREE from 'three';
+import { breakTreeClip } from './treebreak.js';
 import { speedBrakePanels, speedBrakeDrag } from './speedbrakes.js';
 import { Vehicle } from './vehicle.js';
 import { wetBraking } from './wetgrip.js';
@@ -485,12 +486,13 @@ export class Jet extends Vehicle {
   // tree crowns (like the glider): cones for conifers, a ball-ish crown on broadleaf trees; wings reach 4.9 m
   hitTree() {
     const W = this.world; let hit = false;
-    W.treesNear(this.pos.x, this.pos.z, 30, (tx, tz, tr, h, broad) => {
+    W.treesNear(this.pos.x, this.pos.z, 30, (tx, tz, tr, h, broad, id) => {
       if (hit || h === undefined) return;
       const y = this.pos.y - W.terrainAt(tx, tz);
       if (y > h + 1 || y < 0) return;
       const crown = broad ? (y > h * 0.3 ? h * 0.3 : tr) : h * 0.15 * (1 - y / h) + tr;
-      if (Math.hypot(this.pos.x - tx, this.pos.z - tz) < crown + this.air.wing) hit = true;
+      const d = Math.hypot(this.pos.x - tx, this.pos.z - tz);
+      if (d < crown + this.air.wing && !breakTreeClip(this, id, d, crown, tr, h, y)) hit = true;
     });
     return hit;
   }

@@ -19,7 +19,9 @@ rain.dispose();rain.dispose();assert.equal(disposed,2);assert(!scene.getObjectBy
 scene.background = new THREE.Color();scene.fog = new THREE.Fog(0,1,2);scene.add(new THREE.HemisphereLight());
 const stored=new Map([['yr-atmosphere-1','rain']]);let wet=-1;
 const atmosphere=createAtmosphere({scene,sun:new THREE.DirectionalLight(),sunDirection:new THREE.Vector3(),world:{setWetness:v=>wet=v},storage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v)}});
-assert.equal(atmosphere.preset,'rain');assert.equal(atmosphere.wetness,.8);assert.equal(wet,.8);assert(scene.getObjectByName('nearby-rain').visible);
-atmosphere.setPreset('midday');assert.equal(atmosphere.wetness,0);assert.equal(wet,0);assert(!scene.getObjectByName('nearby-rain').visible);
+assert.equal(atmosphere.preset,'rain');assert.equal(atmosphere.wetness,.8);assert.equal(wet,1);   // full rain soaks the road (wetgrip.js)
+assert(scene.getObjectByName('nearby-rain').visible);
+atmosphere.setPreset('midday');assert.equal(atmosphere.wetness,0);assert.equal(wet,1);   // the road dries over 75 s, not at once
+assert(!scene.getObjectByName('nearby-rain').visible);
 atmosphere.dispose();assert(!scene.getObjectByName('nearby-rain'));
 console.log('PASS: fixed rain budget, no dry-frame buffer work, camera-follow finite particles, safe dt, disposable GPU resources, rain persistence and wetness reset');

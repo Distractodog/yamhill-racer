@@ -2,6 +2,7 @@
 // World space: metres, x = east, z = south, y = up. Origin = centre of the map.
 import { nightAttribute, nightMaterial, nightUniform } from './nightlights.js';
 import * as THREE from 'three';
+import { createTreeBreakFX } from './treebreakfx.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeWorld, makeTileDataSteps } from './data.js';
 import { readTileRaw, decodeTileSteps, fetchReader, groundFile } from './tilepack.js';
@@ -11,14 +12,15 @@ import { buildBridgeSteps, showBridges } from './bridges.js';
 import { mergeRoadBatches, placeRoadBlockSteps } from './meshmerge.js';
 import { installPerf } from './perf.js';
 import { createTileScenery } from './scenery.js';
+import { terrainGeometry, terrainEdgeShader, TERRAIN_CHUNK, TERRAIN_STEPS } from './terrainmesh.js';
 import { buildCampusGateGeometry } from './campusgate.js';
 import { placeCampus } from './campusmodel.js';
 import { TRACK } from './campustrack.js';
 import { buildTrackMeshes } from './campustrackmodel.js';
 import { placeLandmarks } from './landmarksmodel.js';
 import { blockOf, footprintMeshes, mergeBlock, planFootprint, roadContext, townRange } from './townmodel.js';
-import { addProps, propGeometries, showProps } from './propsmodel.js';
-import { addCampusItems, campusItemGeometries, showCampusItems } from './campusitemsmodel.js';
+import { PROP_R, addProps, propGeometries, showProps } from './propsmodel.js';
+import { CAMPUS_ITEM_R, addCampusItems, campusItemGeometries, showCampusItems } from './campusitemsmodel.js';
 
 export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'gravel', 'water', 'concrete', 'running track'];
 
@@ -26,7 +28,12 @@ export const SURFACES = ['grass', 'forest floor', 'dirt trail', 'asphalt', 'grav
 const LOAD_R = 1300, DROP_R = 2600, FRAME_BUDGET_MS = 5;
 const AHEAD_S = 5, AHEAD_MAX = 1200;     // look-ahead loading at speed (AHEAD_MAX + LOAD_R stays inside DROP_R)
 
-export async function loadWorld(renderer, onProgress = () => {}) {
+// detail: Settings → Graphics distances (graphics.js, graphicsapply.js → setDetail); the defaults are High
+const DETAIL = { load: 1, terrain: 1, treeNear: 420, treeFar: Infinity, props: 1, scenery: 1, campusItems: 1, townNear: 1, townFar: 1,
+  campusNear: 250, shadows: true, water: true };
+
+export async function loadWorld(renderer, onProgress = () => {}, detailIn = {}) {
+  const detail = { ...DETAIL, ...detailIn };
   const notePerf = installPerf(renderer);
   const base = 'assets/';
   const W = await fetch(base + 'world.json').then(r => r.json());
@@ -55,14 +62,14 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   let sceneryTime = 0, nightAmount = 0;
   const buildingMat = nightMaterial(new THREE.MeshLambertMaterial({ vertexColors: true }));
   const campusMat = nightMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
-  const waterUniforms = { time: { value: 0 } };
+  const waterUniforms = { time: { value: 0 }, waveAmp: { value: detail.water ? 1 : 0 } };
   const waterMat = new THREE.MeshLambertMaterial({ color: 0x3d8fc4, transparent: true, opacity: 0.8, flatShading: true });
   waterMat.onBeforeCompile = sh => {
-    sh.uniforms.time = waterUniforms.time;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float time;')
+    sh.uniforms.time = waterUniforms.time; sh.uniforms.waveAmp = waterUniforms.waveAmp;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float time;\nuniform float waveAmp;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vec4 wp = modelMatrix * vec4(transformed, 1.0);
-        transformed.y += sin(wp.x * 0.35 + time * 1.7) * 0.035 + cos(wp.z * 0.42 + time * 1.3) * 0.035;`);
+        transformed.y += (sin(wp.x * 0.35 + time * 1.7) * 0.035 + cos(wp.z * 0.42 + time * 1.3) * 0.035) * waveAmp;`);
   };
   const propGeos = propGeometries();
   const campusItemGeos = campusItemGeometries();
@@ -71,6 +78,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   const vis = new Map();            // key -> { group, chunks, treeLods, treeMats, textures, materials }
   let lastShadowAt = null;          // where the shadow casters were last rebuilt
+  const treeFX = createTreeBreakFX(world, group, [conifer, broadleaf], vis, () => { lastShadowAt = null; });
+  SHARED.add(treeFX.stumpGeo);
 
   // data and ground bitmaps together; if either fails, the bitmaps made are closed (tilequeue.js fetchTileParts)
   function fetchTile(tx, tz, reload = false) {
@@ -95,8 +104,9 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     const quarterMats = [];
     for (const bmp of img) {
       const tex = new THREE.Texture(bmp); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
       tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.needsUpdate = true;
-      const m = groundMaterial(tex); out.textures.push(tex); out.materials.push(m); quarterMats.push(m);
+      const m = groundMaterial(tex, T, TERRAIN_CHUNK * HS); out.textures.push(tex); out.materials.push(m); quarterMats.push(m);
       renderer.initTexture(tex);                   // upload now, one quarter per slice, not on the tile's first frame
       yield 'texture';
     }
@@ -136,43 +146,13 @@ export async function loadWorld(renderer, onProgress = () => {}) {
         for (let p = Math.max(0, gj - st); p <= Math.min(NN - 1, gj + st); p++) h = Math.min(h, H[q * NN + p]);
       return h;
     };
-    // terrain: 100-cell (400 m) chunks with 4 detail levels + skirts
-    const CHUNK = 125, QN = (HN - 1) / 2, STEPS = [1, 2, 4, 8];      // 500 m chunks; 4 chunks per texture quarter
-    function chunkGeometry(i0, j0, i1, j1, st, qi0, qj0) {
-      const is = [], js = [];
-      for (let i = i0; i < i1; i += st) is.push(i); is.push(i1);
-      for (let j = j0; j < j1; j += st) js.push(j); js.push(j1);
-      const ni = is.length, nj = js.length, P = [], U = [], I = [];
-      const vert = (i, j, drop) => {
-        P.push(td.x0 + j * HS, heightFor(i + HM, j + HM, st) - drop, td.z0 + i * HS);
-        U.push((j - qj0) / QN, (i - qi0) / QN); return P.length / 3 - 1;
-      };
-      for (const i of is) for (const j of js) vert(i, j, 0);
-      for (let a = 0; a < ni - 1; a++) for (let b = 0; b < nj - 1; b++) {
-        const v00 = a * nj + b, v01 = v00 + 1, v10 = v00 + nj, v11 = v10 + 1;
-        I.push(v00, v10, v01, v01, v10, v11);
-      }
-      const skirt = 1.5 + st * 1.5;
-      const edge = list => {
-        for (let k = 0; k < list.length - 1; k++) {
-          const [va, ia, ja] = list[k], [vb, ib, jb] = list[k + 1];
-          const da = vert(ia, ja, skirt), db = vert(ib, jb, skirt);
-          I.push(va, da, vb, vb, da, db, va, vb, da, vb, db, da);
-        }
-      };
-      edge(js.map((j, b) => [b, is[0], j])); edge(js.map((j, b) => [(ni - 1) * nj + b, is[ni - 1], j]));
-      edge(is.map((i, a) => [a * nj, i, js[0]])); edge(is.map((i, a) => [a * nj + nj - 1, i, js[nj - 1]]));
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
-      geo.setIndex(I); geo.computeBoundingSphere();
-      return geo;
-    }
+    // Shared fine boundaries at every LOD; coarse interiors retain road clearance.
+    const CHUNK = TERRAIN_CHUNK, QN = (HN - 1) / 2, STEPS = TERRAIN_STEPS;
     for (let i0 = 0; i0 < HN - 1; i0 += CHUNK) for (let j0 = 0; j0 < HN - 1; j0 += CHUNK) {
       const i1 = Math.min(i0 + CHUNK, HN - 1), j1 = Math.min(j0 + CHUNK, HN - 1);
       const levels = [], qi0 = i0 >= QN ? QN : 0, qj0 = j0 >= QN ? QN : 0, mat = quarterMats[(qi0 ? 2 : 0) + (qj0 ? 1 : 0)];
       for (const st of STEPS) {
-        const m = new THREE.Mesh(chunkGeometry(i0, j0, i1, j1, st, qi0, qj0), mat); m.receiveShadow = true; m.visible = false;
+        const m = new THREE.Mesh(terrainGeometry(td, W, heightFor, i0, j0, i1, j1, st, qi0, qj0), mat); m.receiveShadow = true; m.visible = false;
         g.add(m); levels.push(m); yield 'terrain' + st;
       }
       out.chunks.push({ levels, cx: td.x0 + (j0 + j1) / 2 * HS, cz: td.z0 + (i0 + i1) / 2 * HS, lv: -1 });
@@ -216,11 +196,13 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     let seed = 1 + Math.abs(td.tx * 7919 + td.tz * 104729);
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     const treeMats = new Float32Array(nT * 16);
+    out.treeSlots = new Int32Array(nT * 2).fill(-1); // tree index -> chunk index, instance slot
     for (const [k, list] of buckets) {
       const broad = k % 2 === 1, cell = (k / 2) | 0;
       const near = new THREE.InstancedMesh(broad ? broadleaf : conifer, treeMat, list.length);
       const far = new THREE.InstancedMesh(broad ? broadFar : coniferFar, treeMat, list.length);
       list.forEach((t, n) => {
+        out.treeSlots[t * 2] = out.treeLods.length; out.treeSlots[t * 2 + 1] = n;
         const x = trees[t * 4], z = trees[t * 4 + 1], h = trees[t * 4 + 2];
         const w = broad ? h * (0.55 + rnd() * 0.2) : h * (0.24 + rnd() * 0.08);
         q.setFromAxisAngle(up, rnd() * Math.PI * 2);
@@ -310,7 +292,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
   const queue = createTileQueue({
     fetch: job => fetchTile(job.tx, job.tz, job.reload),
     build: (job, { data, img }) => { job.img = img; return buildTile(job.tx, job.tz, data, img, job); },
-    finish: (job, v) => { world.add(v.td); vis.set(job.k, v); group.add(v.group); lastShadowAt = null; },
+    finish: (job, v) => { world.add(v.td); vis.set(job.k, v); group.add(v.group); treeFX.attach(v); lastShadowAt = null; },
     free: job => {
       const v = job.partial;
       if (v) { if (vis.get(job.k) === v) { vis.delete(job.k); world.remove(job.tx, job.tz); } dispose(v); }
@@ -337,7 +319,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
 
   // initial load: everything around the spawn, fully built before the game starts
   const [sx, sz] = W.spawn;
-  const first = wanted(sx, sz, LOAD_R);
+  const first = wanted(sx, sz, LOAD_R * detail.load);
   let done = 0;
   await Promise.all(first.map(([tx, tz]) => (startLoad(tx, tz, true) || Promise.resolve()).then(() => onProgress(++done, first.length))));
 
@@ -353,7 +335,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     const sp = vel ? Math.hypot(vel.x, vel.z) : 0, la = Math.min(AHEAD_MAX, sp * AHEAD_S) / (sp || 1);
     const ax = cam.x + (vel ? vel.x * la : 0), az = cam.z + (vel ? vel.z * la : 0);
     const want = new Map();
-    for (const [tx, tz] of [...wanted(cam.x, cam.z, LOAD_R), ...(la ? wanted(ax, az, LOAD_R) : [])]) want.set(world.key(tx, tz), [tx, tz]);
+    const R = LOAD_R * detail.load;
+    for (const [tx, tz] of [...wanted(cam.x, cam.z, R), ...(la ? wanted(ax, az, R) : [])]) want.set(world.key(tx, tz), [tx, tz]);
     const nx = (cam.x + ax) / 2, nz = (cam.z + az) / 2, d2 = ([tx, tz]) => (tx * T - nx) ** 2 + (tz * T - nz) ** 2;
     // at most 3 tiles in flight, but the tile under the camera never waits behind look-ahead tiles from before a
     // respawn / teleport
@@ -376,6 +359,8 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     const m = new THREE.InstancedMesh(geo, ghost, 4000); m.count = 0; m.castShadow = true; m.frustumCulled = false; group.add(m); return m;
   });
   function updateShadows(p) {
+    if (!detail.shadows) { if (lastShadowAt !== 'off') { casters.forEach(m => { m.count = 0; }); lastShadowAt = 'off'; } return; }
+    if (lastShadowAt === 'off') lastShadowAt = null;
     if (lastShadowAt && Math.hypot(p.x - lastShadowAt.x, p.z - lastShadowAt.z) < 10) return;
     lastShadowAt = { x: p.x, z: p.z };
     const n = [0, 0];
@@ -385,6 +370,7 @@ export async function loadWorld(renderer, onProgress = () => {}) {
       if (Math.hypot(dx, dz) > SHADOW_R) continue;
       const tr = t.trees;
       for (let i = 0; i < t.treeCount; i++) {
+        if (t.brokenTrees.has(i)) continue;
         const x = tr[i * 4], z = tr[i * 4 + 1];
         if (Math.abs(x - p.x) > SHADOW_R || Math.abs(z - p.z) > SHADOW_R || Math.hypot(x - p.x, z - p.z) > SHADOW_R) continue;
         const kind = tr[i * 4 + 3] > 0 ? 1 : 0; if (n[kind] >= 4000) continue;
@@ -398,40 +384,48 @@ export async function loadWorld(renderer, onProgress = () => {}) {
     update(cam, vel, extraMs);
     for (const v of vis.values()) {
       for (const pool of v.nightPools || []) pool.visible = nightAmount > 0;
-      v.scenery?.update(cam, sceneryTime, nightAmount);
+      v.scenery?.update(cam, sceneryTime, nightAmount, 650 * detail.scenery);
       for (const c of v.chunks) {
-        const d = Math.hypot(c.cx - cam.x, c.cz - cam.z);
+        const d = Math.hypot(c.cx - cam.x, c.cz - cam.z) / detail.terrain;
         const lv = d < 420 ? 0 : d < 850 ? 1 : d < 1500 ? 2 : 3;
         if (lv !== c.lv) { c.levels.forEach((m, i) => m.visible = i === lv); c.lv = lv; }
       }
       for (const l of v.treeLods) {
-        const near = Math.hypot(l.cx - cam.x, l.cz - cam.z) < 420;
-        l.near.visible = near; l.far.visible = !near;
+        const d = Math.hypot(l.cx - cam.x, l.cz - cam.z), near = d < detail.treeNear;
+        l.near.visible = near; l.far.visible = !near && d < detail.treeFar;
       }
       for (const b of v.buildingLods) {
         const d = Math.hypot(b.cx - cam.x, b.cz - cam.z);
-        b.near.visible = d < townRange.near;
-        b.far.visible = d >= townRange.near && d < townRange.far;
+        const nearR = townRange.near * detail.townNear;
+        b.near.visible = d < nearR;
+        b.far.visible = d >= nearR && d < townRange.far * detail.townFar;
         b.near.castShadow = d < townRange.shadow;
       }
       showBridges(v.bridges, cam);
-      showProps(v.propLods, cam);
-      showCampusItems(v.campusItemLods, cam);
+      showProps(v.propLods, cam, PROP_R * detail.props);
+      showCampusItems(v.campusItemLods, cam, CAMPUS_ITEM_R * detail.campusItems);
       for (const c of v.campusLods) {
-        const near = Math.hypot(c.cx - cam.x, c.cz - cam.z) < 250;
+        const near = Math.hypot(c.cx - cam.x, c.cz - cam.z) < detail.campusNear;
         c.near.visible = near; c.far.visible = !near;
       }
     }
     notePerf();
   }
-  return Object.assign(world, { group, updateLOD, updateShadows, townRange, setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); nightUniform.value = nightAmount; },
-    tick(t) { waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
+  // Settings → Graphics: new distances from the next updateLOD; props and campus items are copied again at once
+  function setDetail(next = {}) {
+    Object.assign(detail, next);
+    waterUniforms.waveAmp.value = detail.water ? 1 : 0;
+    for (const v of vis.values()) for (const t of [...v.propLods, ...v.campusItemLods]) t.x = t.z = Infinity;
+    if (lastShadowAt !== 'off') lastShadowAt = null;
+  }
+  return Object.assign(world, { treeFX, group, updateLOD, updateShadows, townRange, setDetail, graphicsDetail: () => ({ ...detail }), setWetness(value) { world.wetness = Math.max(0, Math.min(1, Number(value) || 0)); stripMat.color.setScalar(1 - world.wetness * .24); }, setNight(value) { nightAmount = Math.max(0, Math.min(1, Number(value) || 0)); nightUniform.value = nightAmount; },
+    tick(t) { treeFX.update(t); waterUniforms.time.value = t; windTime.value = t; sceneryTime = t; },
     loadedTiles: () => vis.size, pendingTiles: () => queue.pending(), buildStep: queue.slowStep });
 }
 
 
 // unit-height low-poly conifer: trunk + three stacked cones, vertex coloured
-function coniferGeometry() {
+export function coniferGeometry() {
   const parts = [];
   const trunk = new THREE.CylinderGeometry(0.05, 0.07, 0.25, 5); trunk.translate(0, 0.125, 0);
   parts.push(paint(trunk, 0x5a4030));
@@ -444,7 +438,7 @@ function coniferGeometry() {
 }
 // Ground: flat-colour map + two layers of world-space grain (fine 3 m and coarse 23 m) so speed reads up
 // close, plus flat shading for the low-poly facet look.
-function groundMaterial(tex) {
+function groundMaterial(tex, tileSize, chunkSize) {
   const mat = tex ? new THREE.MeshLambertMaterial({ map: tex, flatShading: true })
     : new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const detail = grainTexture();                 // one shared texture, built once
@@ -461,6 +455,7 @@ function groundMaterial(tex) {
         float camD = length(vWorld - cameraPosition);
         float fade = 1.0 - smoothstep(60.0, 260.0, camD);
         diffuseColor.rgb *= mix(1.0, 0.82 + g1 * 0.32, fade) * (0.9 + g2 * 0.2);`);
+    if (tex) terrainEdgeShader(sh, tileSize, chunkSize);
   };
   return mat;
 }
@@ -495,7 +490,7 @@ function farBroadleaf() {
   const c = new THREE.OctahedronGeometry(0.5, 0); c.scale(1, 0.8, 1); c.translate(0, 0.62, 0);
   return paint(c, 0x4f7d34);
 }
-function broadleafGeometry() {
+export function broadleafGeometry() {
   const trunk = new THREE.CylinderGeometry(0.03, 0.05, 0.45, 5); trunk.translate(0, 0.225, 0);
   const crown = new THREE.IcosahedronGeometry(0.5, 0); crown.scale(1, 0.75, 1); crown.translate(0, 0.62, 0);
   const crown2 = new THREE.IcosahedronGeometry(0.33, 0); crown2.translate(0.22, 0.8, 0.1);

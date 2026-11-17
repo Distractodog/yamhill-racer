@@ -265,6 +265,7 @@ export function createVehicleLights(scene = null) {
   scene?.add(spot, target);
   let lenses = null, mount = null, beam = false, shape = null, level = 0;
   let override = null, lastNight = null, currentMesh = null, elapsed = 0;
+  let reach = 1, power = 1;                 // Settings → Graphics (Low: a shorter, slightly dimmer beam; uniforms only)
   const rigs = new Map();                   // vehicle mesh → { lenses, shape }
   const rigFor = (mesh, kind) => {
     let r = rigs.get(mesh);
@@ -296,8 +297,8 @@ export function createVehicleLights(scene = null) {
         currentMesh = mesh;
         ({ lenses, shape } = rigFor(mesh, vehicle.kind));
         mount = mesh.userData.lightMount || mesh;
-        spot.angle = shape.angle; spot.penumbra = shape.penumbra; spot.distance = shape.distance; spot.color.set(shape.color);
-        level = Math.min(1, spot.intensity / shape.intensity);       // carry on from the same strength (no pop)
+        spot.angle = shape.angle; spot.penumbra = shape.penumbra; spot.distance = shape.distance * reach; spot.color.set(shape.color);
+        level = Math.min(1, spot.intensity / (shape.intensity * power));       // carry on from the same strength (no pop)
       }
       const aircraft = vehicle.kind === 'jet';
       beam = !aircraft && on && mesh.visible && lenses.anchors.head?.length > 0;
@@ -305,7 +306,7 @@ export function createVehicleLights(scene = null) {
       const want = beam ? 1 : 0;
       level += (want - level) * Math.min(1, dt * HEADLIGHT_FADE);
       if (Math.abs(want - level) < .003) level = want;
-      spot.intensity = level * shape.intensity;
+      spot.intensity = level * shape.intensity * power;
       mount.updateWorldMatrix(true, false);
       spot.position.copy(shape.from).applyMatrix4(mount.matrixWorld);
       target.position.copy(shape.to).applyMatrix4(mount.matrixWorld);
@@ -313,6 +314,10 @@ export function createVehicleLights(scene = null) {
       const braking = vehicle.kind !== 'jet' && grounded && !vehicle.glide?.active
         ? Math.max(input.brake || 0, input.handbrake ? 1 : 0) : 0;
       lenses.update({ on, brake: braking, time: elapsed });
+    },
+    setDetail({ range = 1, power: p = 1 } = {}) {
+      reach = range > 0 ? range : 1; power = p > 0 ? p : 1;
+      if (shape) spot.distance = shape.distance * reach;
     },
     dispose() { spot.removeFromParent(); target.removeFromParent(); spot.dispose(); rigs.forEach(r => r.lenses.dispose()); rigs.clear(); lenses = null; currentMesh = null; },
   };

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { placeCampusItems } from './campusitems.js';
 
-const R2 = 250 * 250;
+export const CAMPUS_ITEM_R = 250;
 const MOVE2 = 30 * 30;
 const up = new THREE.Vector3(0, 1, 0);
 const q = new THREE.Quaternion();
@@ -91,7 +91,9 @@ export function* addCampusItems(group, lods, td, geos, mat) {
   yield 'campus-items';
 }
 
-export function showCampusItems(lods, cam) {
+// r: Settings → Graphics shortens it (world.js setDetail)
+export function showCampusItems(lods, cam, r = CAMPUS_ITEM_R) {
+  const r2 = r * r;
   for (const tile of lods) {
     const dx = tile.x - cam.x, dz = tile.z - cam.z;
     if (dx * dx + dz * dz < MOVE2) continue;
@@ -102,7 +104,7 @@ export function showCampusItems(lods, cam) {
       const cd = t.col ? t.mesh.instanceColor.array : null;
       for (let i = 0; i < t.n; i++) {
         const ox = t.xz[i * 2] - cam.x, oz = t.xz[i * 2 + 1] - cam.z;
-        if (ox * ox + oz * oz > R2) continue;
+        if (ox * ox + oz * oz > r2) continue;
         dst.set(t.src.subarray(i * 16, i * 16 + 16), n * 16);
         if (cd) cd.set(t.col.subarray(i * 3, i * 3 + 3), n * 3);
         n++;

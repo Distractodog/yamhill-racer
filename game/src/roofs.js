@@ -283,6 +283,7 @@ function wallPush(v, pts, R, top, ease) {
 export function collideBuilding(v, b, R) {
   if (!b.pts) return 0;
   const p = v.pos, bb = boxOf(b), W = v.world;
+  if (Number.isFinite(b.bottom) && p.y + R < b.bottom) return 0; // Elevated builder solids have an underside.
   if (p.x < bb[0] - R - 1 || p.x > bb[2] + R + 1 || p.z < bb[1] - R - 1 || p.z > bb[3] + R + 1) return 0;
   // up at roof level (or just off this roof), a wall it comes down beside eases it clear; on the ground, walls bounce
   const ease = W.recentRoof?.(b) || p.y - W.terrainAt(p.x, p.z) > 2.5;
@@ -326,12 +327,12 @@ export function roofLedge(world, pts) {
 }
 
 export function createVehicleWorld(world, vehicle) {
-  let px = NaN, pz = NaN, loaded = false, tileCount = -1, near = [];
+  let px = NaN, pz = NaN, loaded = false, tileCount = -1, placedRevision = -1, near = [];
   function candidates() {
     const ready = world.loadedAt?.(vehicle.pos.x, vehicle.pos.z), count = world.tiles?.size;
     // Reuse the broad phase within an 8 m neighbourhood; 32 m padding covers the vehicle and wheel probes.
-    if (!Number.isFinite(px) || Math.hypot(px - vehicle.pos.x, pz - vehicle.pos.z) > 8 || ready !== loaded || count !== tileCount) {
-      loaded = ready; tileCount = count;
+    if (!Number.isFinite(px) || Math.hypot(px - vehicle.pos.x, pz - vehicle.pos.z) > 8 || ready !== loaded || count !== tileCount || placedRevision !== world.placedPiecesRevision) {
+      loaded = ready; tileCount = count; placedRevision = world.placedPiecesRevision;
       px = vehicle.pos.x; pz = vehicle.pos.z;
       near = (world.buildingsNear?.(px, pz, 40) || []).filter(b => {
         if (!b.pts?.length) return false;
@@ -346,7 +347,7 @@ export function createVehicleWorld(world, vehicle) {
   const st = { x: NaN, y: NaN, z: NaN, roof: -Infinity, gx: 0, gz: 0, on: null, last: null, age: Infinity };
   function frame() {
     const P = vehicle.pos;
-    if (P.x === st.x && P.y === st.y && P.z === st.z) return st;
+    if (P.x === st.x && P.y === st.y && P.z === st.z && placedRevision === world.placedPiecesRevision) return st;
     st.x = P.x; st.y = P.y; st.z = P.z; st.age++;
     st.ceiling = P.y + Math.max(0, -vehicle.vel.y) / 120 + 0.1;
     st.roof = -Infinity; st.gx = 0; st.gz = 0; st.on = null;

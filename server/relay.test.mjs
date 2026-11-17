@@ -29,6 +29,31 @@ function fixture() {
 }
 const ofType = (s, type) => s.messages.filter(m => m.t === type);
 
+test('host sends bounded tree snapshots only to the joining player', () => {
+  const { host, join, send } = fixture(), guest = join(2), other = join(3);
+  const msg = { t: 'tree-sync', to: id(2), trees: [{ id: '-2_3:17', remainingMs: 120000, extra: true }], from: 'forged' };
+  send(host, msg);
+  assert.deepEqual(ofType(guest, 'tree-sync'), [{ t: 'tree-sync', to: id(2), from: id(1), srvT: 1000,
+    trees: [{ id: '-2_3:17', remainingMs: 120000 }] }]);
+  assert.equal(ofType(host, 'tree-sync').length, 0);
+  assert.equal(ofType(other, 'tree-sync').length, 0);
+  send(other, msg); // A peer cannot forge a host snapshot.
+  for (const trees of [null, {}, Array(129).fill(msg.trees[0]), [null], [{ id: 'bad', remainingMs: 12 }],
+    [{ id: '0_0:1', remainingMs: 0 }], [{ id: '0_0:1', remainingMs: -1 }], [{ id: '0_0:1', remainingMs: 300001 }]]) send(host, { ...msg, trees });
+  send(host, { ...msg, to: id(99) });
+  assert.equal(ofType(guest, 'tree-sync').length, 1);
+});
+
+test('tree breaks broadcast stable IDs with authoritative sender and reject malformed IDs', () => {
+  const { host, join, send } = fixture(), guest = join(2);
+  send(guest, { t: 'tree-break', id: '-2_3:17', from: 'forged', extra: true });
+  const expected = { t: 'tree-break', id: '-2_3:17', from: id(2), srvT: 1000 };
+  assert.deepEqual(ofType(host, 'tree-break'), [expected]);
+  assert.deepEqual(ofType(guest, 'tree-break'), [expected]);
+  for (const value of [null, 17, {}, '0_0:-1', '0_0:1000000', 'bad', '0_0:1\n']) send(guest, { t: 'tree-break', id: value });
+  assert.equal(ofType(host, 'tree-break').length, 1);
+});
+
 test('URL codes and IDs follow contract', () => {
   assert.deepEqual(roomAddress(`https://relay/room/ABCDE?id=${id(1)}`), { code, id: id(1) });
   for (const url of ['/room/ABCDI', '/room/abcde', '/room/ABCDEF', '/room/ABCDE/extra', '/']) {
@@ -265,4 +290,37 @@ test('hibernation with no surviving host closes orphan guests and discards stale
   assert.equal(restored.room.clients.size, 0);
   assert.equal(data.has('world'), false);
   assert.equal(ofType(guest, 'closed').at(-1).reason, 'no-host');
+});
+
+test('builder layouts are host-only, atomic, bounded and replayed to late joiners', async () => {
+  const { layoutChunks } = await import('../game/src/builder/wire.js');
+  const { room, host, join, send } = fixture(), guest = join(2);
+  const chunks = layoutChunks(JSON.stringify({version:1,pieces:[],padding:'x'.repeat(14000)}),'revision1');
+  for(const m of chunks) send(guest,m);
+  assert.equal(room.layout,null);assert.equal(ofType(host,'layout').length,0);
+  for(const m of [{...chunks[0],index:-1},{...chunks[0],total:1000},{...chunks[0],data:'x'.repeat(6001)}])send(host,m);
+  assert.equal(room.layoutPending,null);
+  send(host,chunks[1]);send(host,chunks[1]);assert.equal(ofType(guest,'layout').length,0);
+  send(host,chunks[0]);send(host,chunks[2]);
+  assert.equal(ofType(guest,'layout').length,3);assert.equal(room.layout.length,3);
+  for(const c of room.layout)assert.equal(c.from,id(1));
+  const late=join(3);assert.deepEqual(ofType(late,'layout'),room.layout);
+  room.leave(host);assert.equal(room.layout,null);assert.equal(room.layoutPending,null);
+});
+
+test('builder layout chunks survive relay hibernation, including an incomplete transfer', async () => {
+  const { layoutChunks } = await import('../game/src/builder/wire.js');
+  const { room, host, join }=fixture(),guest=join(2),data=new Map();
+  let ready;
+  for(const ws of [host,guest])ws.serializeAttachment({code,session:room.session(ws)});
+  const ctx={getWebSockets:()=>[host,guest],blockConcurrencyWhile(fn){ready=fn();},storage:{get:async k=>data.get(k),put:async(k,v)=>data.set(k,structuredClone(v)),delete:async k=>data.delete(k)}};
+  const chunks=layoutChunks('x'.repeat(14000),'rev2');
+  let adapter=new RelayRoom(ctx);await ready;
+  await adapter.webSocketMessage(host,JSON.stringify(chunks[0]));
+  adapter=new RelayRoom(ctx);await ready;
+  await adapter.webSocketMessage(host,JSON.stringify(chunks[1]));
+  await adapter.webSocketMessage(host,JSON.stringify(chunks[2]));
+  adapter=new RelayRoom(ctx);await ready;
+  assert.equal(adapter.room.layout.length,3);assert.equal(adapter.room.layout.map(c=>c.data).join(''),'x'.repeat(14000));
+  await adapter.webSocketClose(host);assert.equal(data.has('layout'),false);
 });

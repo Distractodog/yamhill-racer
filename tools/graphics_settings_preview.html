@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Settings → Graphics without the game (no three.js / network): the page markup and CSS of game/index.html, the real
+     settings.js, graphicsapply.js and graphicsui.js, stand-ins for the renderer / sun / camera. Serve the repo root and
+     open tools/graphics_settings_preview.html (or argus browse it). ?mode=low|medium|high|auto, ?measuring=1 shows Auto
+     part way through measuring, ?click=low clicks that button once ready. -->
+<html><head><meta charset="utf-8"><title>loading</title></head>
+<body>
+<script type="module">
+const html = await (await fetch('../game/index.html')).text();
+const src = new DOMParser().parseFromString(html, 'text/html');
+for (const s of src.querySelectorAll('style')) document.head.append(s);
+for (const l of src.querySelectorAll('link[rel=stylesheet]')) { const n = document.createElement('link'); n.rel = 'stylesheet'; n.href = '../game/' + l.getAttribute('href'); document.head.append(n); }
+for (const s of src.querySelectorAll('script')) s.remove();
+document.body.replaceChildren(...src.body.childNodes);
+for (const id of ['loading', 'welcome']) document.getElementById(id)?.remove();
+const q = new URLSearchParams(location.search);
+const mode = q.get('mode') || 'auto';
+localStorage.setItem('yr-graphics-2', JSON.stringify(mode === 'auto' && !q.get('measuring') ? { mode, auto: { level: 'medium', weak: false, fps: 44 } } : { mode, auto: null }));
+const { createGraphics } = await import('../game/src/graphicsapply.js');
+const { bindGraphicsSettings } = await import('../game/src/graphicsui.js');
+const { createSettings } = await import('../game/src/settings.js');
+const size = { x: 2048, set(a) { this.x = a; } };
+const graphics = createGraphics({ renderer: { r: 1.5, getPixelRatio() { return this.r; }, setPixelRatio(r) { this.r = r; }, shadowMap: { enabled: true } },
+  sun: { castShadow: true, shadow: { mapSize: size, map: null } }, camera: { far: 2200, updateProjectionMatrix() {} }, scene: {} });
+const settings = createSettings();
+bindGraphicsSettings(graphics);
+settings.ready(() => {}, () => {});
+settings.closeWelcome();
+document.getElementById('settings-button').click();
+if (q.get('measuring')) for (let i = 0; i < 120; i++) graphics.frame(1 / 60, true);
+if (q.get('click')) document.querySelector(`[data-graphics="${q.get('click')}"]`).click();
+document.getElementById('graphics-content').scrollIntoView();
+const state = `${graphics.mode} → ${graphics.level}: ${document.getElementById('graphics-status').textContent}`;
+document.title = `ready: ${state}`;
+console.warn('graphics:', state);
+</script></body></html>

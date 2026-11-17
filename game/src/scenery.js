@@ -99,9 +99,9 @@ export function createTileScenery(td) {
   const m=new THREE.Matrix4(),q=new THREE.Quaternion(),p=new THREE.Vector3(),scale=new THREE.Vector3();
   let lastNight=-1;
   return {group,materials,textures,
-    update(camera,time,night=0){
+    update(camera,time,night=0,range=650){
       if(lastNight!==night){windowMat.opacity=night*.85;for(const mesh of litWindows)mesh.visible=night>0;lastNight=night;}
-      for(const site of sites)site.visible=Math.hypot(site.position.x-camera.x,site.position.z-camera.z)<650;
+      for(const site of sites)site.visible=Math.hypot(site.position.x-camera.x,site.position.z-camera.z)<range;
       for(const item of animated){if(!item.site.visible)continue;const mesh=item.mesh;
         if(item.kind==='flag'){const pos=mesh.geometry.attributes.position;for(let i=0;i<pos.count;i++){const x=pos.getX(i);pos.setZ(i,Math.sin(time*2.5-x*2)*.17*(x/2.4));}pos.needsUpdate=true;}
         if(item.kind==='birds'){mesh.position.x=Math.sin(time*.06+item.phase)*90;mesh.position.z=Math.cos(time*.06+item.phase)*90;mesh.rotation.y=-time*.06-item.phase;mesh.scale.y=1+Math.sin(time*3)*.2;}
