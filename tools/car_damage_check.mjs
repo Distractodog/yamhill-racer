@@ -35,7 +35,7 @@ try {
     else throw Error(`Unknown or incomplete argument: ${arg}. Use --out <directory> [--check-only] [--prepare-preview].`);
   }
   await mkdir(out, { recursive: true });
-  for (const file of ['game/index.html', 'game/assets/world.json', 'game/assets/challenges.json', 'tools/car_damage_shots.mjs'])
+  for (const file of ['game/index.html', 'game/assets/world.json', 'game/assets/challenges.json', 'tools/car_damage_shots.mjs', 'tools/lib/cardamageperf.mjs', 'tools/lib/cardamagegpu.mjs'])
     await access(join(repo, file), constants.R_OK);
   for (const name of ['puppeteer-core', 'three']) require.resolve(name);
   report.chrome = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -46,11 +46,11 @@ try {
     // Plain, ignored files: Argus browse deliberately cannot follow node_modules symlinks.
     const three = dirname(dirname(require.resolve('three')));
     for (const file of ['build/three.module.js', 'examples/jsm/math/ConvexHull.js', 'examples/jsm/utils/BufferGeometryUtils.js']) {
-      const dest = join(repo, 'tools/node_modules/three', file);
+      const dest = join(repo, 'tools/node_modules/car-damage-three', file);
       await mkdir(dirname(dest), { recursive: true });
       await copyFile(join(three, file), dest);
     }
-    console.log('distractodog: offline preview fixtures prepared in ignored tools/node_modules/three.');
+    console.log('distractodog: offline preview fixtures prepared in ignored tools/node_modules/car-damage-three.');
   }
   if (checkOnly) {
     report.status = 'prepared';
