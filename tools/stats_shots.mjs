@@ -21,12 +21,11 @@ try {
   const page = await browser.newPage(), errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-  for (const [name, width, height, scheme] of [['desktop-dark', 1440, 1000, 'dark'], ['mobile-dark', 390, 844, 'dark'], ['desktop-light', 1440, 1000, 'light']]) {
-    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);
+  for (const [name, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
     await page.setViewport({ width, height }); await page.setContent(html, { waitUntil: 'load' });
     await page.screenshot({ path: resolve(out, `${name}.png`), fullPage: true });
     const background = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    if (background !== (scheme === 'dark' ? 'rgb(15, 26, 20)' : 'rgb(241, 246, 242)')) errors.push(`${name}: unexpected background ${background}`);
+    if (background !== 'rgb(8, 9, 11)') errors.push(`${name}: unexpected background ${background}`);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     if (overflow) errors.push(`${name}: document overflows viewport`);
   }
