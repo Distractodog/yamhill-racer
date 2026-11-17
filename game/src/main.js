@@ -1,3 +1,5 @@
+import { createWind } from './wind.js';
+import { createWindView } from './windview.js';
 import * as THREE from 'three';
 import GUI from 'lil-gui';
 import { loadWorld } from './world.js';
@@ -117,6 +119,11 @@ const directions = createDirections({ minimap, car, world });
 // a race placing the car (start, J, Backspace restart, multiplayer start, checkpoint R) drops a waiting respawn hold
 const challenges = await createChallenges({ scene, world, car, minimap, vehicles, audio, onPlace: () => respawnHold.cancel() });
 import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
+const wind = createWind({ seed: crypto.getRandomValues(new Uint32Array(1))[0], world,
+  sunny: () => atmosphere.phase === 'day' && atmosphere.rain === 0 && !atmosphere.raining && (atmosphere.settings.cycle || atmosphere.preset === 'midday'),
+  racing: () => challenges.state !== 'idle' });
+for (const v of [vehicles.car, vehicles.bike, ...vehicles.aircraft]) v.wind = wind;
+const windView = createWindView({ scene, wind, current: () => vehicles.current });
 const pinGuide = createPinGuide({ scene, world, car, minimap, challenges });
 const remotes = await createRemotes({ scene, camera, minimap, world, audio, night: () => atmosphere.night });   // other players' vehicles, tags and map dots (multiplayer)
 document.getElementById('loading').remove();
@@ -188,7 +195,7 @@ const clearKeys = () => { keys.clear(); letters.clear(); };
 settings.ready(clearKeys, () => {
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
-const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, gui, beforeOpen: () => garage.close() });
+const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, wind, gui, beforeOpen: () => garage.close() });
 const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft],
   predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
 addEventListener('keydown', e => {
@@ -443,6 +450,7 @@ function updateDebug(dt) {
 }
 function frame(now) {
   requestAnimationFrame(frame);
+  wind.update(Math.max(0, (now - last) / 1000));
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   readInput();
   challenges.holdInput(input);
@@ -463,6 +471,7 @@ function frame(now) {
   cosmetics.setWetness(atmosphere.wetness);
   cosmetics.update(frozen || sessionSpawn.blocked ? 0 : dt, vehicles.current);
   atmosphere.update(dt, camera);
+  windView.update(dt);
   garage.update(dt);
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
@@ -521,6 +530,6 @@ window.game.audio = audio;              // tools/sound_check.mjs
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim, vehicles });
 window.game.sessionSpawn = sessionSpawn;
 
-Object.assign(window.game, { garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
+Object.assign(window.game, { wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
 Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

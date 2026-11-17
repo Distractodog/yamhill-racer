@@ -17,7 +17,8 @@ const WATER = await import('./lib/water.mjs'), POND = WATER.deepestPond(W, 0, 0)
 const tuning = { ...TUNING_DEFAULTS, ...(process.env.TUNE ? JSON.parse(process.env.TUNE) : {}) };
 const DT = 1 / 120, up = new THREE.Vector3(), fw = new THREE.Vector3();
 function run(name, x, z, yaw, secs, ctl, every = 0.5, make = () => new Car(W, tuning)) {
-  const car = make(); car.reset(x, z, yaw);
+  const car = make(); car.wind = null; // calm-air handling baseline
+  car.reset(x, z, yaw);
   const inp = { throttle: 0, brake: 0, steer: 0, handbrake: false };
   const rows = []; let t = 0, flips = 0, wasUp = true, maxAir = 0, t100 = null, bad = false;
   for (let i = 0; i < secs / DT; i++) {

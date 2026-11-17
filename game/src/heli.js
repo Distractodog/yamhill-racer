@@ -1,3 +1,4 @@
+import { driftAir } from './wind.js';
 // Helicopter: a light single-engine helicopter (Bell 206 / AS350 style), a Garage type of the jet. Fixed 120 Hz step.
 // Local axes: +z forward (nose), +y up, +x = left. Arcade and easy:
 //   * W / S = collective: climb / descend (a climb-rate controller; hands off holds the height). Near the ground S
@@ -240,6 +241,7 @@ export class Heli extends Vehicle {
     const ca = Math.cos(carve * dt), sa = Math.sin(carve * dt), vx = v.x;   // a banked turn carries the flight path round
     v.x = vx * ca + v.z * sa; v.z = -vx * sa + v.z * ca;
     this._acc.copy(_v);
+    driftAir(this, dt, 0.2);
     this.pos.addScaledVector(v, dt);
     Jet.prototype.edgeTurn.call(this);                                  // the jet's map-edge turn-back
     _e.setFromQuaternion(this.quat, 'YXZ'); this.yaw = _e.y;

@@ -34,6 +34,7 @@ const flat = ({ surface = 3, water = -Infinity, h = 0 } = {}) => ({
 });
 function make(type, world) {
   const j = new Jet(world, { ...JET });
+  j.wind = null; // calm-air handling baseline; wind effects have their own tests
   disposeCosmeticPreview(applyVehicleType(j, type));
   return j;
 }
