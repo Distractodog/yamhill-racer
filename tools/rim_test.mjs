@@ -6,7 +6,7 @@ import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 import { Bike } from '../game/src/bike.js';
 import { Jet } from '../game/src/jet.js';
 import { Glider, BIKE_GLIDER } from '../game/src/glider.js';
-import { makeTrack } from '../game/src/track.js';
+import { makeRaceBarriers } from '../game/src/racebarriers.js';
 
 const circle = { cx: 0, cz: 0, r: 3000 }, rim = makeRim(circle), DT = 1 / 120;
 const world = () => ({ heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0, surfaceAt: () => 3,
@@ -111,9 +111,9 @@ for (const kind of ['car', 'bike', 'jet']) {
   v.reset(...v.world.spawn, 0); assert(rim.contains(v.pos.x, v.pos.z));
 }
 const racer = create('car'); racer.reset(2970, 0, Math.PI / 4); racer.vel.set(40, 0, 40);
-const track = makeTrack(Array.from({ length: 101 }, (_, i) => [2970, -200 + i * 4, 8]));
+const track = makeRaceBarriers(Array.from({ length: 101 }, (_, i) => [2970, -200 + i * 4, 8]), racer.world);
 for (let i = 0; i < 360; i++) {
-  racer.step(DT, input); track.constrain(racer); rim.constrain(racer);
+  racer.step(DT, input); track.collide(racer, DT); rim.constrain(racer);
   assert(rim.contains(racer.pos.x, racer.pos.z)); assert(Math.abs(racer.pos.x - 2970) <= 9.5);
 }
 // Measure enabled wall+safe-list overhead only; this is NOT a browser FPS claim.

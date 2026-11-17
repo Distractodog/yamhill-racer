@@ -303,6 +303,7 @@ export function makeWorld(W) {
   // ramps: the map's fixed ones (assets/ramps.json, setFixedRamps) + a running challenge's (setRamps); each sits on
   // whatever road is under it
   let ramps = [], fixedRamps = [], challengeRamps = [];
+  let raceBarriers = null;
   const prepRamps = list => (list || []).map(r => ({ ...r, fx: Math.sin(r.yaw), fz: Math.cos(r.yaw) }));
   let rampSlope = 0, rampFx = 0, rampFz = 0;           // set by rampAt: slope along the ramp at the last point
   function rampAt(x, z) {
@@ -364,6 +365,8 @@ export function makeWorld(W) {
     return [best[0], best[1], yaw];
   }
   return {
+    setRaceBarriers(layer) { raceBarriers = layer; },
+    collideRaceBarriers(vehicle, dt) { return raceBarriers?.collide(vehicle, dt) || 0; },
     baseHeightAt(x, z, y) { const g = groundAt(x, z, y); return ramps.length ? g + rampAt(x, z) : g; },
     get placedPiecesRevision() { return placedPiecesRevision; },
     setPlacedPieces(layer) { placedPieces = layer; placedPiecesRevision++; },

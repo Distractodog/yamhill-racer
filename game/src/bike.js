@@ -364,6 +364,7 @@ export class Bike extends Vehicle {
     const tr = this.collideTrees(0.45, [-0.6, 0.0, 0.6]);
     if (tr > 0) { this.drifting = false; this.yawRate *= 0.5; }
     this.collideBuildings(0.7);
+    W.collideRaceBarriers?.(this, dt);
     this.keepInBounds();
 
     this.trackAccel(dt);

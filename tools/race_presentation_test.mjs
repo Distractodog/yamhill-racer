@@ -41,3 +41,27 @@ gated.openMenu();assert.equal(gated.menuOpen,false);assert.equal(opened,0);
 allow=true;gated.openMenu();assert.equal(gated.menuOpen,true);assert.equal(opened,1);
 gated.openMenu(0,{filter:'all'});assert.equal(opened,1,'already open: no second onMenuOpen');gated.closeMenu();assert.equal(gated.menuOpen,false);
 console.log('PASS race presentation: completion unlock, no duplicate unlock, keyboard action isolation, roam, race menu, retry, medal + next race, J reopens on the last card + filter, menu gating + open hook');
+
+// Race collider/mesh lifecycle and DNF (both solo and the multiplayer start path).
+race.track=[[0,0,6],[0,10,6]]; race.ramps=[{x:0,z:5,yaw:0,w:12}];
+let layer=null, raceRampCalls=0, dnfs=0;
+world.setRaceBarriers=v=>{layer=v;};world.setRamps=()=>raceRampCalls++;
+const scene=new THREE.Scene();
+const barriers=await createChallenges({scene,world,car,minimap:{open:false}});
+barriers.mpHook={onDnf(){dnfs++;}};
+for(const mp of [false,true]) {
+  await barriers.start(0,{mp,gridCount:4});
+  assert(layer,'race installs collider layer');assert(scene.getObjectByName('race-barriers'),'one race mesh');
+  barriers.update(3.01);car.pos.set(20,5,5);car.grounded=false;
+  for(let i=0;i<119;i++)barriers.constrain();assert.equal(barriers.state,'running');
+  for(let i=0;i<3;i++)barriers.constrain();assert.equal(barriers.state,'finished');
+  assert.equal(barriers.result.dnf,true);assert.match(elements.get('ch-done').innerHTML,/Out of bounds — race over/);
+  assert.match(elements.get('ch-done').innerHTML,/DNF/);assert.equal(layer,null);assert(!scene.getObjectByName('race-barriers'));
+  const input={throttle:1,steer:.5};barriers.holdInput(input);assert.equal(input.throttle,1,'DNF preserves driving control');
+  barriers.quit();
+}
+assert.equal(dnfs,2);assert.equal(raceRampCalls,0,'even legacy race ramp data must never be placed');
+await barriers.start(0);barriers.update(3.01);car.pos.z=9;barriers.update(.1);car.pos.z=11;barriers.update(.1);
+assert.equal(barriers.state,'finished');assert.equal(layer,null);assert(!scene.getObjectByName('race-barriers'));
+await barriers.start(0);barriers.quit();assert.equal(layer,null);assert(!scene.getObjectByName('race-barriers'));
+console.log('PASS race barriers: solo/MP starts, one mesh, airborne DNF, results, free control, finish/quit cleanup, legacy ramps ignored');
