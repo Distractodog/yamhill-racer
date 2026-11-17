@@ -1,6 +1,7 @@
 // 3D meshes for the road / trail strips and junction pieces of one tile (data.js `renderRoads` / `renderJunctions`).
 // Heights are baked by the build (tools/roadnet.py), which also carved the ground just below every road.
 import * as THREE from 'three';
+import { trackRadius, TRACK } from './campustrack.js';
 import { campusDrive } from './campusdrive.js';
 import { roadHalfWidth } from './ramps.js';
 import { laneWedges, rampStripMarks, goreMarks, roadPoint } from './rampmarks.js';
@@ -141,7 +142,16 @@ function* stripTriangleSteps(D, batch, far) {
     const at = (i, k) => { let [o, dy] = cols[k];
       if (r.widen && Math.abs(o) >= r.hw) o += Math.sign(o) * (roadHalfWidth(r,i,Math.sign(o))-r.hw);
       if (r.widen && Math.abs(o)<r.hw) return roadPoint(r,r.s,r.s[i],o,.02);
-      return [x[i] + lx[i] * o, y[i] + c[i] * o + dy, z[i] + lz[i] * o]; };
+      const px=x[i]+lx[i]*o, pz=z[i]+lz[i]*o;
+      let py=y[i]+c[i]*o+dy;
+      if (r.kind === 'trail' && D?.terrainAt) {
+        // Skirts must reach the carved terrain even on steep switchbacks (some cuts exceed 6 m).
+        if (dy < -1) py=Math.min(py,D.terrainAt(px,pz)-.15);
+        else if (dy === 0) py=Math.max(py,D.terrainAt(px,pz)+.015);
+        // The level athletics surface owns this area, including any old traced trail beneath it.
+        if (trackRadius(px,pz) <= TRACK.RO+.6 && Number.isFinite(TRACK.level)) py=Math.min(py,TRACK.level-.03+Math.min(0,dy));
+      }
+      return [px,py,pz]; };
     for (let i = a; i < b; i += r.widen ? 1 : step) {
       if (++work % STRIP_SLICE === 0) yield 'road-strips';
       const j = Math.min(b, i + (r.widen ? 1 : step));
@@ -154,7 +164,15 @@ function* stripTriangleSteps(D, batch, far) {
         if (r.widen && cols[k][1] === 0 && cols[k+1][1] === 0 && (cols[k][2] !== 'dash' || !dashOn)) continue;
         const rgb = colourOf(cols[k][2], style, dashOn);
         const p0 = at(i, k), p1 = at(i, k + 1), q1 = at(j, k + 1), q0 = at(j, k);
-        P.push(...p0, ...p1, ...q1, ...p0, ...q1, ...q0);
+        if (r.kind === 'trail' && cols[k][1] === 0 && cols[k + 1][1] === 0) {
+          // A 12 m ribbon can fold on a tighter traced bend. Keep its top faces visible
+          // from above until the centreline is smoothed in the next map build.
+          const up = (a,b,c) => {
+            const ny=(b[2]-a[2])*(c[0]-a[0])-(b[0]-a[0])*(c[2]-a[2]);
+            if(ny<0) P.push(...a,...c,...b); else P.push(...a,...b,...c);
+          };
+          up(p0,p1,q1); up(p0,q1,q0);
+        } else P.push(...p0, ...p1, ...q1, ...p0, ...q1, ...q0);
         for (let t = 0; t < 6; t++) C.push(...rgb);
       }
     }

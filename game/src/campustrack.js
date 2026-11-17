@@ -1,3 +1,4 @@
+import { applySatelliteGround, athleticsRoadSnapshot } from './campussatground.js';
 // The outdoor running track north of the gym: shape and ground only (no three.js, so the headless tests share it).
 // Measured on the NAIP satellite of tile 0_0: a 6-lane 400 m oval (lane 1 = 400 m) with a soccer infield, its long
 // axis turned 12.3° from north-south (heading south it runs east), and a red jumps runway + pad on its west side.
@@ -45,6 +46,7 @@ export const onRunway = (x, z) => TRACK.runway.some(q => inConvex(q, x, z));
 export function applyTrack(td) {
   const { RO, R, flat, blend } = TRACK, reach = RO + flat + blend, [cx, cz] = TRACK.c, ext = TRACK.S + reach;
   if (cx + ext < td.x0 || cx - ext > td.x0 + 2000 || cz + ext < td.z0 || cz - ext > td.z0 + 2000) return;
+  const restoreRoads = athleticsRoadSnapshot(td);
   const { H, NN, gx0, gz0 } = td, HS = td.hs;
   // ground level: median terrain over the oval
   const hs = [];
@@ -62,10 +64,12 @@ export function applyTrack(td) {
     let t = Math.max(0, (d - flat) / blend); t = t * t * (3 - 2 * t);
     const k = i * NN + j; H[k] = level + (H[k] - level) * t;
   }
+  applySatelliteGround(td, level, TRACK.runway);
+  restoreRoads();
   // surface: lanes = running track (7), infield = grass (0); the old painted oval elsewhere goes back to grass.
   // A trail strip that runs under the oval (below the level ground) must not make it report dirt.
   const surf = td.surf, base = td.surfaceAt;
-  td.surfaceAt = (x, z) => { const r = trackRadius(x, z); return r <= RO ? (r > R ? 7 : 0) : base(x, z); };
+  td.surfaceAt = (x, z, y) => { const r = trackRadius(x, z); return r <= RO ? (r > R ? 7 : 0) : onRunway(x,z) ? 7 : base(x, z, y); };
   if (!surf) return;
   for (let v = 0; v < 2000; v++) {
     const z = td.z0 + v + 0.5; if (Math.abs(z - cz) > ext) continue;

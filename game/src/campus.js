@@ -1,3 +1,4 @@
+import { SAT_BUILDINGS } from './campussat.js';
 // Delphian School campus buildings, hand-authored from the satellite (NAIP), OSM footprints, the school's own photos and
 // its illustrated tour map (delphian.org/uploaded/tour). Plain data + footprint logic, no three.js, so the headless
 // tests (tools/drive.mjs) see the same walls as the game. The meshes are built by campusmodel.js.
@@ -92,6 +93,7 @@ const step = (name, c, L, W, h, color) => ({ name, rect: { c, L, W, a: -28 }, h,
 const CONCRETE = [0.78, 0.78, 0.75];
 export const CAMPUS = [
   MAIN,
+  ...SAT_BUILDINGS,
   // Upper flight and cheeks are solid. The lower tread is the same low wall. The plaza itself is not a wall.
   { name: 'Entrance steps', osm: [], floorAt: add(frontC, N, 2.0), dy: 0.02,
     parts: [
@@ -219,7 +221,7 @@ export function applyCampus(td) {
     b.floor = td.terrainAt(b.floorAt[0], b.floorAt[1]) + (b.dy || 0);
     const top = b.floor + Math.max(...b.parts.map(partTop));
     const polys = b.phys || b.parts.map(partPts);
-    polys.forEach((pts, i) => out.push({ pts, h: top - b.floor, top, roofBuilding: b, campus: i === 0 ? b : null, campusPart: true }));
+    polys.forEach((pts, i) => out.push({ pts, h: top - b.floor, top, ...(b.elevated ? { bottom: b.floor } : {}), roofBuilding: b, campus: i === 0 ? b : null, campusPart: true }));
   }
   return out;
 }

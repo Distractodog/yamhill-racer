@@ -2,6 +2,7 @@
 // infield with soccer markings and two goals, and the red jumps runway. Two vertex-coloured meshes: the flat ground
 // layer, and the painted lines + goals just above it.
 import * as THREE from 'three';
+import { addSatelliteSurfaces } from './campussatmodel.js';
 import { TRACK, trackXZ } from './campustrack.js';
 
 const RED = [0.66, 0.29, 0.23], RED2 = [0.62, 0.27, 0.22];
@@ -106,6 +107,8 @@ export function buildTrackMeshes(ground) {
     const q = (uu, p) => { const [x, z] = trackXZ(uu, p); return [x, y0, z]; };
     base.quad(q(u, -h0), q(u, h0), q(u1, h1), q(u1, -h1), col);
   }
+
+  addSatelliteSurfaces(base, top, ground);
 
   // jumps runway + pad, draped on the ground in 2 m cells
   for (const quad of TRACK.runway) {

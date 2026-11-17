@@ -250,7 +250,7 @@ export function* makeTileDataSteps(W, tx, tz, { hbuf, sbuf, tbuf, pbuf, tile }) 
   }
   yield 'tiledata';
   const td = { tx, tz, x0, z0, gx0, gz0, NN, hs: HS, H, surf, trees, brokenTrees, treeCount: nT, roads, renderRoads, renderJunctions, buildings: tile.buildings || [],
-    sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
+    physicsJunctions: juncs, sourcePaths: tile.paths || [], sourceJunctions: tile.junctions || [],
     pondId, pondLevel, waterLevel, terrainAt, overlayAt, surfaceAt, waterLevelAt, treesNear, deckNormal,
     heightAt: (x, z, y) => Math.max(terrainAt(x, z), overlayAt(x, z, y)) };
   applyTrack(td);                           // running track north of the gym: level ground + surface (campustrack.js)

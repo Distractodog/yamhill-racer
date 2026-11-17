@@ -267,7 +267,7 @@ function roof(m, pts, part, yTop) {
     const rDA = mid(Dd, A), rBC = mid(B, C);
     face(v(A, yE), v(B, yE), v(rBC, yR), v(rDA, yR)); face(v(C, yE), v(Dd, yE), v(rDA, yR), v(rBC, yR));
     // gable ends: wall-coloured triangles on the short walls
-    for (const [p, q] of [[r4[1], r4[2]], [r4[3], r4[0]]]) {
+    for (const [p, q] of (part.openWalls ? [] : [[r4[1], r4[2]], [r4[3], r4[0]]])) {
       const e = edges(r4).find(x => x.p === p);
       m.tri(v(p, yTop), v(q, yTop), v(mid(p, q), yR), part.wall, [e.ox, 0, e.oz]);
     }
@@ -303,14 +303,15 @@ export function buildCampusGeometry(b, ground, far = false) {
     const pts = partPts(part), floor = b.floor + (part.dy || 0);
     let lo = Infinity; for (const [x, z] of pts) lo = Math.min(lo, ground(x, z));
     const bottom = Math.min(lo, floor) - 1.5, top = floor + part.h;
-    if (part.wallTop) {       // two-tone walls (lower storey / upper storey)
+    if (part.openWalls) { /* elevated canopy: roof and posts, no enclosing walls */ }
+    else if (part.wallTop) {       // two-tone walls (lower storey / upper storey)
       walls(m, pts, bottom, floor + part.wallTop.y, part.wall); walls(m, pts, floor + part.wallTop.y, top, part.wallTop.color);
     } else walls(m, pts, bottom, top, part.wall);
     windowsOn(m, pts, part, floor, ground, top, far);
     doorsOn(m, pts, part, floor);
     roof(m, pts, part, top);
     if (part.porch) porch(m, pts, part.porch, floor, ground);
-    for (const bx of part.boxes || []) box(m, bx, floor);
+    if (!far || !b.satelliteDetail) for (const bx of part.boxes || []) box(m, bx, floor);
   }
   return m.geometry();
 }
@@ -318,7 +319,7 @@ export function buildCampusGeometry(b, ground, far = false) {
 // Detailed front and the plain far copy, for a building whose windows name a bay face.
 // Other buildings are pushed onto `geos` and merged by the caller.
 export function placeCampus(group, lods, geos, building, ground, mat) {
-  const detailed = building.parts.some(p => p.win && p.win.bays);
+  const detailed = building.satelliteDetail || building.parts.some(p => p.win && p.win.bays);
   if (!detailed) { geos.push(buildCampusGeometry(building, ground)); return; }
   const near = new THREE.Mesh(buildCampusGeometry(building, ground, false), mat);
   const far = new THREE.Mesh(buildCampusGeometry(building, ground, true), mat);

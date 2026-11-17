@@ -487,6 +487,9 @@ def profiles(nodes, edges, J, Hfun, Hsmooth, grad, blend=18.0, sigma=6.0, max_gr
             t = out[idx if end == 0 else idx, :2] - out[other, :2] if end == 1 else out[1, :2] - out[0, :2]
             t = t / (np.linalg.norm(t) or 1)
             out[idx, 2] = plane_y(pl, out[idx, 0], out[idx, 1]); out[idx, 3] = t[1] * pl[2][0] - t[0] * pl[2][1]
+        if e['kind'] == 'trail' and not is_bridge(e):
+            from campus_trails import limit_trail_profile
+            limit_trail_profile(out)
         e['out'] = out
     return planes, plane_y
 
@@ -684,7 +687,13 @@ def harmonize(edges, J):
         if not w.any(): continue
         w = ndimage.gaussian_filter1d(ndimage.maximum_filter1d(w, 5), 2.5)
         w = np.minimum(w, 1); w[0] = w[-1] = 0                    # ends stay matched to their junctions
-        o[:, 2] = o[:, 2] * (1 - w) + tgt * w; changed += 1
+        o[:, 2] = o[:, 2] * (1 - w) + tgt * w
+        if e['kind'] == 'trail' and not is_bridge(e):
+            # Matching an overlapping road must not create a one-sample cliff next to
+            # the pinned junction endpoint. Re-limit after this second height edit.
+            from campus_trails import limit_trail_profile
+            limit_trail_profile(o)
+        changed += 1
     return changed
 
 

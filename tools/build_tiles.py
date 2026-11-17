@@ -222,33 +222,14 @@ for rp in road_paths:
 campus_road = np.asarray(_ri) > 0
 
 
-def trace_skeleton(mask, min_len_px):
-    sk = skeletonize(mask); ys, xs = np.nonzero(sk); on = set(zip(ys.tolist(), xs.tolist()))
-    NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-    nbrs = {p: [(p[0] + a, p[1] + b) for a, b in NB if (p[0] + a, p[1] + b) in on] for p in on}
-    deg = {p: len(n) for p, n in nbrs.items()}; nodes = {p for p, d in deg.items() if d != 2}
-    used = set(); paths = []
-    def walk(start, nxt):
-        path = [start, nxt]; prev, cur = start, nxt
-        while cur not in nodes:
-            cand = [q for q in nbrs[cur] if q != prev and (min(cur, q), max(cur, q)) not in used]
-            if not cand: break
-            used.add((min(cur, cand[0]), max(cur, cand[0]))); prev, cur = cur, cand[0]; path.append(cur)
-            if cur == start: break
-        return path
-    for p0 in list(nodes) + list(on):
-        for q in nbrs[p0]:
-            e2 = (min(p0, q), max(p0, q))
-            if e2 in used: continue
-            used.add(e2); paths.append(walk(p0, q))
-    return [p for p in paths if not ((deg[p[0]] == 1 or deg[p[-1]] == 1) and len(p) < min_len_px)]
+from campus_trails import trace_skeleton, smooth_trail
 
 
 TRAIL_W = 12.0
 trail_paths = []
 for pth in trace_skeleton(trail_tex & ~campus_road, int(8 / CT_M)):
     w = np.array([[(x + .5) * CT_M - OLD_SIZE / 2, (y + .5) * CT_M - OLD_SIZE / 2] for y, x in pth])
-    w = chaikin(rdp(w, 0.6), 2)
+    w = smooth_trail(rdp(w, 0.6), TRAIL_W)
     if len(w) >= 2 and np.hypot(*np.diff(w, axis=0).T).sum() >= 4:
         trail_paths.append({'kind': 'trail', 'w': TRAIL_W, 'pts': w})
 log('campus trails', len(trail_paths))
