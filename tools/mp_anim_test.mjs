@@ -212,7 +212,7 @@ console.log('jet: gear legs, flame, nose wheel, elevator / rudder / ailerons and
 
 // ---------------------------------------------------------------- effects through effects.js / drivingfx.js, glider
 const fx = R.fx; assert.ok(fx?.effects && fx.driving, 'shared remote effects made');
-const alive = (pool, pred = () => true) => { let n = 0; for (let k = 0; k < pool.n; k++) if (pred(pool.alive[k])) n++; return n; };
+const alive = (pool, pred = null) => pool.live(fx.effects.time, pred);
 mp.emit('skin', { t: 'skin', from: 'g', skin: { vehicle: 'car', colors: {} } });
 play('car', 0.5, setCar(0, 1, 0, false, false, 0, 0, 0, [0.09, 0.09, 0.09, 0.09]), { speed: 25 });
 const marks0 = fx.effects.marksBuf.total;
@@ -231,7 +231,7 @@ const dust = alive(fx.effects.puffs), gravel = alive(fx.effects.chips);
 assert.ok(dust > 10 && gravel > 10, `gravel road: dust (${dust}) and thrown gravel (${gravel})`);
 L.car.surface = 5; L.car.onWater = true; L.car.wheels.forEach(w => { w.surf = 5; });
 play('car', 0.6, setCar(0, 1, 0, false, false, 0, 0, 0, [0.05, 0.05, 0.05, 0.05]), { speed: 30 });
-const spray = alive(fx.effects.puffs, i => fx.effects.puffs.kind[i] === DROP);
+const spray = alive(fx.effects.puffs, i => fx.effects.puffs.kind(i) === DROP);
 assert.ok(spray > 20, `skimming water: splashes (${spray})`);
 L.car.surface = 3; L.car.onWater = false; L.car.wheels.forEach(w => { w.surf = 3; });
 play('car', 1.0, setCar(0, 1, 0, false, false, 0, 0, 0, [-1, -1, -1, -1]), { speed: 20, glide: true, y: 30 });
@@ -244,11 +244,11 @@ console.log(`effects: drift marks ${marks} + smoke ${smoke}, gravel dust ${dust}
 {
   L.car.surface = 4; L.car.wheels.forEach(w => { w.surf = 4; });
   play('car', 0.8, setCar(-1, 1, 0, true, true, 0.6, 18, 0, [0.09, 0.09, 0.09, 0.09]), { speed: 30 });
-  const shown = () => [fx.effects.points.visible ? fx.effects.puffGeo.instanceCount : 0, fx.effects.chipMesh.visible ? fx.effects.chipMesh.count : 0];
+  const shown = () => [fx.effects.points.visible ? alive(fx.effects.puffs) : 0, fx.effects.chipMesh.visible ? alive(fx.effects.chips) : 0];
   const [smoke0, stones0] = shown();
   assert.ok(smoke0 > 10 && stones0 > 5, `in the air when they leave (${smoke0} smoke, ${stones0} stones)`);
   mp.emit('left', { t: 'left', id: 'g' }); assert.equal(R.count, 0);
-  const P = fx.effects.puffs, lifeLeft = () => { let s = 0; for (let k = 0; k < P.n; k++) s += P.life[P.alive[k]]; return s; }, life0 = lifeLeft();
+  const P = fx.effects.puffs, lifeLeft = () => { let s = 0; for (let i = 0; i < P.cap; i++) s += Math.max(0, P.death[i] - fx.effects.time); return s; }, life0 = lifeLeft();
   for (let i = 0; i < 30; i++) { mp.advance(1000 / 60); R.update(1 / 60); }
   assert.ok(lifeLeft() < life0 - 0.1 * smoke0, 'still fading after they left');
   for (let i = 0; i < 300; i++) { mp.advance(1000 / 60); R.update(1 / 60); }

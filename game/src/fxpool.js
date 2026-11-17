@@ -1,129 +1,103 @@
-// Pools behind effects.js: soft sprites (tyre smoke, dust, spray, splash rings), flying chips (gravel, clods, grass
-// clippings) and the tyre-mark ribbon. Plain typed arrays with a hard cap, no three.js / DOM (tools/tyrefx_test.mjs).
+// Ring buffers behind effects.js: soft sprites (tyre smoke, dust, spray, splash rings), flying chips (gravel, clods,
+// grass clippings) and the tyre-mark ribbon. Plain typed arrays with a hard cap, no three.js / DOM (tools/tyrefx_test.mjs).
+// Sprites and chips are written once, when they are thrown: start, velocity, drag, lift, birth time and life. The GPU
+// moves and fades them from those numbers and the clock alone (effects.js shaders), so nothing is updated per particle
+// per frame on the CPU; puffAt / chipAt below are the same formulas, for tests. A full ring reuses its oldest slot.
 export const PUFF_A = 0, PUFF_B = 1, RING = 2, DROP = 3;   // sprite cells of the effects texture (RING lies flat)
+export const STRIDE = 20;                                   // floats per slot (5 × vec4 in the shaders)
+export const CHIP_G = 20;                                   // m/s² on chips (game gravity is 24; bits flutter a little)
+const NONE = -1e9;
 
-const IN = 0.12;                                          // s: a sprite fades in this fast (no popping)
+// distance moved after `a` s from speed v0 with drag k (1/s) and a steady acceleration g: dv/dt = g - k v
+export const fly = (k, g, v0, a) => { k = Math.max(k, 0.05); return (g / k) * a + (v0 - g / k) * (1 - Math.exp(-k * a)) / k; };
 
-// Sprites: spawn(o) copies o's fields; when the pool is full the shortest-lived of a few live ones is reused.
-export class PuffPool {
+class Ring {
   constructor(cap) {
-    this.cap = cap;
-    const f = () => new Float32Array(cap);
-    Object.assign(this, { x: f(), y: f(), z: f(), vx: f(), vy: f(), vz: f(), life: f(), max: f(), size: f(), grow: f(),
-      rot: f(), spin: f(), a0: f(), r: f(), g: f(), b: f(), ground: f(), drag: f(), lift: f(), key: f() });
-    this.kind = new Uint8Array(cap);
-    this.alive = new Int32Array(cap); this.n = 0;          // live indices, back to front after sort()
-    this.free = new Int32Array(cap); this.nFree = cap;
-    for (let i = 0; i < cap; i++) this.free[i] = cap - 1 - i;
-    this.reused = 0; this.seed = 1;
+    this.cap = cap; this.data = new Float32Array(cap * STRIDE); this.death = new Float32Array(cap).fill(NONE);
+    this.cursor = 0; this.total = 0; this.reused = 0; this.until = NONE; this.n = 0; this.first = 0; this.fresh = 0;
   }
-  rand() { this.seed = (this.seed * 16807) % 2147483647; return this.seed / 2147483647; }
-  spawn(o) {
-    let i;
-    if (this.nFree) { i = this.free[--this.nFree]; this.alive[this.n++] = i; }
-    else {                                                  // full: take the live one nearest its end out of 6 tries
-      i = this.alive[0];
-      for (let k = 0; k < 6; k++) { const j = this.alive[(this.rand() * this.n) | 0]; if (this.life[j] < this.life[i]) i = j; }
-      this.reused++;
-    }
-    this.x[i] = o.x; this.y[i] = o.y; this.z[i] = o.z; this.vx[i] = o.vx; this.vy[i] = o.vy; this.vz[i] = o.vz;
-    this.life[i] = this.max[i] = o.life; this.size[i] = o.size; this.grow[i] = o.grow; this.rot[i] = o.rot; this.spin[i] = o.spin;
-    this.a0[i] = o.alpha; this.r[i] = o.r; this.g[i] = o.g; this.b[i] = o.b; this.ground[i] = o.ground;
-    this.drag[i] = o.drag; this.lift[i] = o.lift; this.kind[i] = o.kind;
+  slot(now, birth, life) {
+    const i = this.cursor;
+    this.cursor = (i + 1) % this.cap; this.total++;
+    if (this.death[i] > now) this.reused++;
+    this.death[i] = birth + life; if (birth + life > this.until) this.until = birth + life;
+    if (!this.fresh) this.first = i;
+    this.fresh = Math.min(this.cap, this.fresh + 1);
     return i;
   }
-  // move and age; onLand(i) for a falling drop that reaches its ground (water surface) before it dies
-  step(dt, onLand = null) {
-    for (let k = 0; k < this.n;) {
-      const i = this.alive[k];
-      if ((this.life[i] -= dt) <= 0) { this.alive[k] = this.alive[--this.n]; this.free[this.nFree++] = i; continue; }
-      const d = Math.exp(-this.drag[i] * dt);
-      this.vx[i] *= d; this.vz[i] *= d; this.vy[i] = this.vy[i] * d + this.lift[i] * dt;
-      this.x[i] += this.vx[i] * dt; this.y[i] += this.vy[i] * dt; this.z[i] += this.vz[i] * dt;
-      const kind = this.kind[i];
-      if (kind === DROP) {
-        if (this.vy[i] < 0 && this.y[i] < this.ground[i]) { onLand?.(i); this.life[i] = 0; }
-      } else if (kind !== RING) {                           // a cloud never sinks into the ground it rose from
-        const floor = this.ground[i] + this.size[i] * 0.2;
-        if (this.y[i] < floor) { this.y[i] = floor; if (this.vy[i] < 0) this.vy[i] = 0; }
-      }
-      this.size[i] += this.grow[i] * dt * (this.life[i] / this.max[i]);   // billows fast, then hangs
-      this.rot[i] += this.spin[i] * dt;
-      k++;
-    }
+  // slots not yet faded at `now` (a slot born later, e.g. a ring where a drop will land, counts too)
+  live(now, pred = null) { let n = 0; for (let i = 0; i < this.cap; i++) if (this.death[i] > now && (!pred || pred(i))) n++; return n; }
+  count(now) { return (this.n = this.live(now)); }
+  get drawn() { return Math.min(this.total, this.cap); }
+  // the slots written since the last call, in floats: [[start, count], …] (two when it wrapped)
+  takeDirty() {
+    if (!this.fresh) return [];
+    const a = this.first, n = this.fresh, end = Math.min(this.cap, a + n), r = [[a * STRIDE, (end - a) * STRIDE]];
+    if (a + n > this.cap) r.push([0, (a + n - this.cap) * STRIDE]);
+    this.fresh = 0; return r;
   }
-  alpha(i) {
-    const age = this.max[i] - this.life[i], t = age / this.max[i], kind = this.kind[i];
-    if (kind === RING) return this.a0[i] * (1 - t) * Math.min(1, age / 0.06);
-    if (kind === DROP) return this.a0[i] * Math.min(1, (1 - t) * 4);
-    return this.a0[i] * Math.min(1, age / IN) * (1 - t) ** 1.6;
-  }
-  // back to front from the camera (nearly sorted from the last frame: insertion sort, full sort if it got shuffled)
-  sort(cx, cy, cz) {
-    const A = this.alive, K = this.key, n = this.n;
-    for (let k = 0; k < n; k++) { const i = A[k], dx = this.x[i] - cx, dy = this.y[i] - cy, dz = this.z[i] - cz; K[i] = dx * dx + dy * dy + dz * dz; }
-    let moves = 0;
-    for (let k = 1; k < n; k++) {
-      const i = A[k], v = K[i]; let j = k - 1;
-      while (j >= 0 && K[A[j]] < v) { A[j + 1] = A[j]; j--; if (++moves > 16 * n + 64) break; }
-      A[j + 1] = i;
-      if (moves > 16 * n + 64) { const s = Array.from(A.subarray(0, n)).sort((a, b) => K[b] - K[a]); A.set(s); return; }
-    }
-  }
-  clear() { this.n = 0; this.nFree = this.cap; for (let i = 0; i < this.cap; i++) { this.free[i] = this.cap - 1 - i; this.life[i] = 0; } }
+  clear() { this.death.fill(NONE); this.until = NONE; this.n = 0; }
 }
 
-// Chips: tiny tumbling bits with gravity that bounce once and settle, then shrink away
-export class ChipPool {
-  constructor(cap, gravity = 20) {
-    this.cap = cap; this.gravity = gravity;
-    const f = () => new Float32Array(cap);
-    Object.assign(this, { x: f(), y: f(), z: f(), vx: f(), vy: f(), vz: f(), life: f(), max: f(), size: f(), flat: f(),
-      ax: f(), ay: f(), wx: f(), wy: f(), r: f(), g: f(), b: f(), ground: f(), drag: f() });
-    this.bounced = new Uint8Array(cap);
-    this.alive = new Int32Array(cap); this.n = 0;
-    this.free = new Int32Array(cap); this.nFree = cap;
-    for (let i = 0; i < cap; i++) this.free[i] = cap - 1 - i;
-    this.reused = 0; this.cursor = 0;
-  }
-  spawn(o) {
-    let i;
-    if (this.nFree) { i = this.free[--this.nFree]; this.alive[this.n++] = i; }
-    else { i = this.alive[this.cursor++ % this.n]; this.reused++; }
-    this.x[i] = o.x; this.y[i] = o.y; this.z[i] = o.z; this.vx[i] = o.vx; this.vy[i] = o.vy; this.vz[i] = o.vz;
-    this.life[i] = this.max[i] = o.life; this.size[i] = o.size; this.flat[i] = o.flat; this.ax[i] = o.ax; this.ay[i] = o.ay;
-    this.wx[i] = o.wx; this.wy[i] = o.wy; this.r[i] = o.r; this.g[i] = o.g; this.b[i] = o.b; this.ground[i] = o.ground;
-    this.drag[i] = o.drag; this.bounced[i] = 0;
+// slot: x y z birth | vx vy vz life | size grow rot spin | r g b alpha | ground drag lift kind
+export class PuffRing extends Ring {
+  spawn(o, now) {
+    const birth = o.birth ?? now, i = this.slot(now, birth, o.life), d = this.data, k = i * STRIDE;
+    d[k] = o.x; d[k + 1] = o.y; d[k + 2] = o.z; d[k + 3] = birth;
+    d[k + 4] = o.vx; d[k + 5] = o.vy; d[k + 6] = o.vz; d[k + 7] = o.life;
+    d[k + 8] = o.size; d[k + 9] = o.grow; d[k + 10] = o.rot; d[k + 11] = o.spin;
+    d[k + 12] = o.r; d[k + 13] = o.g; d[k + 14] = o.b; d[k + 15] = o.alpha;
+    d[k + 16] = o.ground; d[k + 17] = o.drag; d[k + 18] = o.lift; d[k + 19] = o.kind;
     return i;
   }
-  step(dt) {
-    for (let k = 0; k < this.n;) {
-      const i = this.alive[k];
-      if ((this.life[i] -= dt) <= 0) { this.alive[k] = this.alive[--this.n]; this.free[this.nFree++] = i; continue; }
-      const d = Math.exp(-this.drag[i] * dt);
-      this.vx[i] *= d; this.vz[i] *= d; this.vy[i] = this.vy[i] * d - this.gravity * dt;
-      this.x[i] += this.vx[i] * dt; this.y[i] += this.vy[i] * dt; this.z[i] += this.vz[i] * dt;
-      this.ax[i] += this.wx[i] * dt; this.ay[i] += this.wy[i] * dt;
-      if (this.y[i] < this.ground[i]) {
-        this.y[i] = this.ground[i];
-        if (!this.bounced[i] && this.vy[i] < -2) { this.bounced[i] = 1; this.vy[i] *= -0.3; this.vx[i] *= 0.45; this.vz[i] *= 0.45; this.wx[i] *= 0.5; }
-        else { this.vx[i] = this.vy[i] = this.vz[i] = this.wx[i] = this.wy[i] = 0; this.life[i] = Math.min(this.life[i], 0.35); }
-      }
-      k++;
-    }
+  kind(i) { return this.data[i * STRIDE + 19]; }
+}
+// where a sprite is at `now` and how it looks (the vertex shader in effects.js does exactly this); null = not drawn
+export function puffAt(R, i, now, out = {}) {
+  const d = R.data, k = i * STRIDE, age = now - d[k + 3], life = d[k + 7], kind = d[k + 19];
+  if (age < 0 || age >= life) return null;
+  const drag = d[k + 17], lift = d[k + 18], t = age / life;
+  out.x = d[k] + fly(drag, 0, d[k + 4], age); out.y = d[k + 1] + fly(drag, lift, d[k + 5], age); out.z = d[k + 2] + fly(drag, 0, d[k + 6], age);
+  out.size = d[k + 8] + d[k + 9] * (age - age * age / (2 * life));          // billows fast, then hangs
+  out.rot = d[k + 10] + d[k + 11] * age;
+  if (kind === RING) out.alpha = d[k + 15] * (1 - t) * Math.min(1, age / 0.06);
+  else if (kind === DROP) out.alpha = out.y < d[k + 16] - 0.02 ? 0 : d[k + 15] * Math.min(1, (1 - t) * 4);
+  else { out.alpha = d[k + 15] * Math.min(1, age / 0.12) * (1 - t) ** 1.6; out.y = Math.max(out.y, d[k + 16] + out.size * 0.2); }
+  return out;
+}
+
+// slot: x y z birth | vx vy vz life | size flat ax ay | wx wy tLand drag | r g b ground
+export class ChipRing extends Ring {
+  spawn(o, now) {
+    let land = o.life;                                     // when it reaches the ground: from then on it lies still
+    for (let a = 0.02; a < o.life; a += 0.02) if (o.y + fly(o.drag, -CHIP_G, o.vy, a) < o.ground) { land = a; break; }
+    const life = Math.min(o.life, land + 0.35), i = this.slot(now, now, life), d = this.data, k = i * STRIDE;
+    d[k] = o.x; d[k + 1] = o.y; d[k + 2] = o.z; d[k + 3] = now;
+    d[k + 4] = o.vx; d[k + 5] = o.vy; d[k + 6] = o.vz; d[k + 7] = life;
+    d[k + 8] = o.size; d[k + 9] = o.flat; d[k + 10] = o.ax; d[k + 11] = o.ay;
+    d[k + 12] = o.wx; d[k + 13] = o.wy; d[k + 14] = land; d[k + 15] = o.drag;
+    d[k + 16] = o.r; d[k + 17] = o.g; d[k + 18] = o.b; d[k + 19] = o.ground;
+    return i;
   }
-  scale(i) { return this.size[i] * Math.min(1, this.life[i] / 0.3); }  // shrinks away at the end of its life
-  clear() { this.n = 0; this.nFree = this.cap; for (let i = 0; i < this.cap; i++) { this.free[i] = this.cap - 1 - i; this.life[i] = 0; } }
+}
+export function chipAt(R, i, now, out = {}) {
+  const d = R.data, k = i * STRIDE, age = now - d[k + 3], life = d[k + 7];
+  if (age < 0 || age >= life) return null;
+  const a = Math.min(age, d[k + 14]), drag = d[k + 15];
+  out.x = d[k] + fly(drag, 0, d[k + 4], a); out.z = d[k + 2] + fly(drag, 0, d[k + 6], a);
+  out.y = Math.max(d[k + 1] + fly(drag, -CHIP_G, d[k + 5], a), d[k + 19]);
+  out.scale = d[k + 8] * Math.min(1, (life - age) / 0.3); out.landed = age >= d[k + 14];
+  return out;
 }
 
 // Tyre marks: one ring buffer of quads (4 vertices each). A tyre's trail joins its quads at shared, mitred corners, so
 // a mark is one smooth ribbon at any speed: no gaps, no zig-zags. Per vertex: position, colour, (alpha, across 0/1,
-// time laid, rut 0/1); the shader fades marks by age.
+// time laid, rut 0/1); the shader fades marks by age. Only the quads written since the last upload are sent.
 export class MarkStrip {
   constructor(maxSeg) {
     this.max = maxSeg;
     this.pos = new Float32Array(maxSeg * 12); this.col = new Float32Array(maxSeg * 12); this.info = new Float32Array(maxSeg * 16);
-    this.i = 0; this.total = 0; this.lo = Infinity; this.hi = -1;
+    this.i = 0; this.total = 0; this.changed = [];
   }
   static trail() { return { has: false, started: false, x: 0, y: 0, z: 0, sx: 0, sz: 0, a: 0, seg: -1, segTotal: -1 }; }
   // t: one tyre's trail; (x, y, z) its contact point; minLen / maxLen: shorter steps wait, longer ones start a new mark
@@ -134,13 +108,12 @@ export class MarkStrip {
     if (d2 > maxLen * maxLen || Math.abs(y - t.y) > 1.2) { Object.assign(t, { started: false, x, y, z, a: alpha }); return false; }
     const len = Math.sqrt(d2), sx = dz / len, sz = -dx / len;
     let jx = sx, jz = sz;
-    const prevLive = t.started && t.segTotal > this.total - this.max;
-    if (prevLive) {                                         // mitre the shared corner: half way between both sides
+    if (t.started && t.segTotal > this.total - this.max) {   // mitre the shared corner: half way between both sides
       jx = t.sx + sx; jz = t.sz + sz; const l = Math.hypot(jx, jz);
       if (l < 0.5) { jx = sx; jz = sz; } else { jx /= l; jz /= l; }
       const o = t.seg * 12 + 6, P = this.pos;
       P[o] = t.x + jx * halfW; P[o + 2] = t.z + jz * halfW; P[o + 3] = t.x - jx * halfW; P[o + 5] = t.z - jz * halfW;
-      this.dirty(t.seg);
+      this.changed.push(t.seg);
     }
     const s = this.i, o = s * 12, P = this.pos, C = this.col, I = this.info;
     P[o] = t.x + jx * halfW; P[o + 1] = t.y; P[o + 2] = t.z + jz * halfW;
@@ -152,16 +125,22 @@ export class MarkStrip {
       const q = s * 16 + v * 4;
       I[q] = v < 2 ? (t.started ? t.a : 0) : alpha; I[q + 1] = v & 1; I[q + 2] = time; I[q + 3] = rut;
     }
-    this.dirty(s);
+    this.changed.push(s);
     Object.assign(t, { started: true, x, y, z, sx, sz, a: alpha, seg: s, segTotal: this.total });
     this.i = (this.i + 1) % this.max; this.total++;
     return true;
   }
-  dirty(s) { if (s < this.lo) this.lo = s; if (s > this.hi) this.hi = s; }
-  // the changed segments since the last call: [first, count] or null
+  // the quads changed since the last call, as runs of neighbours: [[first, count], …] (a few small runs, never the whole)
   takeDirty() {
-    if (this.hi < 0) return null;
-    const r = [this.lo, this.hi - this.lo + 1]; this.lo = Infinity; this.hi = -1; return r;
+    const c = this.changed; if (!c.length) return [];
+    c.sort((a, b) => a - b);
+    const runs = [[c[0], 1]];
+    for (let k = 1; k < c.length; k++) {
+      const r = runs[runs.length - 1], end = r[0] + r[1];
+      if (c[k] < end) continue;
+      if (c[k] <= end + 8) r[1] = c[k] - r[0] + 1; else runs.push([c[k], 1]);   // small holes: one upload
+    }
+    c.length = 0; return runs;
   }
 }
 
