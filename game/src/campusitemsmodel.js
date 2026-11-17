@@ -1,5 +1,6 @@
 // Instanced campus props. One mesh per type per tile. Only instances within 250 m
 // are copied into the mesh, and only after the camera has moved.
+import { nightAttribute, addLampPools } from './nightlights.js';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { placeCampusItems } from './campusitems.js';
@@ -18,19 +19,20 @@ function paint(g, hex) {
   for (let i = 0; i < a.length; i += 3) { a[i] = c.r; a[i + 1] = c.g; a[i + 2] = c.b; }
   g.setAttribute('color', new THREE.BufferAttribute(a, 3));
   g.deleteAttribute('uv');
-  return g;
+  return nightAttribute(g);
 }
+const lit = (g, hex) => { g = paint(g, hex); g.attributes.nightStart.array.fill(.15); return g; };
 const pole = (r0, r1, h, hex) => { const g = new THREE.CylinderGeometry(r0, r1, h, 6); g.translate(0, h / 2, 0); return paint(g, hex); };
 const box = (w, h, d, x, y, z, hex) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); return paint(g, hex); };
 
 export function campusItemGeometries() {
   const discHead = new THREE.CylinderGeometry(0.55, 0.55, 0.06, 8); discHead.translate(0, 3.25, 0);
   const discNeck = new THREE.CylinderGeometry(0.08, 0.12, 0.16, 6); discNeck.translate(0, 3.12, 0);
-  const disc = mergeGeometries([pole(0.06, 0.08, 3.2, 0xb7bcc2), paint(discHead, 0xd5d8dc), paint(discNeck, 0xf0d48a)]);
+  const disc = mergeGeometries([pole(0.06, 0.08, 3.2, 0xb7bcc2), paint(discHead, 0xd5d8dc), lit(discNeck, 0xf0d48a)]);
   const globe = new THREE.SphereGeometry(0.28, 8, 6); globe.translate(0, 2.55, 0);
-  const globeMesh = mergeGeometries([pole(0.045, 0.06, 2.4, 0x2a2c30), paint(globe, 0xf4f1ea)]);
+  const globeMesh = mergeGeometries([pole(0.045, 0.06, 2.4, 0x2a2c30), lit(globe, 0xf4f1ea)]);
   const lantern = new THREE.BoxGeometry(0.32, 0.42, 0.32); lantern.translate(0, 3.5, 0);
-  const lanternMesh = mergeGeometries([pole(0.04, 0.05, 3.3, 0xf2f0ea), paint(lantern, 0xf6e7b0)]);
+  const lanternMesh = mergeGeometries([pole(0.04, 0.05, 3.3, 0xf2f0ea), lit(lantern, 0xf6e7b0)]);
   const bench = mergeGeometries([
     box(1.5, 0.08, 0.42, 0, 0.48, 0, 0x4a4e52),
     box(1.5, 0.32, 0.06, 0, 0.72, -0.16, 0x4a4e52),
@@ -70,6 +72,7 @@ export function* addCampusItems(group, lods, td, geos, mat) {
     const items = placed[KEY[name]].filter(it =>
       it.x >= td.x0 && it.x < td.x0 + 2000 && it.z >= td.z0 && it.z < td.z0 + 2000);
     if (!items.length) continue;
+    if (['disc', 'globe', 'lantern'].includes(name)) addLampPools(group, items, (x, z) => (td.heightAt || td.terrainAt)(x, z));
     const src = new Float32Array(items.length * 16), xz = new Float32Array(items.length * 2);
     const col = name === 'sign' ? new Float32Array(items.length * 3) : null;
     items.forEach((it, i) => {
