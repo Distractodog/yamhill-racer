@@ -313,7 +313,9 @@ console.log(`effects: drift marks ${marks} + smoke ${smoke}, gravel dust ${dust}
   for (let f = 0; f < 30; f++) { if (f % 4 === 0) send(); m4.advance(16); R4.update(0.016); }
   await new Promise(r => setTimeout(r, 0));
   assert.equal(R4.stats.voices, VOICES, `${VOICES} engines for 6 nearby players`);
-  assert.ok(R4.list().length === 6 && created.sources === VOICES * 11, `voices built on your audio context (${created.sources} sources)`);
+  // each voice: 4 noise sources (tyres, gravel, wind, thuds) + the race car's engine loops (audio/engines.js)
+  const { ENGINE_LOOPS } = await import('../game/src/audio/engineloops.js');
+  assert.ok(R4.list().length === 6 && created.sources === VOICES * (4 + ENGINE_LOOPS.race.length), `voices built on your audio context (${created.sources} sources)`);
   for (let i = 0; i < 6; i++) m4.emit('left', { t: 'left', id: 'v' + i });
   for (let f = 0; f < 400; f++) { m4.advance(16); R4.update(0.016); }
   assert.ok(R4.stats.voices === 0 && created.stopped >= created.sources - 4 * 4, `silent voices stop their sources after 5 s (${created.stopped}/${created.sources})`);

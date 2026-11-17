@@ -326,39 +326,42 @@ check('mesh: rotors spin with power; wreck stops them; F levels it', () => {
   });
 }
 {
-  // the rotor sound (audio.js) on a stub audio context: chop rate and level follow rotor power; cars stay as they were
+  // the rotor sound (audio/engines.js) on a stub audio context: chop rate and level follow rotor power; only the
+  // helicopter builds it, and a vehicle switch stops it (tools/engine_sound_test.mjs checks every other engine)
   const { CarAudio } = await import('../game/src/audio.js');
   const param = () => ({ value: 0, last: 0, setTargetAtTime(v) { this.last = v; }, setValueAtTime() {}, cancelScheduledValues() {} });
-  let sources = 0;
+  let sources = 0, stopped = 0;
   const node = extra => ({ connect: n => n, disconnect() {}, ...extra });
   const ctx = { currentTime: 0, sampleRate: 8000, destination: node(), resume() {},
     createGain: () => node({ gain: param() }), createBiquadFilter: () => node({ frequency: param(), Q: param(), gain: param() }),
     createWaveShaper: () => node({ curve: null }), createBuffer: (c, n) => ({ duration: 1, getChannelData: () => new Float32Array(n) }),
-    createBufferSource: () => { sources++; return node({ playbackRate: param(), start() {}, stop() {} }); },
-    createOscillator: () => { sources++; return node({ frequency: param(), start() {}, stop() {} }); },
+    createBufferSource: () => { sources++; return node({ playbackRate: param(), start() {}, stop() { stopped++; } }); },
+    createOscillator: () => { sources++; return node({ frequency: param(), start() {}, stop() { stopped++; } }); },
     decodeAudioData: async () => ({ duration: 1 }) };
   globalThis.fetch = async () => ({ arrayBuffer: async () => new ArrayBuffer(4) });
   check('sound: the rotor chop speeds up and gets louder with power, winds down after a crash, off in the car', () => {
     const a = new CarAudio({ ctx }); a.start();
-    const base = sources;
     const car = { kind: 'car', vel: new THREE.Vector3(), mesh: { userData: {} }, surface: 3, slip: 0, grounded: true, hit: 0, landing: 0 };
     const keys = input();
-    a.update(car, keys, DT);
-    a.update(new Jet(flat()), keys, DT);
-    assert.equal(sources, base, 'car and jet: no rotor sound built (same source count as before)');
+    a.update(car, keys, DT); assert(!a.engine.part.rotorGain, 'car: no rotor sound');
+    a.update(new Jet(flat()), keys, DT); assert(!a.engine.part.rotorGain && a.engine.part.roar, 'jet: its turbine, no rotor');
     const h = new Heli(flat()); h.reset(0, 0, 0);
+    const base = sources;
     a.update(h, keys, DT);
-    assert(a.rotorGain && sources === base + 3, `rotor sound built on first use (${sources - base} sources)`);
-    const idle = [a.rotorLfo.frequency.last, a.rotorGain.gain.last];
+    const rotor = a.engine.part;
+    assert(rotor.rotorGain && sources > base, `rotor sound built on first use (${sources - base} sources)`);
+    const idle = [rotor.rotorLfo.frequency.last, rotor.rotorGain.gain.last];
     h.throttle = 1; h.mode = 'air'; a.update(h, keys, DT);
-    const full = [a.rotorLfo.frequency.last, a.rotorGain.gain.last];
+    const full = [rotor.rotorLfo.frequency.last, rotor.rotorGain.gain.last];
     assert(full[0] > idle[0] * 2 && full[1] > idle[1] * 3, `chop ${idle[0].toFixed(1)} → ${full[0].toFixed(1)} Hz, level ${idle[1].toFixed(2)} → ${full[1].toFixed(2)}`);
-    assert.equal(a.jetRoar.gain.last, 0, 'no jet roar');
-    h.mode = 'crashed'; h.throttle = 0.5; a.update(h, keys, DT); const winding = a.rotorGain.gain.last;
+    assert(!rotor.roar && rotor.whine.gain.last > 0, 'no jet roar; a turbine whine under the rotor');
+    h.mode = 'crashed'; h.throttle = 0.5; a.update(h, keys, DT); const winding = rotor.rotorGain.gain.last;
     h.throttle = 0; a.update(h, keys, DT);
-    assert(winding > 0 && a.rotorGain.gain.last === 0 && a.whine.gain.last === 0, 'crashed: winds down to silence');
-    a.update(car, keys, DT); assert.equal(a.rotorGain.gain.last, 0, 'switched to the car: rotor off');
-    a.update(h, keys, DT); assert.equal(sources, base + 3, 'built once');
+    assert(winding > 0 && rotor.rotorGain.gain.last === 0 && rotor.whine.gain.last === 0, 'crashed: winds down to silence');
+    const stoppedBefore = stopped;
+    a.update(car, keys, DT);
+    assert(a.engine.part !== rotor && stopped - stoppedBefore === rotor.sources.length, 'switched to the car: rotor sources stopped');
+    a.update(h, keys, DT); assert(a.engine.part.rotorGain, 'back in the helicopter: rotor again');
     a.stop();
     return `chop ${idle[0].toFixed(1)} Hz at idle → ${full[0].toFixed(1)} Hz flying, level ${idle[1].toFixed(2)} → ${full[1].toFixed(2)}`;
   });

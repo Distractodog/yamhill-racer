@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- Settings → Sound without the game (no three.js / network): the page markup and CSS of game/index.html, the real
+     settings.js and audio/mixer.js, a stand-in for the game's CarAudio. Serve the repo root and open
+     tools/sound_settings_preview.html (or argus browse it). ?engines=40 sets that slider first (a saved value). -->
+<html><head><meta charset="utf-8"><title>loading</title></head>
+<body>
+<script type="module">
+import { loadSound, saveSound, sanitizeSound } from '../game/src/audio/mixer.js';
+const html = await (await fetch('../game/index.html')).text();
+const src = new DOMParser().parseFromString(html, 'text/html');
+for (const s of src.querySelectorAll('style')) document.head.append(s);
+for (const s of src.querySelectorAll('script')) s.remove();
+document.body.replaceChildren(...src.body.childNodes);
+for (const id of ['loading', 'welcome']) document.getElementById(id)?.remove();
+const q = new URLSearchParams(location.search);
+for (const k of ['master', 'engines', 'effects']) if (q.has(k)) saveSound({ ...loadSound(), [k]: q.get(k) / 100 });
+// stand-in for audio.js CarAudio: same volumes API
+const audio = { volumes: loadSound(), start() {}, setVolumes(v) { this.volumes = sanitizeSound({ ...this.volumes, ...v }); saveSound(this.volumes); } };
+const { createSettings } = await import('../game/src/settings.js');
+const settings = createSettings();
+settings.bindSound(audio);
+settings.ready(() => {}, () => {});
+settings.closeWelcome();
+document.getElementById('settings-button').click();
+document.getElementById('sound-content').scrollIntoView();
+const levels = [...document.querySelectorAll('#sound-content input')].map(i => `${i.dataset.channel} ${i.value} (${i.nextElementSibling.textContent})`).join(', ');
+document.title = `ready: ${levels}`;
+console.warn('sound sliders:', levels);
+</script></body></html>
