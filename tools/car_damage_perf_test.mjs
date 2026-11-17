@@ -107,7 +107,7 @@ export function verifyPreservation(Reference, prepared = false) {
         for (let j = 0; j < a.length; j++) {
           const error = Math.abs(a[j] - b[j]); values++;
           if (key === 'position') maxPosition = Math.max(maxPosition, error); else maxNormal = Math.max(maxNormal, error);
-          if (error > 1e-7) throw Error(`distractodog ${id}/${stage}/${key}/${i}/${j}: error ${error}`);
+          if (!Number.isFinite(a[j]) || !Number.isFinite(b[j]) || a[j] !== b[j]) throw Error(`distractodog ${id}/${stage}/${key}/${i}/${j}: error ${error}`);
         }
       }
     }
