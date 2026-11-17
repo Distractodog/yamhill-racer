@@ -13,6 +13,10 @@ for (const s of src.querySelectorAll('script')) s.remove();
 document.body.replaceChildren(...src.body.childNodes);
 for (const id of ['loading', 'welcome']) document.getElementById(id)?.remove();
 const q = new URLSearchParams(location.search);
+if (q.has('units')) {
+  const { setUnits } = await import('../game/src/units.js');
+  setUnits(q.get('units'));
+}
 for (const k of ['master', 'engines', 'effects']) if (q.has(k)) saveSound({ ...loadSound(), [k]: q.get(k) / 100 });
 // stand-in for audio.js CarAudio: same volumes API
 const audio = { volumes: loadSound(), start() {}, setVolumes(v) { this.volumes = sanitizeSound({ ...this.volumes, ...v }); saveSound(this.volumes); } };
@@ -22,7 +26,8 @@ settings.bindSound(audio);
 settings.ready(() => {}, () => {});
 settings.closeWelcome();
 document.getElementById('settings-button').click();
-document.getElementById('sound-content').scrollIntoView();
+if (q.has('units')) document.getElementById('settings-panel').scrollTop = 0;
+else document.getElementById('sound-content').scrollIntoView();
 const levels = [...document.querySelectorAll('#sound-content input')].map(i => `${i.dataset.channel} ${i.value} (${i.nextElementSibling.textContent})`).join(', ');
 document.title = `ready: ${levels}`;
 console.warn('sound sliders:', levels);

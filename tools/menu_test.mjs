@@ -1,6 +1,8 @@
 // Fast disclosure/input checks without a renderer, browser, or world assets.
 import assert from 'node:assert/strict';
 import { createGameMenu } from '../game/src/gamemenu.js';
+import { createSettings } from '../game/src/settings.js';
+import { getUnits, toggleUnits } from '../game/src/units.js';
 
 class Element {
   listeners = new Map(); attributes = new Map(); hidden = false; disabled = false; children = [];
@@ -57,3 +59,26 @@ assert.equal(document.activeElement, button); // subsequent item handlers can fo
 button.emit('click'); button.emit('click'); assert.equal(menu.open, false);
 assert.equal(changes, opens * 2);
 console.log('PASS: disclosure state/ARIA, disabled items, focus return, Tab wrap, input isolation, game shortcut passthrough, outside pointer/focus, item activation, toggle');
+
+// Settings: saved unit selection stays in sync with U, and every open resets tuning disclosures.
+const saved = new Map();
+globalThis.localStorage = { getItem: k => saved.get(k), setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) };
+globalThis.Element = Element;
+Element.prototype.matches = function () { return this.id === 'units-select'; };
+for (const id of ['settings-panel', 'settings-button', 'help-button', 'settings-title', 'tuning-content', 'help-content',
+  'settings-close', 'settings-help', 'welcome', 'welcome-hide', 'welcome-start', 'welcome-help', 'units-select']) nodes.set(id, new Element(id));
+const settings = createSettings();
+const folders = Array.from({ length: 4 }, () => ({ closed: false, close() { this.closed = true; } }));
+settings.bindTuning({ foldersRecursive: () => folders });
+assert(folders.every(folder => folder.closed), 'all tuning folders start collapsed');
+settings.ready(() => {}, () => {}); settings.closeWelcome();
+const units = nodes.get('units-select');
+assert.equal(units.value, getUnits());
+units.value = 'imperial'; units.emit('change');
+assert.equal(getUnits(), 'imperial'); assert.equal(saved.get('yr-units-1'), 'imperial');
+toggleUnits(); assert.equal(units.value, 'metric'); assert.equal(saved.get('yr-units-1'), 'metric');
+nodes.get('settings-button').emit('click');
+folders.forEach(folder => { folder.closed = false; });
+settings.close(); nodes.get('settings-button').emit('click');
+assert(folders.every(folder => folder.closed), 'reopening Settings collapses previously opened folders');
+console.log('PASS: Settings unit selection/storage/U synchronization, tuning folders collapsed initially and on reopen');

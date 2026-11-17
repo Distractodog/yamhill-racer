@@ -164,9 +164,9 @@ const pick = (o, ranges) => Object.fromEntries(Object.keys(ranges).map(k => [k, 
 const saveB = () => { try { localStorage.setItem('yr-tuning-bike-1', JSON.stringify(pick(bikeTuning, BIKE_RANGES))); localStorage.setItem('yr-tuning-jet-1', JSON.stringify(pick(jetTuning, JET_RANGES))); } catch {} };
 const fb = gui.addFolder('Bike'); for (const [k, r] of Object.entries(BIKE_RANGES)) fb.add(bikeTuning, k, ...r).onChange(saveB);
 const fj = gui.addFolder('Jet'); for (const [k, r] of Object.entries(JET_RANGES)) fj.add(jetTuning, k, ...r).onChange(saveB);
-fb.close(); fj.close();
 gui.add({ resetV: () => { Object.assign(bikeTuning, BIKE); Object.assign(jetTuning, JET); saveB(); gui.controllersRecursive().forEach(c => c.updateDisplay()); } }, 'resetV').name('Reset bike + jet');
 gui.open();
+settings.bindTuning(gui);
 
 // H returns to the point chosen for this session.
 function goHome() { respawnHold.cancel(); sessionSpawn.goHome(); }
@@ -399,9 +399,8 @@ const vmsgEl = Object.assign(document.createElement('div'), { id: 'veh-msg' }); 
 const vlineEl = Object.assign(document.createElement('div'), { id: 'veh-line' });
 vlineEl.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px;font-variant-numeric:tabular-nums;';
 speedEl.before(vlineEl);
-// speed number + unit label (km/h ⇄ mph). The label is clickable; U does the same. Display only.
+// speed number + unit label (km/h ⇄ mph). U and Settings change the display units.
 const speedNumEl = document.getElementById('speed-num'), speedUnitEl = document.getElementById('speed-unit');
-speedUnitEl.addEventListener('click', e => { e.stopPropagation(); toggleUnits(); speedUnitEl.blur(); });
 const showUnits = () => {
   speedUnitEl.textContent = speedUnit();
   document.querySelectorAll('[data-kmh]').forEach(el => { el.textContent = fmtKmh(+el.dataset.kmh); });
