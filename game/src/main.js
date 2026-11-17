@@ -125,7 +125,12 @@ settings.bindSound(audio);              // Settings → Sound: master / engines 
 const minimap = await createMinimap();
 const directions = createDirections({ minimap, car, world });
 // a race placing the car (start, J, Backspace restart, multiplayer start, checkpoint R) drops a waiting respawn hold
-const challenges = await createChallenges({ scene, world, car, minimap, vehicles, audio, onPlace: () => respawnHold.cancel() });
+const challenges = await createChallenges({ scene, world, car, minimap, vehicles, audio, onPlace: () => respawnHold.cancel(),
+  // the race menu (J, ☰ Menu → Races, a start ring) closes the other panels like they close it; not over the spawn
+  // map, the Garage or the builder; a start ring doesn't pop it over Settings / How to play / the ☰ Menu either
+  canOpenMenu: () => !sessionSpawn.blocked && !garage.open && !builder.open,
+  canAutoOpen: () => !settings.open,
+  onMenuOpen: () => { settings.closeWelcome(); settings.close(); garage.close(); vehicles.close(); if (minimap.open) minimap.toggle(false); clearKeys(); } });
 import('./mp/races.js').then(m => m.createRaces({ challenges, car })).catch(() => {});   // multiplayer races (optional)
 const wind = createWind({ seed: crypto.getRandomValues(new Uint32Array(1))[0], world,
   sunny: () => atmosphere.phase === 'day' && atmosphere.rain === 0 && !atmosphere.raining && (atmosphere.settings.cycle || atmosphere.preset === 'midday'),
@@ -162,6 +167,9 @@ createVehiclePicker({ vehicles, thumbs: vehicleThumbs,
 const vehiclesButton = document.getElementById('vehicles-button');
 vehiclesButton?.addEventListener('click', () => vehicles.show(vehiclesButton));
 if (vehiclesButton) vehiclesButton.disabled = false;
+const racesButton = document.getElementById('races-button');      // ☰ Menu → Races: the J race menu
+racesButton?.addEventListener('click', () => challenges.openMenu(undefined, { from: racesButton }));
+if (racesButton) racesButton.disabled = false;
 
 const gui = new GUI({ title: 'Vehicle tuning', container: document.getElementById('tuning-controls') });
 const fc = gui.addFolder('Car');
@@ -472,8 +480,9 @@ function frame(now) {
   readInput();
   challenges.holdInput(input);
   respawnHold.update(dt);
-  // the V picker pauses the game like the Garage (race clock too), except in multiplayer where the others play on
-  const picking = vehicles.open && !mp.inGame, frozen = garage.open || picking || builder.open;
+  // the V picker and the race menu pause the game like the Garage (race clock too), except in multiplayer where the
+  // others play on
+  const picking = (vehicles.open || challenges.menuOpen) && !mp.inGame, frozen = garage.open || picking || builder.open;
   acc += sessionSpawn.blocked || frozen || respawnHold.blocked ? 0 : dt;
   while (acc >= STEP && !respawnHold.blocked && !builder.open) { car.savePrev(); car.step(STEP, input); builder.step(vehicles.current); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
   challenges.update(picking || builder.open ? 0 : dt);

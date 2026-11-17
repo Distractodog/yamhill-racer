@@ -1,6 +1,7 @@
 // Timed challenges: point-to-point runs through checkpoint arches (routes planned by tools/challenge_routes.py).
-// J opens the list; picking one puts the car on the start line, counts 3-2-1-GO, then times you through every
-// checkpoint in order to the finish. Best times (and their checkpoint splits) are saved per browser.
+// J opens the race menu (racemenu.js), as does driving slowly into a race's start ring in free roam (racemarkers.js);
+// starting one puts the car on the start line, counts 3-2-1-GO, then times you through every checkpoint in order to
+// the finish. Best times (and their checkpoint splits) and the best medal per race (medals.js) are saved per browser.
 import * as THREE from 'three';
 import { RAMP, RAMP_LEN, rampShape } from './data.js';
 import { makeTrack } from './track.js';
@@ -9,6 +10,9 @@ import { createGhost } from './ghost.js';
 import { createRewards } from './rewards.js';
 import { checkpointStart, drivingWrongWay } from './raceguidance.js';
 import { fmtDist, fmtHeight } from './units.js';
+import { createMedals, nextMedal, MEDALS, MEDAL_ICON, MEDAL_NAME } from './medals.js';
+import { createRaceMenu } from './racemenu.js';
+import { createRaceMarkers } from './racemarkers.js';
 
 const BEST_KEY = 'yr-best-1';
 const POST_H = 7, COUNTDOWN = 3;
@@ -30,17 +34,30 @@ const CSS = `
   background: #142016ee; color: #fff; border-radius: 16px; box-shadow: 0 10px 40px #0008; padding: 20px 22px;
   display: none; font-size: 14px; }
 .ch-panel h2 { margin: 0 0 12px; font-size: 22px; }
-.ch-panel .ch-item { display: block; width: 100%; text-align: left; border: 2px solid transparent; background: #ffffff12;
-  color: #fff; border-radius: 10px; padding: 10px 12px; margin: 6px 0; cursor: pointer; font: inherit; }
-.ch-panel .ch-item.sel { border-color: #ffd23f; background: #ffffff22; }
-.ch-panel .ch-item b { font-size: 16px; }
-.ch-panel .ch-item .ch-meta { float: right; opacity: .85; font-variant-numeric: tabular-nums; }
-.ch-panel .ch-item .ch-desc { display: block; opacity: .75; font-size: 12.5px; margin-top: 2px; }
 .ch-panel .ch-hint { opacity: .65; font-size: 12px; margin-top: 10px; }
-.ch-panel .ch-group { font-weight: 800; font-size: 13px; opacity: .8; margin: 12px 0 2px; }
-#ch-menu { max-height: 86vh; overflow-y: auto; box-sizing: border-box; }
 .ch-panel .ch-big { font-size: 48px; font-weight: 900; font-variant-numeric: tabular-nums; margin: 4px 0; }
 .ch-panel .ch-new { color: #ffd23f; font-weight: 800; font-size: 18px; }
+#ch-done .ch-medal { display: inline-flex; align-items: center; gap: 8px; margin: 2px 0 0; padding: 6px 16px 6px 10px; border-radius: 999px;
+  font-weight: 900; font-size: 17px; letter-spacing: .02em; background: #ffffff10; border: 1px solid #ffffff30; }
+#ch-done .ch-medal i { font-style: normal; font-size: 30px; line-height: 1; }
+#ch-done .ch-medal.gold { background: #ffd23f26; border-color: #ffd23f; color: #ffe27a; }
+#ch-done .ch-medal.silver { background: #dfe8ef1f; border-color: #cfd9e0; color: #eef4f8; }
+#ch-done .ch-medal.bronze { background: #e0915326; border-color: #d98c55; color: #f2b98d; }
+#ch-done .ch-medal.none { font-size: 14px; color: #c3d5c8; }
+#ch-done .ch-medal-new { display: block; color: #ffd23f; font-weight: 800; font-size: 12px; letter-spacing: .12em; margin-top: 6px; }
+#ch-done .ch-pb, #ch-done .ch-medal-next { color: #c3d5c8; font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+#ch-done .ch-pb b { color: #fff; }
+#ch-done .ch-targets { display: flex; justify-content: center; gap: 6px; margin: 12px 0 0; flex-wrap: wrap; }
+#ch-done .ch-targets span { padding: 3px 9px; border-radius: 999px; background: #ffffff0d; border: 1px solid #ffffff22; font-size: 12px;
+  font-weight: 700; font-variant-numeric: tabular-nums; color: #9fb4a6; }
+#ch-done .ch-targets span.got { color: #fff; border-color: #eac17c99; background: #eac17c22; }
+#ch-done .ch-splits { margin: 14px auto 0; max-width: 340px; max-height: 168px; overflow-y: auto; text-align: left; font-size: 12.5px;
+  font-variant-numeric: tabular-nums; border-top: 1px solid #ffffff18; padding-top: 6px; }
+#ch-done .ch-splits div { display: flex; gap: 10px; padding: 2px 4px; }
+#ch-done .ch-splits div:nth-child(odd) { background: #ffffff06; }
+#ch-done .ch-splits span { width: 86px; color: #acc5b4; } #ch-done .ch-splits b { font-weight: 700; }
+#ch-done .ch-splits em { margin-left: auto; font-style: normal; } #ch-done .ch-splits .ahead { color: #5df07a; } #ch-done .ch-splits .behind { color: #ff6b5e; }
+#ch-done .ch-splits .ch-fin { border-top: 1px solid #ffffff18; font-weight: 800; }
 `;
 
 export function fmtTime(t) {
@@ -68,7 +85,6 @@ const MAT = {
 };
 const POST = new THREE.BoxGeometry(0.9, POST_H, 0.9).translate(0, POST_H / 2, 0);
 const BAR = new THREE.BoxGeometry(1, 1.4, 0.5);
-const VICON = { car: '🏎️', bike: '🏍️', jet: '✈️' }, VNAME = { car: 'Car races', bike: 'Dirt bike races', jet: 'Jet races (rings in the air)' };
 const BEAM = new THREE.CylinderGeometry(2.2, 2.2, 260, 12, 1, true).translate(0, 130 + POST_H, 0);
 
 function makeArch(g, kind) {
@@ -138,7 +154,11 @@ function makeRamp(world, r) {
 
 // ---------------------------------------------------------------- manager
 // onPlace(): a race is putting the car somewhere (start, restart, checkpoint): main.js drops a waiting respawn hold
-export async function createChallenges({ scene, world, car, minimap, vehicles = null, audio = null, base ='./assets/', onPlace = () => {} }) {
+// canOpenMenu(): false while the race menu may not open (the spawn map, the Garage); onMenuOpen(): it is opening (J, ☰
+// Menu → Races, a start ring): main.js closes the other panels and drops held keys, as the V picker's onOpen does;
+// canAutoOpen(): false while a start ring must not pop the menu up by itself (Settings, How to play, the ☰ Menu, …)
+export async function createChallenges({ scene, world, car, minimap, vehicles = null, audio = null, base ='./assets/', onPlace = () => {},
+  canOpenMenu = () => true, onMenuOpen = () => {}, canAutoOpen = () => true }) {
   const list = await fetch(base + 'challenges.json').then(r => r.json());
   const ghost = createGhost({ scene });
   const rewards = createRewards();
@@ -153,18 +173,28 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
 
   const style = document.createElement('style'); style.textContent = CSS; document.head.append(style);
   const hud = el('div', 'ch-hud'), split = el('div', 'ch-split'), count = el('div', 'ch-count');
-  const menu = el('div', 'ch-menu', 'ch-panel'), done = el('div', 'ch-done', 'ch-panel');
+  const done = el('div', 'ch-done', 'ch-panel');
   function el(tag, id, cls) { const e = document.createElement(tag); e.id = id; if (cls) e.className = cls; document.body.append(e); return e; }
 
   let best = {};
   try { best = JSON.parse(localStorage.getItem(BEST_KEY) || '{}'); } catch {}
   if (!best || typeof best !== 'object' || Array.isArray(best)) best = {};
   rewards.importBests(list, best);
+  const medals = createMedals();
+  medals.importBests(list, best);
   const saveBest = () => { try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch {} };
+  // the race menu, built the first time it opens; menuClosed: it closed itself (Esc, ✕, a click outside), the finish
+  // panel comes back if it was up
+  let raceMenu = null;
+  const menuUI = () => raceMenu ||= createRaceMenu({ list, best: () => best, medals, rewards, fmtTime, base, racing: () => state !== 'idle',
+    onStart: i => start(i), onInvite: i => mpHook?.pick?.(i), canInvite: () => !!mpHook?.canInvite?.(), onClose: () => menuClosed() });
 
   const group = new THREE.Group(); scene.add(group);
   const beam = new THREE.Mesh(BEAM, MAT.beam); beam.visible = false; beam.renderOrder = 5; beam.frustumCulled = false;
   group.add(beam);
+  const markers = createRaceMarkers({ scene, world, list, car,
+    isOpen: () => menuOpen || !!minimap.open || !!vehicles?.open || !canOpenMenu() || !canAutoOpen(),
+    onEnter: i => openMenu(i, { filter: 'all' }) });
 
   // state: 'idle' | 'placing' | 'countdown' | 'running' | 'finished'
   let ch = null, arches = [], state = 'idle', t = 0, cd = 0, next = 1, splits = [], splitT = 0, sel = 0, result = null;
@@ -278,27 +308,58 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     minimap.setOverlay?.(null);
   }
 
+  // ---- finish screen: time, medal, personal best, medal targets, splits against the previous best, actions
+  function medalHtml(won, time) {
+    const up = nextMedal(time, ch.medals);
+    const next = up ? `<div class="ch-medal-next">${MEDAL_ICON[up.medal]} ${MEDAL_NAME[up.medal]} needs ${fmtTime(up.target)} · ${fmtDelta(up.gap)}</div>` : '';
+    if (!won.medal) return ch.medals ? `<div class="ch-medal none">No medal</div>${next}` : '';
+    return `<div class="ch-medal ${won.medal}"><i>${MEDAL_ICON[won.medal]}</i>${MEDAL_NAME[won.medal]}</div>` +
+      (won.improved ? `<span class="ch-medal-new">${won.prev ? 'BETTER MEDAL' : 'NEW MEDAL'}</span>` : '') + next;
+  }
+  function targetsHtml(have) {
+    if (!ch.medals) return '';
+    return `<div class="ch-targets">${MEDALS.map(m => `<span class="${have && MEDALS.indexOf(m) >= MEDALS.indexOf(have) ? 'got' : ''}">${MEDAL_ICON[m]} ${fmtTime(ch.medals[m])}</span>`).join('')}</div>`;
+  }
+  // this run's checkpoint times, each against the previous best run's (prevSplits / prevTime: null = first run)
+  function splitsHtml(prevSplits, prevTime, time) {
+    if (!splits.length) return '';
+    const ring = ch.vehicle === 'jet', row = (label, v, b, cls = '') =>
+      `<div class="${cls}"><span>${label}</span><b>${fmtTime(v)}</b>${b != null ? `<em class="${v <= b ? 'ahead' : 'behind'}">${fmtDelta(v - b)}</em>` : '<em></em>'}</div>`;
+    return `<div class="ch-splits" aria-label="Splits">${splits.map((v, i) => row(`${ring ? 'Ring' : 'Checkpoint'} ${i + 1}`, v, prevSplits?.[i])).join('')}${row('Finish', time, prevTime, 'ch-fin')}</div>`;
+  }
+  const ACTIONS = `<div class="ch-actions"><button data-action="retry">Race again</button><button data-action="next">Next race</button><button data-action="races">Choose race</button><button data-action="roam">Free roam</button></div>
+      <div class="ch-hint">Enter race again · N next race · J races · Esc free roam</div>`;
+  function wireActions() {
+    done.querySelector('[data-action="retry"]').addEventListener('click', () => start(sel));
+    done.querySelector('[data-action="next"]').addEventListener('click', nextRace);
+    done.querySelector('[data-action="races"]').addEventListener('click', () => openMenu());
+    done.querySelector('[data-action="roam"]').addEventListener('click', quit);
+  }
+  const nextRace = () => start(raceMenu ? raceMenu.nextAfter(sel) : (sel + 1) % list.length);
+
   function finish() {
     state = 'finished';
     const prev = best[ch.id];
     const isBest = !prev || t < prev.time;
     ghost.finish(t, car, isBest);
     if (isBest) { best[ch.id] = { time: t, splits: splits.slice(), date: new Date().toLocaleDateString('en-CA') }; saveBest(); }
-    result = { time: t, prev: prev?.time, isBest };
+    const won = medals.record(ch, t);
+    result = { time: t, prev: prev?.time, isBest, medal: won.medal };
     const unlocked = rewards.complete(ch, t);
     blip(880, 0.12); setTimeout(() => blip(1320, 0.3), 130);
     beam.visible = false; minimap.setOverlay?.(null); split.style.opacity = 0; splitT = 0;
     done.innerHTML = `<h2>${ch.name}</h2>
+      ${medalHtml(won, t)}
       <div class="ch-big">${fmtTime(t)}</div>
       ${isBest ? `<div class="ch-new">${prev ? `New best! ${fmtDelta(t - prev.time)}` : 'First time set!'}</div>`
                : `<div>Best ${fmtTime(prev.time)} · ${fmtDelta(t - prev.time)}</div>`}
+      <div class="ch-pb">Personal best <b>${fmtTime(best[ch.id].time)}</b></div>
+      ${targetsHtml(medals.get(ch.id))}
+      ${splitsHtml(prev?.splits, prev?.time, t)}
       ${unlocked.map(r => `<div class="ch-reward"><span>NEW LIVERY UNLOCKED</span><strong>${r.name}</strong><small>Available in your Garage</small></div>`).join('')}
       <div id="ch-mp-results"></div>
-      <div class="ch-actions"><button data-action="retry">Race again</button><button data-action="races">Choose race</button><button data-action="roam">Free roam</button></div>
-      <div class="ch-hint">Enter retry · J challenges · Esc free roam</div>`;
-    done.querySelector('[data-action="retry"]').addEventListener('click', () => start(sel));
-    done.querySelector('[data-action="races"]').addEventListener('click', openMenu);
-    done.querySelector('[data-action="roam"]').addEventListener('click', quit);
+      ${ACTIONS}`;
+    wireActions();
     done.style.display = 'block';
     mpHook?.onFinish?.(t);
   }
@@ -310,12 +371,10 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     beam.visible = false; count.style.display = 'none'; minimap.setOverlay?.(null); split.style.opacity = 0; splitT = 0;
     done.innerHTML = `<h2>${ch.name}</h2>
       <div class="ch-big">DNF</div>
+      ${best[ch.id] ? `<div class="ch-pb">Personal best <b>${fmtTime(best[ch.id].time)}</b></div>` : ''}
       <div id="ch-mp-results"></div>
-      <div class="ch-actions"><button data-action="retry">Race again</button><button data-action="races">Choose race</button><button data-action="roam">Free roam</button></div>
-      <div class="ch-hint">Enter retry · J challenges · Esc free roam</div>`;
-    done.querySelector('[data-action="retry"]').addEventListener('click', () => start(sel));
-    done.querySelector('[data-action="races"]').addEventListener('click', openMenu);
-    done.querySelector('[data-action="roam"]').addEventListener('click', quit);
+      ${ACTIONS}`;
+    wireActions();
     done.style.display = 'block';
   }
 
@@ -364,19 +423,16 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
     hud.innerHTML = `<div class="ch-name">${ch.name}</div><div class="ch-time">${fmtTime(t)}</div><div class="ch-sub">${sub}</div>${mpHook?.hudHtml?.() || ''}`;
   }
 
-  // ---- menu
-  function renderMenu() {
-    let lastV = null;
-    menu.innerHTML = `<h2>Races</h2><div class="reward-collection">${rewards.list().map(r => `<span class="reward-chip${r.unlocked ? ' unlocked' : ''}" title="${r.description}">${r.unlocked ? '✓' : r.completed + '/' + r.total} ${r.name}</span>`).join('')}</div>` + list.map((c, i) => {
-      const v = c.vehicle || 'car', head = v !== lastV ? `<div class="ch-group">${VICON[v]} ${VNAME[v]}</div>` : ''; lastV = v;
-      return head + `<button class="ch-item${i === sel ? ' sel' : ''}" data-i="${i}"><b>${VICON[v]} ${c.name}</b>
-        <span class="ch-meta">${fmtDist(c.length)} · best ${fmtTime(best[c.id]?.time)}</span>
-        <span class="ch-desc">${c.desc}</span></button>`; }).join('') +
-      `<div class="ch-hint">↑/↓ + Enter or click to start · J or Esc to close${state !== 'idle' ? ' · Backspace restarts a run' : ''}</div>`;
-    menu.querySelectorAll('.ch-item').forEach(b => b.addEventListener('click', () => { if (!mpHook?.pick?.(+b.dataset.i)) start(+b.dataset.i); }));
+  // ---- menu (racemenu.js); i: a race to select (a start ring); none (J, ☰ Menu, Choose race): the card and filter you
+  // last had in the menu (the first time: the race you last started). opts.filter: 'car' | 'bike' | 'jet' | 'all';
+  // opts.from: the button that opened it (☰ Menu → Races): Esc / ✕ / a click outside give focus back there
+  function openMenu(i = null, opts = {}) {
+    if (!menuOpen) { if (!canOpenMenu()) return; onMenuOpen(); }
+    const first = !raceMenu;
+    menuOpen = true; done.style.display = 'none'; menuUI().show(i ?? (first ? sel : null), opts);
   }
-  function openMenu() { menuOpen = true; done.style.display = 'none'; renderMenu(); menu.style.display = 'block'; }
-  function closeMenu() { menuOpen = false; menu.style.display = 'none'; if (state === 'finished') done.style.display = 'block'; }
+  function menuClosed() { menuOpen = false; if (state === 'finished') done.style.display = 'block'; }
+  function closeMenu() { raceMenu?.close(); menuClosed(); }
 
   // capture phase: runs before the map's own Esc handler, so Esc with the full map open only closes the map
   addEventListener('keydown', e => {
@@ -389,20 +445,17 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
       if (!e.repeat) returnToCheckpoint();
       return;
     }
+    // the menu's keys (held arrows repeat)
+    if (menuOpen && e.code !== 'KeyJ') { if (!e.repeat || e.code.startsWith('Arrow')) menuUI().keydown(e); return; }
     if (e.repeat) return;
     if (e.code === 'KeyG' && car.glide && (state === 'placing' || state === 'countdown' || state === 'running')) {
       car.glide.cancel(); car.glide.say('No glider in races', 1.8);
       e.preventDefault(); e.stopImmediatePropagation(); return;
     }
     if (e.code === 'KeyJ') { menuOpen ? closeMenu() : openMenu(); return; }
-    if (menuOpen) {
-      if (e.code === 'ArrowDown' || e.code === 'ArrowUp') { sel = (sel + (e.code === 'ArrowDown' ? 1 : list.length - 1)) % list.length; renderMenu(); }
-      else if (e.code === 'Enter') { if (!mpHook?.pick?.(sel)) start(sel); }
-      else if (e.code === 'Escape') closeMenu();
-      return;
-    }
     if (minimap.open) return;          // Esc closes the full map first
     if (state === 'finished' && e.code === 'Enter') start(sel);
+    else if (state === 'finished' && e.code === 'KeyN') nextRace();
     else if (state !== 'idle' && e.code === 'Backspace') { e.preventDefault(); start(sel); }
     else if (state !== 'idle' && (e.code === 'Escape' || e.code === 'KeyH')) quit();
   }, true);
@@ -410,7 +463,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
   return {
     list, get state() { return state; }, get vehicle() { return ch?.vehicle || 'car'; }, get time() { return t; }, get next() { return next; }, get menuOpen() { return menuOpen; },
     set mpHook(h) { mpHook = h; }, runInfo: () => ch && { id: ch.id, name: ch.name, gates: ch.gates, track: ch.track, route: ch.route, next, state, t },
-    dnf, rewards, best: () => best, start, quit, openMenu, closeMenu,
+    dnf, rewards, medals, get raceMenu() { return menuUI(); }, markers, best: () => best, start, quit, openMenu, closeMenu, get result() { return result; },
     // walls: call after every physics step. Only during the countdown and the run (not after the finish)
     constrain() {
       if (returning || (state !== 'countdown' && state !== 'running')) return;
@@ -455,6 +508,7 @@ export async function createChallenges({ scene, world, car, minimap, vehicles = 
         // a teleport (R reset) is not a crossing: only count normal movement
         if (!returning && curPos.distanceTo(lastPos) < 40 && crossed(ch.gates[next])) passGate();
       }
+      markers.update(dt, state === 'idle');
       if (splitT > 0 && (splitT -= dt) <= 0) split.style.opacity = 0;
       if (state !== 'idle') renderHud();
       lastPos.copy(curPos); lastY = curY;

@@ -64,6 +64,9 @@ sends `Cache-Control: no-store` so edits always load.
 | `node tools/vehicles_test.mjs <dir>` | yes | V picker mid-race, bike race, jet ring race, crash + respawn; writes screenshots to `<dir>`. |
 | `node tools/picker_test.mjs` | no | V picker logic: stat bars, `vehicles.choose` (ground, in flight, helicopter slot, refused, respawn hold), thumbnail paint. |
 | `node tools/picker_shots.mjs --out <dir>` | yes | V picker in the game: pictures, keyboard / mouse / menu / number keys, close paths, single-player pause, types locked in a race, focus never left on the ☰ Menu, in-flight type swap, small screen; review PNGs. `tools/picker_preview.html` shows it without the game. |
+| `node tools/medals_test.mjs` / `node tools/race_presentation_test.mjs` | no | Medal rules, `yr-medals-1` storage, every race's targets from its bot time (top-speed races: the race car's time); finish screen (medal, personal best, Next race) and race menu gating on a DOM shim. |
+| `node tools/race_fast_time.mjs <race id> [capKmh] [v]` | no | The walls bot without its 260 km/h cap on one race (only that route's tiles): the race car's real pace, for `challenge_routes.py` `FAST_TIMES` (top-speed races' medals). Seconds. |
+| `node tools/racemenu_shots.mjs --out <dir>` | yes | J race menu cards / filters / keys / mouse, finish screen with a medal, start ring in free roam opening its card; review PNGs. |
 | `node tools/welcome_test.mjs <dir>` | yes | Welcome card shows, blocks game keys, closes with button/Enter/Esc/Space, "don't show again". |
 | `node tools/shot.mjs out.png [x z surfaceClass cam]` | yes | One headless screenshot at a spot (also prints fps). Use it to **look** at your work. |
 | `node tools/lights_test.mjs` / `node tools/lights_shots.mjs <dir>` | screenshots only | Vehicle light logic/anchors, every type's lit lenses on its drawn lamps (ray-cast), the low-beam shape (`lights.js` patches three's spot cone: road even ~5–25 m, gone by 60 m, cut-off above the lamps); director night views and McMinnville night A/B/A benchmark (use heavy gate). |
@@ -106,7 +109,8 @@ x∈[tx·2000−1000, tx·2000+1000], z likewise.
 | `water.js` | Water for the car and bike (ponds and rivers alike): tyres ride the bed, planing lift ∝ speed² (skims above `skimSpeed`), wading drag, a buoyant body that floods nose-first and sinks; `nearestBank` respawn after ~3 s fully under. Pure physics (world queries only). |
 | `jet.js` | `Jet`: ground mode (3 wheels) and flight (lift/drag, stall, landing/crash, wreck tumble 4.5 s then respawn). `JET` tuning, `buildJetModel`. Top ~1733 km/h. No glider. |
 | `glider.js` | `Glider` (G key) for car and bike: when open, the vehicle's `step` hands over to `vehicle.glide.step`. `GLIDER` + `BIKE_GLIDER` tuning, `buildGliderModel`. Vehicle hooks used if present: `wheelReach()`, `afterGlide()`, `bail()`. |
-| `challenges.js` | Timed races: J list, countdown, start/checkpoint/finish arches, timer + splits HUD, finish screen, best times (localStorage). Reads `assets/challenges.json`. Fixed map ramps (`assets/ramps.json`) are created here too. `createChallenges`, `fmtTime`. `constrain()` (after every physics step) applies walls. |
+| `challenges.js` | Timed races: countdown, start/checkpoint/finish arches, timer + splits HUD, finish screen (time, medal, personal best, splits, Race again / Next race), best times (localStorage). Reads `assets/challenges.json`. Fixed map ramps (`assets/ramps.json`) are created here too. `createChallenges`, `fmtTime`. `constrain()` (after every physics step) applies walls. |
+| `racemenu.js` (+ `.css`), `racemarkers.js`, `medals.js` | The J race menu (V picker style: a card per race with its route drawn on the map picture, distance, vehicle, ramps, best + medal; Car / Bike / Aircraft / All tabs; Start; "Invite players" in multiplayer via `mp/races.js`). Glowing start rings in free roam (drive in under 30 km/h → that race's card). Medal logic: gold / silver / bronze targets per race (`challenges.json` `medals`, from the race bot's time) and the best medal saved per browser. `tools/racemenu_preview.html` shows the menu without the game. |
 | `track.js` | `makeTrack(points)`: invisible walls for a race (centre line every ~4 m + half-width, from `challenges.json` `track`). No rendering. |
 | `roads.js` | Meshes for road/trail strips and junction pieces: `buildRoads`, `buildJunctions`, `roadBatches` (slices work across frames), `campusRoad` (school drives are asphalt without yellow lines). No kerbs (owner's choice). |
 | `campus.js` | **Hand-authored Delphian campus buildings** as data (parts: footprint, wall height, colours, roof type/pitch, window rows, doors, porches, boxes). `CAMPUS`, `applyCampus(td)` (called by `makeTileData`): swaps OSM blocks under campus footprints for campus physics footprints `{pts, top, campusPart}`. No three.js. Colours sRGB; heights above `floorAt` ground. |
@@ -193,11 +197,11 @@ loaded return nothing; the vehicles hold the last loaded ground.
 - **Key bindings already taken** (don't reuse): W/A/S/D + arrows (drive; jet: W/S throttle, ↑/↓ pitch, ←/→ roll,
   A/D rudder), Space (handbrake / jet brakes / bike slide), Shift (bike wheelie), R (reset to safe spot), F (flip
   upright), H (home to campus), C (camera), G (glider), T (settings/tuning), Tab (panel focus), V (vehicle picker;
-  1/2/3, ←→/A-D, ↑↓/W-S, Enter, Esc inside it), J (race list; ↑↓ Enter Esc inside; Backspace restarts a race, Esc quits), M (full
+  1/2/3, ←→/A-D, ↑↓/W-S, Enter, Esc inside it), J (race menu; ←→↑↓ 1–4 Enter Esc inside; Backspace restarts a race, Esc quits; N next race on the finish screen), M (full
   map; Esc closes), P (remove pin), + / − / 0 (map zoom), F8 (debug), Enter/Esc/Space (welcome card). Letter keys
   also match by the letter printed on the key (AZERTY/Dvorak) via `e.key`.
 - **localStorage keys:** `yr-tuning-2` (car), `yr-tuning-bike-1`, `yr-tuning-jet-1` (only known keys with real
-  numbers are loaded, clamped to the menu range), `yr-best-1` (race best times + splits), `yr-pin-1`,
+  numbers are loaded, clamped to the menu range), `yr-best-1` (race best times + splits), `yr-medals-1` (best race medal per race), `yr-pin-1`,
   `yr-welcome-hidden-1`, `yr-sound-1` (Master / Engines / Effects volumes, 0–1), `yr-atmo-2` (day/night cycle on/off, fixed look, weather; replaces `yr-atmosphere-1`), `yr-graphics-2` (Graphics mode + Auto's measured pick). Bump the suffix if you change a stored format.
 - **Surfaces / widths:** trails are drawn 3× real width (~7–12 m) so they're drivable at speed; trees are cleared
   from trails and roads; roads are 12–17 m wide; no kerbs.

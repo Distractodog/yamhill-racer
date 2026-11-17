@@ -39,6 +39,7 @@ try {
   for (const [item, panel, close] of [
     ['mp-button', '#mp-panel', '#mp-close'],
     ['vehicles-button', '#veh-menu', '#veh-menu .vp-close'],
+    ['races-button', '#ch-menu', '#ch-menu .rm-close'],
     ['garage-button', '#cosmetic-garage', '.garage-close'],
     ['settings-button', '#tuning-content', '#settings-close'],
     ['help-button', '#help-content', '#settings-close'],

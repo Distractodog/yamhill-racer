@@ -2,7 +2,7 @@
 // your paint (vehiclethumbs.js), its name and key 1/2/3; under the selected card a row of that vehicle's types with
 // pictures and 1–5 stat bars (vehiclestats.js), so vehicle and type are picked in one go. Choosing goes through
 // vehicles.choose (vehicles.js: the Garage's setType, then switchTo).
-// Keys (read by vehicles.js's listener): V / Esc close · 1–3 switch at once · ←/→ or A/D move · ↓/S into the types,
+// Keys (read by vehicles.js's listener): V / Esc close · J / M / T / B close it and open their panel · 1–3 switch at once · ←/→ or A/D move · ↓/S into the types,
 // ↑/W back · Enter chooses · Tab cycles inside. Mouse: hover a card to see its types, click to choose, click outside
 // to close. Game keys are held off while it's open (main.js readInput; single-player also pauses physics there).
 // During a race the type chips are locked, as the Garage is (switching vehicle still ends the race, like before).
@@ -172,6 +172,9 @@ export function createVehiclePicker({ vehicles, thumbs, onOpen = () => {}, onClo
     if (e.gameUI) return;
     if (e.code === 'KeyV') { if (!e.repeat) open ? close({ restore: false }) : show(); e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (!open) return;
+    // another panel's key (J races, M map, T settings, B builder): close the picker and hand the key on, so that panel
+    // opens (vehicles.js's listener runs before theirs)
+    if (/^Key[JMTB]$/.test(e.code)) { if (!e.repeat) close({ restore: false }); return; }
     const letter = e.key?.length === 1 ? e.key.toLowerCase() : '';     // (A/D/W/S by the printed letter too)
     e.gameUI = true; e.stopImmediatePropagation();
     const is = (code, l) => e.code === code || letter === l;

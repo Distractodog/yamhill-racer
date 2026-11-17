@@ -40,6 +40,19 @@ CHALLENGES = [
          via=[MAIN_BUILDING, SHERIDAN], cost=ROAD, gap=450, ramp_every=1400, run=300, bend=0.3, gate_clear=70),
     dict(id='willamina', name='Willamina run', desc='Campus to downtown Willamina on the roads.',
          via=[MAIN_BUILDING, WILLAMINA], cost=ROAD, gap=450, ramp_every=1400, run=300, bend=0.3, gate_clear=70),
+    # the long straight of Hwy 18 northeast of the map's fixed ramp (which stays behind the start): no ramps, flat out.
+    # Waypoints on the highway's own 17 m strips: past (15484, -6837) a 14 m side road runs alongside at 140°, and a
+    # finish on it gave a Z-shaped jog off the highway that is a wall at top speed. Medals from the race car's pace
+    # (FAST_TIMES), not the 260 km/h walls bot.
+    dict(id='hwy18-top-speed', name='Hwy 18 top speed', desc='Flat out up the long straight of Hwy 18 toward McMinnville. No ramps, no excuses.',
+         via=[(12800, -3930), (15580, -6930), (16900, -8160)], cost=ROAD, gap=900, ramps=False, pace='top'),
+    dict(id='mcminnville-downtown', name='McMinnville downtown sprint', desc='West down NE 3rd St through downtown McMinnville, then round the blocks to the north.',
+         # (waypoints mid-street: one on a corner can snap past the junction and leave a U-turn on the same street)
+         via=[(19900, -11035), (19400, -11035), (19092, -11230), (19350, -11429), (19600, -11429)], cost=ROAD,
+         gap=300, ramp_every=700, run=120, bend=0.3, gate_clear=50),
+    dict(id='sheridan-river-loop', name='Sheridan river loop', desc='South over Sheridan Bridge, east through town, back across the South Yamhill on Hwy 18 and home along the river.',
+         via=[(3300, 1325), (3594, 1345), (4300, 1700), (5150, 1810), (4600, 1520), (3800, 1300)], cost=ROAD,
+         gap=400, ramp_every=1200, run=250, bend=0.3, gate_clear=60),
     # dirt bike: campus trails + gravel roads, jumps every few hundred metres
     dict(id='bike-south-loop', vehicle='bike', name='South woods loop', desc='Round the trail loop south of campus, with jumps.',
          via=[(-860, 440), (-760, 820), (-150, 640), (-110, 520), (-180, 400), (-310, 330)], cost=DIRT, gap=200,
@@ -53,7 +66,30 @@ CHALLENGES = [
     dict(id='bike-gravel-run', vehicle='bike', name='Gravel run', desc='Campus out along the gravel roads to the northeast fields.',
          via=[(-200, -60), (250, -280), (720, -1240), (1300, -1240)], cost={'gravel': 1.0, 'trail': 1.1, 'asphalt': 3.0}, gap=300,
          ramp_every=450, run=70, bend=0.4, gate_clear=40),
+    # trails named on the campus trail map (tools/mapdata.py): the Odyssey (blue) is the whole loop the South woods
+    # loop mostly follows, here the other way round with its east lobe (its south-west S-bends are too tight for a car:
+    # the walls bot can't get a car through them); Ripp's (yellow) with the Agony
+    dict(id='bike-odyssey', vehicle='bike', name='Odyssey', desc='The whole Odyssey trail loop round the south woods, clockwise, with jumps.',
+         via=[(-180, 400), (-110, 520), (-150, 640), (-430, 830), (-760, 820), (-860, 440), (-700, 405)], cost=DIRT,
+         gap=200, ramp_every=350, run=45, bend=0.5, gate_clear=30),
+    dict(id='bike-ripps-ravine', vehicle='bike', name="Ripp's Ravine", desc="Down Ripp's trail into the ravine, up the Agony and round the west woods back to the top.",
+         via=[(-812, -385), (-905, -200), (-1100, -200), (-1140, -420), (-1080, -452), (-1005, -345), (-850, -392)], cost=DIRT,
+         gap=160, ramp_every=350, run=45, bend=0.5, gate_clear=30),     # (no spot passes the ramp rules: steep + twisty)
 ]
+# Medal targets (seconds) from the race bot's time (tools/drive.mjs: the `walls` bots, the `jet` race bots):
+# gold ≈ bot × 1.02, silver × 1.15, bronze × 1.35. `BOT_TIMES` are measured with those bots (`node tools/drive.mjs walls`
+# / `jet`, "reached the finish in N s" / "finished in N s"); a race not in it gets a rough estimate from its length and
+# bends (bot_estimate), printed as such: measure it and add it here after changing a route.
+MEDALS = {'gold': 1.02, 'silver': 1.15, 'bronze': 1.35}
+# Top-speed races (pace='top'): the walls bot's 260 km/h cap says nothing about them, so the targets come from the race
+# car's own pace, FAST_TIMES (`node tools/race_fast_time.mjs <id>`: the same bot uncapped, up to the car's top speed):
+# gold ≈ fast × 1.05, silver and bronze spaced like the others (× 1.15 / 1.02 and × 1.35 / 1.02 of gold).
+FAST_MEDALS = {'gold': 1.05, 'silver': 1.18, 'bronze': 1.39}
+FAST_TIMES = {'hwy18-top-speed': 27.8}
+TOP_PACE = {c['id'] for c in CHALLENGES if c.get('pace') == 'top'}
+BOT_TIMES = {'long-walk': 142, 'sheridan': 140, 'willamina': 181, 'bike-south-loop': 182, 'bike-north-scramble': 351,
+             'bike-gravel-run': 249, 'bike-odyssey': 155, 'bike-ripps-ravine': 106, 'hwy18-top-speed': 83, 'sheridan-river-loop': 92,
+             'mcminnville-downtown': 44, 'jet-hwy18-sortie': 111.1, 'jet-yamhill-valley': 152.9, 'jet-valley-loop': 107.1}
 
 # ---------------------------------------------------------------- graph
 pts, kinds, widths, ys = [], [], [], []  # node coords; per-node kind/width of its strip; road height
@@ -187,6 +223,31 @@ def trees_near(x, z, r):
     return out
 
 
+def bot_estimate(r):
+    """Rough race bot time (s) for a race dict, when it has not been measured: the walls bot's speed rule (drive.mjs:
+    cap 260 km/h car / 110 Long Walk / 90 bike, slowed by the heading change over the next ~60 m) with simple
+    acceleration, times a per-vehicle fudge for wall contacts and backing up (fitted to the measured races).
+    Jets: length at ~520 km/h plus the take-off run."""
+    if r['vehicle'] == 'jet': return r['length'] / 145 + 25
+    R = np.array([p[:2] for p in r['track']]); n = len(R)
+    cap = (110 if r['id'] == 'long-walk' else 90 if r['vehicle'] == 'bike' else 260) / 3.6
+    acc = 6.0 if r['vehicle'] == 'bike' else 25.0
+    hd = lambda a, b: math.atan2(R[b][0] - R[a][0], R[b][1] - R[a][1])
+    v, t = 0.0, 0.0
+    for i in range(n - 1):
+        ds = float(np.hypot(*(R[i + 1] - R[i])))
+        tgt = min(n - 1, i + int((10 + v * 0.5) / 4))
+        a, b = min(n - 1, tgt + 3), min(n - 1, tgt + 15)
+        turn = abs((hd(a, b) - hd(tgt, a) + math.pi) % (2 * math.pi) - math.pi) if b > a > tgt else 0
+        want = max(50 / 3.6, cap * (1 - turn * 1.2))
+        v2 = min(want, math.sqrt(v * v + 2 * acc * ds)) if v < want else want
+        t += ds / max(1.0, (v + v2) / 2); v = v2
+    return t * (1.25 if r['vehicle'] == 'bike' else 0.85)
+
+def medals(base, factors=MEDALS):
+    """gold / silver / bronze target times (s, rounded up to the half second) from the bot's (or fast car's) time"""
+    return {k: math.ceil(base * f * 2) / 2 for k, f in factors.items()}
+
 result = []
 for c in CHALLENGES:
     nodes = []
@@ -232,7 +293,7 @@ for c in CHALLENGES:
         if min(abs(s0 - g) for g in gate_s) < c['gate_clear']: return None
         if jtree.query_ball_point(F[k:np.searchsorted(cum, s0 + RAMP_LEN + 15)], 22, return_length=True).max() > 0: return None
         return off.max() + max(0, rise) * 2                                             # lower = better
-    n_r = max(1, round(length / c['ramp_every']))
+    n_r = max(1, round(length / c['ramp_every'])) if c.get('ramps', True) else 0
     ramps = []
     for k in range(n_r):                      # best spot in each equal slice of the route (skipping its ends)
         lo, hi = 150 + (length - 400) * k / n_r, 150 + (length - 400) * (k + 1) / n_r
@@ -244,7 +305,7 @@ for c in CHALLENGES:
     # ---- jumps that help: a dip in the road (down >= 3 m and back up within 30-140 m, straight across). Flying over
     # it from a ramp at the lip beats driving down into it and back out. Kept clear of the other ramps.
     dips = []
-    for s0 in np.arange(150, length - 250, 5.0):
+    for s0 in np.arange(150, length - 250, 5.0) if n_r else []:
         k = np.searchsorted(cum, s0 + RAMP.up)               # the lip
         y0 = fy[k]
         rim = None; low = 0
@@ -352,6 +413,13 @@ AIR = [
          start=(1056, 1700, 3.1336),
          rings=[(-1300 + 2600 * math.cos(math.radians(t)), 800 - 2400 * math.sin(math.radians(t)), c)
                 for t, c in zip(range(30, 390, 30), [120, 160, 110, 140, 90, 150, 100, 130, 80, 120, 90, 60])], r=45),
+    # off Hwy 18 northeast (the map's ramp 900 m past the first ring), over the river bends, round past Whiteson and
+    # Amity and back west to Bellevue: every turn under ~60°, legs of 2-3.4 km
+    dict(id='jet-yamhill-valley', name='Yamhill valley rings', desc='Take off up Hwy 18, then a big ring course over the valley: the river bends, Whiteson, Amity and down to Bellevue.',
+         start=(HWY_RAMP['x'] + math.sin(HWY_RAMP['yaw']) * 3300, HWY_RAMP['z'] + math.cos(HWY_RAMP['yaw']) * 3300, HWY_RAMP['yaw'] + math.pi),
+         rings=[(HWY_RAMP['x'] + math.sin(HWY_RAMP['yaw']) * 900, HWY_RAMP['z'] + math.cos(HWY_RAMP['yaw']) * 900, 45),
+                (14800, -5200, 80), (17200, -6200, 60), (19100, -4700, 70), (19300, -2400, 100),
+                (18620, -560, 60), (16500, 600, 90), (14000, 500, 70), (11860, -2110, 80)], r=45),
 ]
 for a in AIR:
     sx, sz, syaw = a['start']
@@ -380,6 +448,16 @@ for a in AIR:
     result.append(dict(id=a['id'], vehicle='jet', name=a['name'], desc=a['desc'], length=round(length),
                        start=dict(x=round(sx, 2), z=round(sz, 2), yaw=round(syaw, 4)), gates=gates, ramps=[], route=route))
     print(f"{a['name']}: {length:.0f} m, {len(gates) - 1} rings, heights", [g['y'] for g in gates[1:]])
+
+for r in result:
+    est = bot_estimate(r); bot = BOT_TIMES.get(r['id'])
+    r['bot'] = round(bot if bot else est, 1); r['medals'] = medals(r['bot'])
+    if r['id'] in TOP_PACE:
+        fast = FAST_TIMES.get(r['id'])
+        if not fast: raise SystemExit(f"{r['id']}: top-speed race without a FAST_TIMES entry (node tools/race_fast_time.mjs {r['id']})")
+        r['pace'] = 'top'; r['fast'] = fast; r['medals'] = medals(fast, FAST_MEDALS)
+    print(f"{r['name']}: bot {'%.0f s measured' % bot if bot else 'NOT MEASURED'}, estimate {est:.0f} s" +
+          (f", race car {r['fast']} s" if 'fast' in r else '') + ' · medals', r['medals'])
 
 if os.environ.get("DRY"):
     if os.environ.get("DRY_OUT"): json.dump(result, open(os.environ["DRY_OUT"], "w"))

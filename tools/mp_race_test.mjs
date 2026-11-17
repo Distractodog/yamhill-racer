@@ -45,8 +45,9 @@ try {
     const { mp } = await import('./src/mp/net.js');
     window.__go = null; const t = setInterval(() => { if (window.game.challenges.state === 'running' && !window.__go) { window.__go = mp.now(); clearInterval(t); } }, 5);
   });
-  await host.evaluate(() => { window.game.challenges.openMenu(); });
-  await host.click('#ch-menu .ch-item'); await sleep(200);          // in MP a race row opens the Invite step
+  await host.evaluate(() => { window.game.challenges.openMenu(0); });
+  check('race menu offers Invite players', await host.evaluate(() => !document.querySelector('#ch-menu .rm-invite').hidden));
+  await host.click('#ch-menu .rm-invite'); await sleep(200);        // in MP the race menu's Invite players opens the Invite step
   await host.click('#mp-invite-out [data-a="invite"]'); await sleep(500);
   check('guest sees invite', await guest.evaluate(() => getComputedStyle(document.getElementById('mp-invite-in')).display === 'block'));
   check('invite leaves the corner map visible', await guest.evaluate(() => {

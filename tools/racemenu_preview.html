@@ -1,0 +1,88 @@
+<!doctype html>
+<!-- The J race menu, the finish screen and a start marker without the game (real challenges.json and map picture, a
+     flat stand-in world; three.js from node_modules):
+       tools/racemenu_preview.html?view=menu&filter=bike&race=odyssey&demo=1&mp=1&keys=ArrowRight,ArrowDown
+       view = menu | finish | marker · filter = car | bike | jet | all · race = race id to select / finish / mark
+       demo = 1: a few best times saved (gold, silver, bronze, no medal) · mp = 1: "Invite players" shown
+       keys = codes pressed once it is open · pace = finish time as a share of the bot's (default 1.0 = gold)
+     The title reads "ready …" once it is drawn. -->
+<html lang="en"><head><meta charset="utf-8"><title>race menu preview</title>
+<link rel="stylesheet" href="../game/presentation.css">
+<style>html,body{margin:0;height:100%;overflow:hidden;background:linear-gradient(#9cc3df 0 46%,#6f8f58 46% 100%);font-family:system-ui,sans-serif}
+canvas.view{position:fixed;inset:0;width:100%;height:100%}</style>
+<script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
+import { createChallenges } from '../game/src/challenges.js';
+
+const q = new URLSearchParams(location.search), view = q.get('view') || 'menu';
+const list = await fetch('../game/assets/challenges.json').then(r => r.json());
+const idx = Math.max(0, list.findIndex(c => c.id === q.get('race')));
+try {
+  localStorage.clear(); localStorage.setItem('yr-welcome-hidden-1', '1');
+  if (q.get('demo')) {           // best times (with evenly spread splits) that earn gold / silver / bronze / nothing
+    const best = {};
+    [[0, 0.98], [3, 1.1], [7, 1.3], [9, 1.6], [idx, 1.05]].forEach(([i, f]) => {
+      const c = list[i]; if (!c) return;
+      const time = c.bot * f, n = c.gates.length - 2;
+      best[c.id] = { time, splits: Array.from({ length: n }, (_, k) => time * (k + 1) / (n + 1)), date: '2026-11-01' };
+    });
+    localStorage.setItem('yr-best-1', JSON.stringify(best));
+  }
+} catch {}
+const world = { extent: [-1e5, -1e5, 1e5, 1e5], spawn: [0, 0], heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0,
+  surfaceAt: () => 3, normalAt: (x, z, out = new THREE.Vector3()) => out.set(0, 1, 0), waterLevelAt: () => -Infinity,
+  loadedAt: () => true, pendingTiles: () => 0, mapContains: () => true, treesNear() {}, buildingsNear: () => [], rampAt: () => 0,
+  setRamps() {}, setFixedRamps() {} };
+const scene = new THREE.Scene();
+const car = new Car(world, { ...TUNING_DEFAULTS }); car.reset(5000, 5000, 0);
+const challenges = await createChallenges({ scene, world, car, minimap: { open: false, setOverlay() {} }, base: '../game/assets/' });
+if (q.get('mp')) challenges.mpHook = { canInvite: () => true, pick: i => { document.title = 'invite ' + list[i].id; return true; } };
+window.preview = { challenges, list, car };
+const frame = () => new Promise(r => requestAnimationFrame(() => r()));
+const press = async codes => { for (const code of codes) { dispatchEvent(new KeyboardEvent('keydown', { code, key: code, bubbles: true, cancelable: true })); await frame(); } };
+
+if (view === 'menu') {
+  challenges.openMenu(idx, q.get('filter') ? { filter: q.get('filter') } : {});
+  await press((q.get('keys') || '').split(',').filter(Boolean));
+  await new Promise(r => setTimeout(r, 1200));                     // route pictures (and the patches they asked for)
+} else if (view === 'finish') {
+  // run the race through every gate in order: the time adds up to pace × the bot's time
+  const c = list[idx], pace = +(q.get('pace') || 1), n = c.gates.length - 1;
+  await challenges.start(idx);
+  challenges.update(3.01);
+  for (let i = 1; i <= n; i++) {
+    const g = c.gates[i], fx = Math.sin(g.yaw), fz = Math.cos(g.yaw);
+    car.pos.set(g.x - fx * 4, g.y ?? 0, g.z - fz * 4); challenges.update(c.bot * pace / n - 0.01);
+    car.pos.set(g.x + fx * 3, g.y ?? 0, g.z + fz * 3); challenges.update(0.01);
+  }
+  await press((q.get('keys') || '').split(',').filter(Boolean));
+} else if (view === 'marker') {
+  // the start ring in 3D, seen from a car's chase camera ~25 m back
+  const c = list[idx], renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight); renderer.domElement.className = 'view'; document.body.append(renderer.domElement);
+  scene.background = new THREE.Color(0x9cc3df); scene.fog = new THREE.Fog(0x9cc3df, 200, 1500);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x556644, 2.2));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x6f8f58 }));
+  ground.position.set(c.start.x, 0, c.start.z); scene.add(ground);
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(14, 600).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x55585c }));
+  road.position.set(c.start.x, 0.02, c.start.z); road.rotation.y = c.start.yaw; scene.add(road);
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 3000);
+  const fx = Math.sin(c.start.yaw), fz = Math.cos(c.start.yaw);
+  camera.position.set(c.start.x - fx * 26, 6, c.start.z - fz * 26); camera.lookAt(c.start.x, 1, c.start.z);
+  for (let k = 0; k < 3; k++) { challenges.update(1 / 60); renderer.render(scene, camera); await frame(); }
+  // drive = 1: then drive in slowly, and the race's card opens
+  if (q.get('drive')) {
+    car.reset(c.start.x - fx * 30, c.start.z - fz * 30, c.start.yaw); challenges.update(1 / 60);
+    car.pos.set(c.start.x, 0.5, c.start.z); car.vel.set(0, 0, 0); challenges.update(1 / 60);
+    renderer.render(scene, camera);
+    document.title = `marker opened menu: ${challenges.menuOpen} on ${list[challenges.raceMenu.selected]?.id}`;
+    await new Promise(r => setTimeout(r, 1200));
+  } else document.title = `marker shown: ${challenges.markers.markers.filter(m => m.grp.visible).length} near`;
+}
+if (!document.title.startsWith('marker') && !document.title.startsWith('invite')) document.title = `ready ${view} · state ${challenges.state} · menu ${challenges.menuOpen}`;
+else document.title = 'ready · ' + document.title;
+</script>
+</body></html>

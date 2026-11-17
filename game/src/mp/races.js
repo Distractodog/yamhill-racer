@@ -66,6 +66,7 @@ export function createRaces({ challenges, car }) {
   });
 
   core = createRaceCore({ mp, challenges, ui, pos: () => ({ x: car.pos.x, z: car.pos.z }) });
-  challenges.mpHook = core.hook;
+  // canInvite: the race menu shows "Invite players" (→ hook.pick → the invite step above) in a game with other players
+  challenges.mpHook = { ...core.hook, canInvite: () => mp.inGame && [...mp.players.keys()].some(id => id !== mp.me.id) };
   return core;
 }

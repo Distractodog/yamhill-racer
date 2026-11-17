@@ -1,0 +1,59 @@
+/* J race menu (racemenu.js): the V picker's dark green panel over a dimmed game, one card per race */
+#ch-menu.rm[hidden],#ch-menu.rm [hidden]{display:none!important}
+#ch-menu.rm{position:fixed;inset:0;z-index:25;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:#06100d8c;color:#edf7ef;font:14px/1.4 system-ui,sans-serif}
+#ch-menu.rm *{box-sizing:border-box}
+#ch-menu .rm-panel{width:min(1040px,100%);max-height:calc(100dvh - 32px);display:flex;flex-direction:column;background:#12251ff7;border:1px solid #eac17c55;border-radius:20px;box-shadow:0 24px 80px #0009;padding:18px 22px 14px}
+#ch-menu .rm-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+#ch-menu h2{margin:0;font-size:24px;letter-spacing:-.02em}
+#ch-menu .rm-tally{margin-left:auto;display:flex;gap:10px;font-weight:800;font-size:13px;color:#d9e6dc}
+#ch-menu .rm-tally span{display:inline-flex;align-items:center;gap:3px}
+#ch-menu button{font:inherit;color:inherit;cursor:pointer}
+#ch-menu button:focus-visible{outline:3px solid #ffd23f;outline-offset:3px}
+#ch-menu .rm-close{background:#ffffff12;border:0;border-radius:8px;width:32px;height:32px;font-size:18px;flex:none}
+#ch-menu .rm-close:hover{background:#ffffff25}
+#ch-menu .reward-collection{margin:4px 0 10px}
+#ch-menu .rm-tabs{display:flex;gap:6px;margin-bottom:12px}
+#ch-menu .rm-tab{display:inline-flex;align-items:center;gap:7px;padding:6px 12px 6px 7px;background:#ffffff09;border:2px solid #ffffff17;border-radius:999px;font-weight:700;font-size:13px}
+#ch-menu .rm-tab:hover{background:#ffffff17}
+#ch-menu .rm-tab[aria-selected='true']{border-color:#eac17c;background:#eac17c22;color:#fff}
+#ch-menu .rm-tab small{opacity:.65;font-weight:600}
+#ch-menu .rm-key{min-width:20px;height:20px;padding:0 5px;border-radius:6px;background:#0d1b16d9;border:1px solid #ffffff40;font-size:11px;line-height:18px;text-align:center}
+#ch-menu .rm-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;overflow-y:auto;min-height:0;padding:3px;margin:-3px}
+/* (presentation.css styles the old list's .ch-item; the cards keep that class for tests and override it here) */
+#ch-menu .rm-card.ch-item{position:relative;display:flex;flex-direction:column;align-items:stretch;text-align:left;width:auto;margin:0;padding:8px 9px 10px;background:#ffffff0b;border:2px solid #ffffff1c;border-radius:14px;transition:transform .12s,background .12s,border-color .12s}
+#ch-menu .rm-card.ch-item:hover{background:#ffffff14;border-color:#ffffff4d}
+#ch-menu .rm-card.ch-item.sel{background:#eac17c1c;border-color:#eac17c;transform:translateY(-2px)}
+#ch-menu .rm-pic{position:relative;display:block;aspect-ratio:16/9;border-radius:9px;overflow:hidden;background:radial-gradient(ellipse at 50% 55%,#3d6153,#152b23 72%)}
+#ch-menu .rm-pic canvas{position:absolute;inset:0;width:100%;height:100%}
+#ch-menu .rm-badge{position:absolute;left:7px;top:7px;padding:2px 8px 2px 5px;border-radius:999px;background:#0d1b16d9;border:1px solid #ffffff30;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+#ch-menu .rm-won{position:absolute;right:6px;top:4px;font-size:24px;line-height:1;filter:drop-shadow(0 1px 3px #000a)}
+#ch-menu .rm-name{margin-top:8px;font-size:16px;font-weight:800;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ch-menu .rm-facts{font-size:12px;color:#e7c68a;margin-top:2px}
+#ch-menu .rm-best{font-size:12px;color:#c3d5c8;margin-top:3px;font-variant-numeric:tabular-nums}
+#ch-menu .rm-best b{color:#fff}
+#ch-menu .rm-empty{grid-column:1/-1;padding:24px;text-align:center;color:#acc5b4}
+#ch-menu .rm-foot{display:flex;align-items:flex-end;gap:16px;margin-top:12px;padding-top:12px;border-top:1px solid #ffffff15}
+#ch-menu .rm-detail{flex:1;min-width:0;color:#d1d8d2;font-size:13px}
+#ch-menu .rm-detail strong{color:#fff;font-size:15px;margin-right:4px}
+#ch-menu .rm-targets{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+#ch-menu .rm-target{padding:3px 9px;border-radius:999px;background:#ffffff0d;border:1px solid #ffffff22;font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;color:#c3d5c8}
+#ch-menu .rm-target.got{color:#fff;border-color:#eac17c99;background:#eac17c22}
+#ch-menu .rm-you{margin-top:6px;font-size:12px;color:#acc5b4}
+#ch-menu .rm-you b{color:#fff}
+#ch-menu .rm-actions{display:flex;flex-direction:column;gap:7px;flex:none;width:180px}
+#ch-menu .rm-actions button{border:1px solid #f8efdc40;border-radius:9px;padding:10px 14px;background:#ffffff0d;font-weight:800;font-size:14px}
+#ch-menu .rm-actions .rm-start{background:#eac17c;border-color:#eac17c;color:#122b26;font-size:16px}
+#ch-menu .rm-actions .rm-start:hover{background:#f8dbab}
+#ch-menu .rm-actions .rm-invite:hover{background:#ffffff22}
+#ch-menu .rm-hint{margin:8px 2px 0;color:#8fa898;font-size:12px}
+@media (max-width:760px){
+  #ch-menu.rm{padding:8px}
+  #ch-menu .rm-panel{padding:14px 12px 10px}
+  #ch-menu .rm-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #ch-menu .rm-foot{flex-direction:column;align-items:stretch}
+  #ch-menu .rm-actions{width:auto;flex-direction:row}
+  #ch-menu .rm-actions button{flex:1}
+  #ch-menu .rm-tab{padding:5px 9px 5px 5px;font-size:12px}
+  #ch-menu .rm-tab small,#ch-menu .reward-collection{display:none}
+}
+@media (prefers-reduced-motion:reduce){#ch-menu .rm-card.ch-item{transition:none}#ch-menu .rm-card.ch-item.sel{transform:none}}
