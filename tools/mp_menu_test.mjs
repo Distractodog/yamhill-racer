@@ -18,6 +18,7 @@ try {
     // past the spawn map (it covers the menu bar) and the welcome card, tiles loaded
     await startGame(page, { relay: RELAY_URL, storage: { 'yr-mp-name-1': i ? 'Guest' : 'Host' } });
     await page.waitForFunction(() => window.game?.multiplayer);
+    assert.equal(await page.evaluate(() => window.YR_MP_RELAY), RELAY_URL, 'relay override is installed before game startup');
   }));
   const saved = page => page.evaluate(() => Object.fromEntries(['yr-tuning-2', 'yr-tuning-bike-1', 'yr-tuning-jet-1', 'yr-atmo-2'].map(key => [key, localStorage.getItem(key)])));
   const current = page => page.evaluate(() => ({ tuning: structuredClone(game.multiplayer.tuning), atmosphere: game.atmosphere.preset }));
@@ -28,6 +29,8 @@ try {
   await host.waitForFunction(() => game.multiplayer.mp.inGame);
   assert.equal(await host.$eval('#menu-button', el => el.textContent), 'Menu · MP');
   const room = await host.evaluate(() => game.multiplayer.mp.roomCode);
+  const listed = await host.evaluate(() => game.multiplayer.mp.listGames());
+  assert.ok(listed.some(game => game.id === room), `Host ${room} missing from ${RELAY_URL}/lobby; restart the local relay with the current server/local.mjs`);
   await openMenu(guest); await guest.click('#mp-button');
   await guest.waitForSelector(`#mp-games button[data-game="${room}"]`);
   assert.equal(await guest.$('#mp-join-code'), null, 'no codes in the menu');

@@ -3,6 +3,7 @@ import { WebSocketServer } from 'ws';
 import { Room, roomAddress, MAX_MESSAGE_BYTES } from './relay.mjs';
 
 import { LobbyState } from './lobby.mjs';
+import { attachRoomClient } from './local-room.mjs';
 const lobby = new LobbyState(), rooms = new Map();
 const server = createServer((req, res) => {
   if (req.url === '/lobby' && req.method === 'GET') return res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' }).end(JSON.stringify({ games: lobby.list() }));
@@ -15,19 +16,9 @@ server.on('upgrade', (req, socket, head) => {
   sockets.handleUpgrade(req, socket, head, ws => {
     let room = rooms.get(address.code);
     if (!room) rooms.set(address.code, room = new Room(address.code, { admission: lobby }));
-    const cleanup = () => {
-      room.leave(ws); lobby.update(room.info);
-      if (!room.clients.size && rooms.get(address.code) === room) rooms.delete(address.code);
-    };
-    ws.on('message', (data, binary) => {
-      if (binary) return ws.close(1003, 'JSON text required');
-      const before = room.players.length;
-      room.receive(ws, data.toString());
-      let type; try { type = JSON.parse(data).t; } catch {}
-      if (before !== room.players.length || (['hello', 'heartbeat', 'join-policy'].includes(type) && room.session(ws)?.player?.host)) lobby.update(room.info);
+    attachRoomClient(room, ws, lobby, () => {
+      if (rooms.get(address.code) === room) rooms.delete(address.code);
     });
-    ws.on('close', cleanup);
-    ws.on('error', cleanup);
     room.connect(address.id, ws);
   });
 });
@@ -35,4 +26,4 @@ server.on('upgrade', (req, socket, head) => {
 const expiry = setInterval(() => { for (const room of rooms.values()) room.expire(); }, 500);
 server.on('close', () => clearInterval(expiry));
 const port = Number(process.argv[2] || 8787);     // node server/local.mjs [port]
-server.listen(port, '127.0.0.1', () => console.log(`MP relay: ws://127.0.0.1:${port}`));
+server.listen(port, '127.0.0.1', () => console.log(`MP relay: ws://127.0.0.1:${server.address().port}`));

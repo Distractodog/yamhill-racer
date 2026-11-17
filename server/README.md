@@ -117,8 +117,9 @@ See [Cloudflare's hibernation API guide](https://developers.cloudflare.com/durab
 ## Checks
 
 ```sh
-node --test server/relay.test.mjs server/lobby.test.mjs
+node --test server/relay.test.mjs server/lobby.test.mjs server/local.test.mjs
 node tools/mp_e2e_test.mjs
+# local.test.mjs starts and stops its own relay on an ephemeral loopback port.
 node --check server/relay.mjs
 node --check server/local.mjs
 node --check server/worker.js
