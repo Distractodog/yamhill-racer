@@ -2,7 +2,8 @@
 // `player` is a stand-in that always points at the vehicle you're in, so code that was handed "the car" once
 // (challenges, pin guide, effects, sound, camera) follows a switch without knowing about it.
 import { nearestBank } from './water.js';
-import { nearestRoadSpawn } from './roadspawn.js';
+import { groundSwitchSpawn } from './roadspawn.js';
+import { getSwitchPlacement } from './switchplacement.js';
 import { Car } from './car.js';
 import { Bike, BIKE } from './bike.js';
 import { Jet, JET } from './jet.js';
@@ -41,14 +42,18 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
     const p = cur.pos.clone(), yaw = cur.heading(), sp = cur.vel.length();
     const agl = p.y - world.heightAt(p.x, p.z);
     cur.glide?.cancel?.();
-    scene.remove(cur.mesh);
     next.safe = cur.safe.slice();
     next._lastLoaded = cur._lastLoaded;
     if (place) {
       if (kind === 'jet' && air) keepFlying(next, p, cur.vel, yaw);
       else if (kind === 'jet' && agl > 30) next.placeInAir(p.x, p.y, p.z, Math.atan2(cur.vel.x, cur.vel.z) || yaw, Math.max(400, sp * 3.6));
-      else if (!placeGround(next, p, yaw)) { next.pos.copy(p); next.vel.set(0, 0, 0); next.reset(p.x, p.z, yaw); }
+      else {
+        const placed = placeGround(next, p, yaw);
+        if (placed === null) { cur.say?.('No safe ground found nearby', 3); return false; }
+        if (!placed) { next.pos.copy(p); next.vel.set(0, 0, 0); next.reset(p.x, p.z, yaw); }
+      }
     }
+    scene.remove(cur.mesh);
     scene.add(next.mesh);
     cur = next;
     listeners.forEach(f => f(next));
@@ -64,8 +69,8 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
       if (!unsafe) return false;
       const bank = nearestBank(world, p.x, p.z);
       spot = bank && { x: bank[0], z: bank[1], yaw };
-    } else spot = nearestRoadSpawn(world, p.x, p.z, yaw);
-    if (!spot) return false;
+    } else spot = groundSwitchSpawn(world, p.x, p.z, yaw, getSwitchPlacement());
+    if (!spot) return null;
     // Start below roofs so reset asks for the road, even when the old vehicle was flying.
     v.pos.set(spot.x, world.heightAt(spot.x, spot.z), spot.z);
     v.reset(spot.x, spot.z, spot.yaw);
@@ -109,7 +114,7 @@ export function createVehicles({ scene, world, tuning, bikeTuning = { ...BIKE },
   function choose(kind, id = null) {
     if (!all[kind]) return false;
     if (id && id !== types.getType(kind) && !api.setType(kind, id)) return false;
-    if (kind !== cur.kind) { if (!canSwitch(kind)) return false; switchTo(kind); }
+    if (kind !== cur.kind) { if (!canSwitch(kind)) return false; return switchTo(kind); }
     return true;
   }
 
