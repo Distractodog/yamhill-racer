@@ -61,6 +61,9 @@ for (const r of strips) for (const [side, s0, s1, w0, w1] of r.src.widen || []) 
   const qx = Q.x + side * Q.lx * (r.hw + lane / 2), qz = Q.z + side * Q.lz * (r.hw + lane / 2);
   const ramp = strips.filter(o => o !== r && o.osm && (/_link/.test(o.osm) || o.oneway)).map(o => [o, proj(o, qx, qz)]).filter(([o, p]) => p[2] < 1).sort((a, b) => a[1][2] - b[1][2])[0];
   if (!ramp) continue;
+  if (process.env.V) console.log('taper route', P.x, P.z, 'main', r.osm,
+    'ramp', ramp[0].osm, 'distance', ramp[1][2], 'ends',
+    [ramp[0].x[0], ramp[0].z[0]], [ramp[0].x.at(-1), ramp[0].z.at(-1)]);
   tapers.push({ r, side, sN, dir, x: P.x, z: P.z, LD: Math.abs(s1 - s0), TP: Math.abs(TP - sN), lane, ramp: ramp[0], rs: ramp[1][0] });
 }
 const DT = 1 / 120, up = new THREE.Vector3(), fw = new THREE.Vector3();

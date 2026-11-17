@@ -8,6 +8,7 @@ route every `gap` metres. Run after rebuilding the tiles:  .venv/bin/python tool
 import json, math, os, sys, heapq, glob
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tilefmt
+from race_graph import junction_supports
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -81,9 +82,9 @@ MEDALS = {'gold': 1.02, 'silver': 1.15, 'bronze': 1.35}
 FAST_MEDALS = {'gold': 1.05, 'silver': 1.18, 'bronze': 1.39}
 FAST_TIMES = {'hwy18-top-speed': 27.8}
 TOP_PACE = {c['id'] for c in CHALLENGES if c.get('pace') == 'top'}
-BOT_TIMES = {'long-walk': 142, 'sheridan': 140, 'willamina': 181, 'bike-south-loop': 182, 'bike-north-scramble': 351,
-             'bike-gravel-run': 249, 'bike-odyssey': 155, 'bike-ripps-ravine': 106, 'hwy18-top-speed': 83, 'sheridan-river-loop': 92,
-             'mcminnville-downtown': 44, 'jet-hwy18-sortie': 111.1, 'jet-yamhill-valley': 152.9, 'jet-valley-loop': 107.1}
+BOT_TIMES = {'long-walk': 269, 'sheridan': 292, 'willamina': 336, 'bike-south-loop': 343, 'bike-north-scramble': 663,
+             'bike-gravel-run': 361, 'bike-odyssey': 265, 'bike-ripps-ravine': 214, 'hwy18-top-speed': 86, 'sheridan-river-loop': 151,
+             'mcminnville-downtown': 70, 'jet-hwy18-sortie': 111.1, 'jet-yamhill-valley': 152.9, 'jet-valley-loop': 107.1}
 
 # ---------------------------------------------------------------- graph
 pts, kinds, widths, ys = [], [], [], []  # node coords; per-node kind/width of its strip; road height
@@ -94,6 +95,7 @@ def link(a, b, kind):
     L = math.dist(pts[a], pts[b]); adj[a].append((b, L, kind)); adj[b].append((a, L, kind))
 
 ends, juncs = [], []
+junction_shapes = {}
 water_levels = {}                                # (tx, tz) -> {pond / river pool id: water level}, tiles with water
 for f in sorted(glob.glob(os.path.join(ROOT, 'game', 'assets', 'tiles', '*'))):
     if not os.path.isdir(f): continue
@@ -111,7 +113,8 @@ for f in sorted(glob.glob(os.path.join(ROOT, 'game', 'assets', 'tiles', '*'))):
     for j in t['junctions']:
         cx, cz = j['c'][:2]
         r = max(math.dist((cx, cz), q[:2]) for q in j['ring'])
-        juncs.append((add_node(cx, cz, j['kind'], 10, j['c'][2]), r))
+        n = add_node(cx, cz, j['kind'], 10, j['c'][2])
+        juncs.append((n, r)); junction_shapes[n] = j
 
 P = np.array(pts)
 from scipy.spatial import cKDTree
@@ -124,7 +127,9 @@ etree = cKDTree(P[E])
 for i, j in etree.query_pairs(2.5):                       # strips cut at tile edges, or ending at the same point
     link(E[i], E[j], kinds[E[i]])
 for n, r in juncs:                                        # strip ends that open onto a junction piece
-    for i in etree.query_ball_point(pts[n], r + 3): link(n, E[i], kinds[n])
+    for i in etree.query_ball_point(pts[n], r + 3):
+        if junction_supports(junction_shapes[n], pts[E[i]], ys[E[i]]):
+            link(n, E[i], kinds[n])
 print('nodes', len(pts), 'strip ends', len(E), 'junctions', len(juncs))
 
 # ---------------------------------------------------------------- water: keep races out of deep ponds / river pools

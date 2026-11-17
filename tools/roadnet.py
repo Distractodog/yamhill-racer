@@ -713,7 +713,7 @@ def _is_link(e): return _cls(e).split(':')[0].endswith('_link')
 def _base(e): return _cls(e).split(':')[0].replace('_link', '')
 
 
-def _plus(d, eps=4.0):
+def _plus(d, eps=1.0):
     """Smooth max(d, 0): exactly 0 below -eps and d above eps, C1 between."""
     d = np.asarray(d, float)
     return np.where(d >= eps, d, np.where(d <= -eps, 0.0, (d + eps) ** 2 / (4 * eps)))
@@ -731,8 +731,19 @@ class _Frame:
         self.tree = cKDTree(self.q[:, :2])
 
     def project(self, P):
-        P = np.atleast_2d(np.asarray(P, float))[:, :2]; _, k = self.tree.query(P); d = P - self.q[k, :2]
-        return self.s[k] + (d * self.t[k]).sum(1), (d * self.n[k]).sum(1)
+        P = np.atleast_2d(np.asarray(P, float))[:, :2]; _, k = self.tree.query(P)
+        # Project onto the adjacent segments, not the nearest sample's tangent.
+        # On curved mains that tangent approximation can jump backwards in arc
+        # length and falsely report that a perfectly usable ramp turns away.
+        ix = np.clip(k[:, None] + [-1, 0], 0, len(self.q) - 2)
+        a = self.q[ix, :2]; d = self.q[ix + 1, :2] - a
+        length = np.maximum(np.linalg.norm(d, axis=2), 1e-9)
+        t = np.clip(((P[:, None] - a) * d).sum(2) / length ** 2, 0, 1)
+        delta = P[:, None] - (a + t[:, :, None] * d)
+        j = (delta ** 2).sum(2).argmin(1); row = np.arange(len(P))
+        u = self.s[ix] + t * (self.s[ix + 1] - self.s[ix])
+        lat = (delta[:, :, 0] * d[:, :, 1] - delta[:, :, 1] * d[:, :, 0]) / length
+        return u[row, j], lat[row, j]
 
     def at(self, u):
         """Rows (all columns) and left normals at arc lengths u."""
@@ -752,7 +763,7 @@ def _chain(edges, deg, c, at, reach=700.0):
     while True:
         e = edges[ei]; f = e['b'] if end == 0 else e['a']; b = at.get(f)
         if b is None or L > reach:
-            return np.vstack(pts), L - (40.0 if deg[f] >= 3 and b is None else 5.0), np.inf
+            return np.vstack(pts), L - (20.0 if deg[f] >= 3 and b is None else 5.0), np.inf
         back = b['m1'][0] == ei                                    # b's ramp runs back along this road, towards c
         nxt = b['m2'] if back else b['m1']
         if (-b['side'] if back else b['side']) == c['side']:      # same side: stop short of b (or share the gap)
@@ -765,27 +776,39 @@ def _taper_fit(edges, deg, c, chain, s_cap=np.inf):
     """Where ramp c['r'] runs beside the through road (chain from the meet, see _chain): taper / blend lengths and
     the re-laid ramp polyline (from the meet side). Returns (fit, None) or (None, reason)."""
     ri, rend = c['r']; R, M = edges[ri], edges[c['m1'][0]]
+    approach, end = edges[c['m2'][0]], c['m2'][1]
+    far = approach['b'] if end == 0 else approach['a']
+    if deg[far] >= 3 and arclen(approach['pts'])[-1] < 35:
+        # After joining the main halves, the neighbouring junction can trim up
+        # to 35 m from the longer strip. It must not erase this taper's nose.
+        return None, 'approach junction overlaps taper nose'
     F = _Frame(chain[0]); u_lim = min(chain[1], chain[2])
     rp = oriented(R, rend); rc = arclen(rp); Lr = rc[-1]
     sr = np.linspace(0, Lr, max(2, int(math.ceil(Lr)) + 1)); Q = at_s(rp, sr, rc)[:, :2]
     u, lat = F.project(Q); side = c['side']
     hm, hr = M['w'] / 2, R['w'] / 2; D = hm + hr; dl = side * lat - D       # dl: how far the ramp is off its taper line
-    TP = TAPER.get(_base(M), 45.0); LD = min(LANE_END, 0.35 * TP)
+    TP = TAPER.get(_base(M), 45.0)
     far_r = R['b'] if rend == 0 else R['a']
     bad = np.nonzero(np.diff(u) < 0.2 * (sr[1] - sr[0]))[0]               # the ramp turns away: projection ends
-    s_end = min(s_cap, Lr - (40.0 if deg[far_r] >= 3 else 10.0))
+    s_end = min(s_cap, Lr - (20.0 if deg[far_r] >= 3 else 10.0))
     k_lim = min(bad[0] if len(bad) else len(u) - 1, int(np.searchsorted(sr, s_end)) - 1)
-    if k_lim < 5 or u[k_lim] < LD + 40: return None, 'short'
+    if k_lim < 5 or u[k_lim] < 60: return None, 'short (less than 40 m taper + 20 m blend)'
     uu, dd = u[:k_lim + 1], dl[:k_lim + 1]
     if np.interp(TP, uu, dd) > PULL_MAX:
         ok = np.nonzero((uu <= TP) & (dd <= PULL_MAX))[0]; TP = float(uu[ok[-1]]) if len(ok) else 0.0
-    while TP >= LD + 20:                                            # (a loop ramp turning off soon: a short taper)
-        BL = float(np.clip(20 + 3 * max(np.interp(TP, uu, dd), 0.0), 20, 90))
-        k = np.nonzero((uu >= TP + BL) & (dd >= 4.0) & (uu <= u_lim))[0]      # past the blend, clear of the main road
+    # Include the exact minimum even when the pull limit falls between 10 m steps.
+    lengths = list(np.arange(TP, 40, -10)) + ([40.0] if TP >= 40 else [])
+    for TP in lengths:                                            # retain a 40 m taper and a separate smooth blend
+        # Moving a ramp outwards from inside the main road needs just as much
+        # easing distance as pulling it inwards. Ignoring the former creates a
+        # sharp hook on short links that a 120 km/h car cannot follow.
+        BL = float(np.clip(20 + 3 * abs(np.interp(TP, uu, dd)), 20, 90))
+        k = np.nonzero((uu >= TP + BL) & (dd >= 1.0) & (uu <= u_lim))[0]      # past the blend, clear of the main road
         if len(k): kz = int(k[0]); break
-        TP -= 10.0
     else:
         return None, 'no room'
+    # Keep the lane change gradual at highway speed even on a shortened taper.
+    LD = LANE_END
     if (side * lat[:kz + 1] < -hm).any(): return None, 'crosses'
     s_ld, s_ze = float(np.interp(LD, uu, sr[:k_lim + 1])), float(sr[kz])
     sn = np.append(np.arange(s_ld, s_ze - 1.0, 2.0), s_ze)
@@ -837,10 +860,18 @@ def tapers(nodes, edges, log=None):
     if not all(ok): why["ramp is another meet's main road"] = ok.count(False)
     n_all = len(cand)
     at = {c['n']: c for c, k in zip(cand, ok) if k}
-    s_cap = {n: 0.5 * arclen(edges[c['r'][0]]['pts'])[-1] - 5 if ramps[c['r'][0]] > 1 else np.inf   # a taper at
-             for n, c in at.items()}                                                                # each end: half each
-    left = {}
+    left = {c['n']: "ramp is another meet's main road" for c, k in zip(cand, ok) if not k}
+    # Do not reserve half a link for an opposite end that cannot fit even alone.
+    possible = {}
+    for n, c in at.items():
+        f, bad = _taper_fit(edges, deg, c, _chain(edges, deg, c, at))
+        if f: possible[n] = c
+        else: left[n] = bad
+    at = possible
     while True:                           # a meet that stays a junction ends its neighbours' road: fit again until stable
+        active_ramps = Counter(c['r'][0] for c in at.values())
+        s_cap = {n: 0.5 * arclen(edges[c['r'][0]]['pts'])[-1] - 5
+                 if active_ramps[c['r'][0]] > 1 else np.inf for n, c in at.items()}
         fits = {}
         for n, c in at.items():
             f, bad = _taper_fit(edges, deg, c, _chain(edges, deg, c, at), s_cap[n])
@@ -849,7 +880,7 @@ def tapers(nodes, edges, log=None):
         if len(fits) == len(at): break
         at = {n: at[n] for n in fits}
     left = [(nodes[n], b) for n, b in left.items() if n not in fits]
-    why.update(b for _, b in left)
+    why = Counter(b for _, b in left)
     recs = []
     for n, f in fits.items():
         c = at[n]; ri, rend = c['r']; R = edges[ri]
@@ -885,7 +916,7 @@ def tapers(nodes, edges, log=None):
         log(f'ramp tapers: {len(recs)} of {n_all} ramp meets (through road joined into one strip at '
             f'{merged}); left as junctions: {dict(why)}; at x,z: taper m / sideways pull m:',
             ', '.join(f"{r['N'][0]:.0f},{r['N'][1]:.0f}: {r['TP']:.0f}/{r['pull']}" for r in recs[:60]),
-            '· left as junctions at x,z:', ', '.join(f'{p[0]:.0f},{p[1]:.0f} ({b})' for p, b in left[:30]))
+            '· left as junctions at x,z:', ', '.join(f'{p[0]:.0f},{p[1]:.0f} ({b})' for p, b in left))
     return nodes, edges, recs
 
 
