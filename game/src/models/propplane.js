@@ -31,8 +31,11 @@ export function buildPropPlaneModel() {
   const canopy = put(root, loft(CABIN, BOX), glass);
   put(root, ribbon(BODY, 0.05, 0.07, 0, 6, BOX), stripe);
   put(root, ribbon(BODY, -0.3, 0.035, 0, 6, BOX), stripe);
-  for (const z of [1.33, 0.35, -0.62]) for (const s of [1, -1]) put(root, new THREE.BoxGeometry(0.05, 0.72, 0.09), white, s * 0.6, 0.62, z);
-  put(root, new THREE.BoxGeometry(1.1, 0.06, 0.12), white, 0, 0.97, 1.36);              // windscreen top frame
+  const cockpitFrames = [];
+  for (const z of [1.33, 0.35, -0.62]) for (const s of [1, -1]) cockpitFrames.push(put(root, new THREE.BoxGeometry(0.05, 0.72, 0.09), white, s * 0.6, 0.62, z));
+  cockpitFrames.push(put(root, new THREE.BoxGeometry(1.1, 0.06, 0.12), white, 0, 0.97, 1.36));              // windscreen top frame
+  const cockpitFrame = pivot(root, 0, 0, 0);
+  cockpitFrames.forEach(part => cockpitFrame.add(part)); batch(cockpitFrame);
   put(root, new THREE.BoxGeometry(0.62, 0.1, 0.5), dark, 0, -0.38, 3.82);                 // air intake under the spinner
   put(root, new THREE.BoxGeometry(0.08, 0.06, 0.6), dark, 0.22, -0.58, 2.6);             // exhaust stub
   // high wing: constant-chord inner panel, slight taper outboard; flaps inboard, ailerons outboard
@@ -101,6 +104,6 @@ export function buildPropPlaneModel() {
       v.wheels?.forEach((wh, i) => { if (wheels[i]) wheels[i].spin.rotation.x = wh.spin; });
     },
   };
-  addCockpit(root, { style: 'prop', eye: PROP_AIRFRAME.eye, width: .55, depth: .8, blockers: [cockpitHull] });
+  addCockpit(root, { style: 'prop', eye: PROP_AIRFRAME.eye, width: .55, depth: .8, blockers: [cockpitHull, cockpitFrame] });
   return root;
 }

@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { VEHICLE_TYPES, buildVehicleTypeModel } from '../game/src/vehicletypes.js';
 import { createCockpitView } from '../game/src/models/cockpit.js';
 const views = [];
+const params = new URLSearchParams(location.search);
 for (const {id, name} of VEHICLE_TYPES.jet) {
   const section = document.createElement('section'), label = document.createElement('label');
   label.textContent = name; section.append(label); document.querySelector('#views').append(section);
@@ -26,12 +27,14 @@ for (const {id, name} of VEHICLE_TYPES.jet) {
   road.rotation.x = -Math.PI/2; road.position.y = -29.95; scene.add(road);
   const model = buildVehicleTypeModel('jet',id); scene.add(model);
   const camera = new THREE.PerspectiveCamera(70,16/9,.3,20000), view = createCockpitView(camera);
-  views.push({renderer,scene,model,camera,view});
+  const state = {renderQuat:new THREE.Quaternion().setFromEuler(new THREE.Euler(-.08, .3, Number(params.get('bank') || 0))),
+    renderPos:new THREE.Vector3(0,340,0), vel:new THREE.Vector3(0,3,70), throttle:.75, rotor:.92};
+  views.push({renderer,scene,model,camera,view,state});
 }
-let cockpit = true;
+let cockpit = !params.has('exterior');
 function draw() {
-  for (const {renderer,scene,model,camera,view} of views) {
-    view(model,cockpit);
+  for (const {renderer,scene,model,camera,view,state} of views) {
+    view(model,cockpit,state);
     if (cockpit) { camera.position.set(0,...model.userData.cockpit.eye); camera.lookAt(camera.position.clone().add(new THREE.Vector3(0,0,1))); }
     else { camera.position.set(10,6,12);camera.lookAt(0,0,0); }
     renderer.render(scene,camera);

@@ -512,7 +512,7 @@ function frame(now) {
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
   audio.update(car, input, dt, atmosphere);
-  cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open);
+  cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open, vehicles.current);
   if (builder.open) builder.update(dt); else updateCamera(dt);
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
