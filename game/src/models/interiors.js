@@ -54,9 +54,29 @@ export function ensureGroundInterior(model, kind, type) {
   }
   const masks = bike ? faceMasks(ud.rider, mount, p => p.y > eye.y - .18)
     : faceMasks(mount, mount, p => p.y > spec.cowl && p.z < spec.front && p.z > -1.5 && (!race || Math.abs(p.x) < .33));
+  // Some bike builders merge the opaque screen and pod into the fairing. Clear that
+  // small region at the steering anchor, without touching the rider or painted tank.
+  if (sport) {
+    const front = ud.bars.position.z;
+    masks.push(...faceMasks(mount, mount, (p, o) => {
+      for (let a = o; a && a !== mount; a = a.parent) if (a === ud.rider) return false;
+      for (let a = o; a && a !== mount; a = a.parent)
+        if (/windscreen|windshield/i.test(a.name)) return true;
+      return Math.abs(p.x) < .26 && p.z > front - .36 && p.z < front + .24 && p.y > eye.y - .30;
+    }));
+  }
   const group = new THREE.Group(); group.name = 'ground-interior'; group.userData.damageRigid = true;
   group.visible = false;
-  const dark = material('#262b30'), trim = material('#626d75'), rubber = material('#12171b');
+  const dark = material('#2b2f33'), trim = material('#a6afb5'), rubber = material('#24272b');
+  const lower = material(type === 'truck' ? '#a88c69' : type === 'suv' ? '#9c9384' : type === 'sports' ? '#545861' : '#7b8186');
+  const headliner = material(type === 'truck' || type === 'suv' ? '#c7bca6' : '#b0b3b6');
+  const accent = material(type === 'sports' ? '#b84b41' : '#a6afb5');
+  // Reuse the live body material, rather than a baked colour: Garage paint/wetness
+  // updates reach the sills even though interiors are built after cosmetic binding.
+  let bodyPaint = null;
+  if (!bike && !race) mount.traverse(o => {
+    if (!bodyPaint && o.material?.userData.cosmeticRole === 'body') bodyPaint = o.material;
+  });
   const face = material('#14222b'), tick = material('#d9ddc7'), red = material('#ed7451');
   // The shared batch helper converts fixed sRGB colours into linear vertex colours.
   const fittings = new THREE.Group(), controls = new THREE.Group(), needles = [];
@@ -66,7 +86,7 @@ export function ensureGroundInterior(model, kind, type) {
     mesh(parent, new THREE.CircleGeometry(r * .85, 12).rotateY(Math.PI), face, x, y, z - .001);
     for (let i = 0; i < 7; i++) {
       const a = (i / 6 - .5) * Math.PI * 1.5;
-      const mark = box(parent, i === 6 ? red : tick, .005, r * .17, .002,
+      const mark = mesh(parent, new THREE.PlaneGeometry(.005, r * .17).rotateY(Math.PI), i === 6 ? red : tick,
         x - Math.sin(a) * r * .68, y + Math.cos(a) * r * .68, z - .003); mark.rotation.z = a;
     }
     const needle = mesh(group, new THREE.BufferGeometry().setAttribute('position',
@@ -77,29 +97,51 @@ export function ensureGroundInterior(model, kind, type) {
   if (!bike) {
     group.position.copy(eye);
     const { width: w, depth: d, drop } = spec, cx = -eye.x, small = race ? .64 : 1;
-    box(fittings, dark, w * 2, .20 * small, .20, cx, -drop - .12 * small, d);
-    box(fittings, rubber, w * 2, .025, .25, cx, -drop, d);
-    dial(fittings, -.075 * small, -drop - .07 * small, d - .105, .060 * small);
-    dial(fittings, .075 * small, -drop - .07 * small, d - .105, .060 * small);
-    controls.position.set(0, -drop - .12 * small, d - .25 * small);
-    mesh(controls, new THREE.TorusGeometry(.145 * small, .014 * small, 4, 12), rubber);
-    box(controls, trim, .26 * small, .018 * small, .025, 0, 0, 0);
+    const chunky = type === 'truck' || type === 'suv';
+    box(fittings, race ? dark : lower, w * 2, (chunky ? .25 : .20) * small, .20, cx, -drop - .12 * small, d);
+    box(fittings, dark, w * 2, .025, .25, cx, -drop, d);
+    const gaugeY = race ? -drop - .07 * small : -drop + .015;
+    if (!race) {
+      box(fittings, dark, .34, .15, .035, 0, gaugeY, d - .12);
+      box(fittings, accent, w * 2 - .05, .012, .012, cx, -drop - .085, d - .108);
+    }
+    dial(fittings, -.075 * small, gaugeY, d - (race ? .105 : .145), .060 * small);
+    dial(fittings, .075 * small, gaugeY, d - (race ? .105 : .145), .060 * small);
+    controls.position.set(0, -drop - (race ? .12 * small : .14), d - (race ? .25 * small : .10));
+    mesh(controls, new THREE.TorusGeometry(.145 * small, (race ? .014 : .010) * small, 4, race ? 12 : 24), rubber);
+    if (race) box(controls, trim, .26 * small, .018 * small, .025, 0, 0, 0);
+    else for (const s of [-1, 1]) rod(controls, trim, [s * .025, -.012, 0], [s * .13, -.04, 0], .009, 4);
     box(controls, dark, .075 * small, .06 * small, .035, 0, 0, -.005);
     box(controls, trim, .018, .13 * small, .02, 0, -.065 * small, 0);
     if (!race) {
+      // The passenger pillar is further along the sightline; both posts fit the
+      // asymmetric driver's view. The thin headliner follows the windscreen top.
+      const leftTop = [cx + w * .90, .29, d * .57];
+      const rightDepth = Math.abs(cx - w * .90) / 1.04;
+      const rightTop = [cx - w * .90, rightDepth * .61, rightDepth];
       for (const s of [-1, 1]) {
-        const x = cx + s * w;
-        rod(fittings, dark, [x, -drop, d + .08], [cx + s * w * .90, .19, d * .55], .018, 4);
-        box(fittings, dark, .07, .09, 1.2, x, -drop - .09, .15);
-        rod(fittings, trim, [x, .19, -.45], [cx + s * w * .90, .19, d * .55], .014, 4);
+        const x = cx + s * w, top = s > 0 ? leftTop : rightTop;
+        const bottom = [x, -drop - (s > 0 ? 0 : .18), s > 0 ? d * .55 : Math.abs(x) / 1.08];
+        rod(fittings, dark, bottom, top, s > 0 ? .012 : .014, 4);
+        const doorLength = s > 0 ? 1.2 : bottom[2] + .55, doorZ = s > 0 ? .15 : (bottom[2] - .35) / 2;
+        const doorY = -drop - (s > 0 ? 0 : .18);
+        box(fittings, lower, .07, .12, doorLength, x, doorY - .10, doorZ);
+        box(fittings, bodyPaint || accent, .075, .025, doorLength, x, doorY + .006, doorZ);
+        box(fittings, trim, .014, .012, doorLength - .05, x - s * .04, doorY - .025, doorZ);
+        rod(fittings, headliner, [x, top[1], -.45], top, .008, 4);
       }
-      box(fittings, dark, w * 1.82, .055, .10, cx, .21, d * .55);
-      box(fittings, dark, .24, .075, .035, cx, .105, d * .58);
-      box(fittings, trim, .21, .052, .008, cx, .105, d * .58 - .023);
-      box(fittings, dark, .22, .20, .60, cx, -drop - .24, .24);
+      // Passenger-side painted return where the door top meets the dash. The
+      // distant door itself is mostly occluded from the left-hand driving seat.
+      box(fittings, bodyPaint || accent, .16, .025, .20, -d * .98, -drop + .018, d);
+      rod(fittings, headliner, leftTop, rightTop, .012, 4);
+      // Small mirror just right of the driver, well above the road horizon.
+      box(fittings, dark, .095, .027, .018, -.18, .35, .72);
+      box(fittings, trim, .083, .019, .003, -.18, .35, .709);
+      rod(fittings, headliner, [-.18, .365, .73], [-.18, .40, .75], .005, 4);
+      box(fittings, lower, .22, .20, .60, cx, -drop - .24, .24);
       rod(fittings, trim, [cx, -drop - .15, .24], [cx, -drop - .025, .30], .012, 5);
       box(fittings, rubber, .05, .04, .055, cx, -drop - .01, .30);
-      for (const x of [cx - .12, cx + .12]) box(fittings, rubber, .14, .035, .012, x, -drop - .08, d - .108);
+      for (const x of [cx - .12, cx + .12]) box(fittings, rubber, .14, .035, .012, x, -drop - .055, d - .108);
     } else {
       for (const s of [-1, 1]) box(fittings, dark, .055, .18, .65, s * w, -.24, .12);
     }
@@ -107,19 +149,27 @@ export function ensureGroundInterior(model, kind, type) {
     // Keep the real tank, forks, mudguard and turning handlebars. The extra instruments and
     // mirrors are attached to the existing bar pivot, so their steering is identical.
     controls.position.copy(ud.bars.position); controls.quaternion.copy(ud.bars.quaternion);
-    const y = sport ? .57 : .13, z = sport ? -.23 : .015;
-    box(controls, dark, .20, .09, .06, 0, y, z);
+    const y = sport ? eye.y - .27 : .13, z = sport ? -.16 : .015;
+    box(controls, dark, sport ? .16 : .20, sport ? .06 : .09, .045, 0, y, z);
     // Faces incline toward the rider; gauge assembly lives in the steering group's frame.
-    const panel = new THREE.Group(); panel.position.set(0, y + .035, z - .04); panel.rotation.x = -.55;
+    const panel = new THREE.Group(); panel.position.set(0, y + (sport ? .005 : .035), z - .027); panel.rotation.x = -.55;
     controls.add(panel);
-    dial(panel, 0, 0, 0, .052);
+    dial(panel, 0, 0, 0, sport ? .042 : .052);
     const needle = needles[0]; group.remove(needle);
-    for (const s of [-1, 1]) {
+    for (const s of sport ? [] : [-1, 1]) {
       rod(controls, trim, [s * .27, y - .015, z], [s * .39, y + .20, z + .07], .009, 4);
-      box(controls, rubber, .13, .07, .035, s * .40, y + .20, z + .07);
-      box(controls, trim, .105, .05, .005, s * .40, y + .20, z + .049);
+      box(controls, rubber, .105, .05, .025, s * .40, y + .20, z + .07);
+      box(controls, trim, .085, .035, .005, s * .40, y + .20, z + .049);
     }
     batch(panel); panel.add(needle);
+    if (sport) {
+      // A single open sheet, not the exterior's opaque closed glass hull. Its top
+      // stays below the road sightline; the road also remains visible through it.
+      const screen = mesh(group, new THREE.PlaneGeometry(.30, .11),
+        new THREE.MeshLambertMaterial({ color: '#88aebc', transparent: true, opacity: .25,
+          depthWrite: false, side: THREE.DoubleSide }), 0, eye.y - .29, eye.z + .45);
+      screen.rotation.x = -.45; screen.name = 'interior-windscreen';
+    }
   }
   // Preserve moving needles when merging their static instrument surroundings.
   // The car needles are siblings of fittings; the bike's panel is merged before its needle is restored.
@@ -143,7 +193,7 @@ export function ensureGroundInterior(model, kind, type) {
     },
     camera(camera) {
       camera.position.copy(eye).applyMatrix4(mount.matrixWorld);
-      const pitch = bike ? .32 : 0;
+      const pitch = bike ? (sport ? .15 : .32) : 0;
       look.set(0, -Math.sin(pitch), Math.cos(pitch)).transformDirection(mount.matrixWorld).add(camera.position);
       up.set(0, 1, 0).transformDirection(mount.matrixWorld); camera.up.copy(up); camera.lookAt(look);
     },

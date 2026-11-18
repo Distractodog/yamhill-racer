@@ -29,6 +29,35 @@ for (const kind of ['car', 'bike']) for (const { id } of VEHICLE_TYPES[kind]) {
   const state = { vel: new THREE.Vector3(0, 0, 20), steer: .5, t: { topSpeed: 300 } };
   view(model, true, state);
   assert.equal(group.parent, mount); assert.equal(camera.near, .06);
+  model.updateMatrixWorld(true); interior.camera(camera); camera.updateMatrixWorld(true);
+  if (kind === 'car' && id !== 'race') {
+    // Both dial centres must be visible past the exterior, dash and wheel.
+    const ray = new THREE.Raycaster(), target = new THREE.Vector3();
+    for (const needle of interior.needles) {
+      needle.getWorldPosition(target);
+      const distance = target.distanceTo(camera.position);
+      ray.set(camera.position, target.sub(camera.position).normalize());
+      ray.far = distance - .002;
+      assert.equal(ray.intersectObject(model).length, 0, `${id}: readable gauge centre`);
+    }
+    let bodyMaterial;
+    mount.traverse(o => { if (o.material?.userData.cosmeticRole === 'body') bodyMaterial = o.material; });
+    let paintedSills = 0;
+    group.traverse(o => { if (o.isMesh && o.material === bodyMaterial) paintedSills++; });
+    assert(paintedSills > 0, `${id}: sills share the live Garage body material`);
+    const original = bodyMaterial.color.clone(); bodyMaterial.color.set('#3980ba');
+    group.traverse(o => { if (o.material === bodyMaterial) assert.equal(o.material.color.getHexString(), '3980ba'); });
+    bodyMaterial.color.copy(original);
+  }
+  if (id === 'sport') {
+    const screen = group.getObjectByName('interior-windscreen');
+    assert.equal(screen.material.opacity, .25); assert(screen.material.transparent);
+    const top = new THREE.Vector3(0, .055, 0).applyMatrix4(screen.matrixWorld).project(camera);
+    assert(top.y < -.35 && top.y > -1, 'sport screen stays in the bottom third');
+    const ahead = new THREE.Vector3(0, 0, 1).transformDirection(mount.matrixWorld);
+    const ray = new THREE.Raycaster(camera.position, ahead, .06, 2);
+    assert.equal(ray.intersectObject(model).length, 0, 'sport road sightline is clear');
+  }
   if (previous) assert.equal(previous.group.parent, null, 'switch detaches previous interior');
   for (const m of masks) assert.equal(m.mesh.geometry.index, m.filtered);
   model.position.set(50, 5, -30); model.rotation.set(.16, .7, -.08);
@@ -50,6 +79,10 @@ for (const kind of ['car', 'bike']) for (const { id } of VEHICLE_TYPES[kind]) {
   try { for (let i = 0; i < 100; i++) view(model, true, state); }
   finally { interior.setVisible = visibility; model.traverse = traverse; camera.updateProjectionMatrix = projection; }
   interior.needles.forEach((n, i) => assert.notEqual(n.rotation.z, angles[i]));
+  assert.doesNotMatch(interior.update.toString(), /\bnew\b|\.clone\(|\.traverse\(/);
+  const start = performance.now();
+  for (let i = 0; i < 10000; i++) interior.update(state);
+  console.log(`${kind}/${id}: ${((performance.now() - start) / 10000).toFixed(4)} ms/instrument update`);
   view(null, false);
   for (const m of masks) assert.equal(m.mesh.geometry.index, m.original, 'exterior index restored after damage');
   assert.equal(group.parent, null); assert.equal(camera.near, .3);
