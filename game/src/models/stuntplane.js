@@ -1,3 +1,4 @@
+import { addCockpit } from './cockpit.js';
 // Stunt plane (an Extra 300-style aerobatic monoplane): low wing with sunburst stripes, bubble canopy, big
 // three-blade propeller, fixed main gear in pants and a tail wheel. Flown by jet.js with STUNT_AIRFRAME
 // (vehicletypes.js type 'stunt').
@@ -26,7 +27,7 @@ export function buildStuntPlaneModel() {
   const white = material(0xf4f2ec, 'body'), stripe = material(0xd8262e, 'trim'), dark = material(0x24272e), metal = material(0x9aa0a8);
   const glass = material(0x2a4a63, null, { emissive: 0x0b1c2a }), tyre = material(0x1d1e22);
   // fuselage, bubble canopy, bold side stripes
-  put(root, loft(BODY, K), white);
+  const cockpitHull = put(root, loft(BODY, K), white);
   const canopy = put(root, loft(BUBBLE), glass);
   put(root, new THREE.BoxGeometry(0.66, 0.05, 0.06), dark, 0, 0.83, -1.0);                      // canopy bow
   put(root, ribbon(BODY, 0.1, 0.1, 0, 6, K), stripe);
@@ -91,7 +92,7 @@ export function buildStuntPlaneModel() {
   };
   // Garage liveries / scuffs on the fuselage sides behind the canopy (cosmetics.js)
   const tilt = 0.118;
-  batch(root, new Set([canopy]));
+  batch(root, new Set([canopy, cockpitHull]));
   sides.forEach(side => batch(side));
   const setSpeedBrake = speedBrakePanels(root, stripe, [-1, 1].map(s => ({ x: s * 2.3, y: -.20, z: .25, w: 1.5, d: .42 })));
   root.userData = { setSpeedBrake,
@@ -103,5 +104,6 @@ export function buildStuntPlaneModel() {
       v.wheels?.forEach((wh, i) => { if (wheels[i]) wheels[i].spin.rotation.x = wh.spin * (i ? 1 : 2.8); });
     },
   };
+  addCockpit(root, { style: 'stunt', eye: STUNT_AIRFRAME.eye, width: .39, depth: .72, blockers: [cockpitHull] });
   return root;
 }

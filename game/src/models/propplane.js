@@ -1,3 +1,4 @@
+import { addCockpit } from './cockpit.js';
 // Prop plane (a Cessna 172-style trainer): high wing on struts, fixed tricycle gear with wheel pants, big cabin
 // windows, a two-blade propeller. Flown by jet.js with PROP_AIRFRAME (vehicletypes.js type 'prop').
 import * as THREE from 'three';
@@ -26,12 +27,15 @@ export function buildPropPlaneModel() {
   const white = material(0xf3f3ef, 'body'), stripe = material(0x1f5fae, 'trim'), dark = material(0x2a2e36), metal = material(0x9aa0a8);
   const glass = material(0x24425a, null, { emissive: 0x0a1a28 }), tyre = material(0x1d1e22);
   // fuselage, cabin glass, cheat line and the window frames
-  put(root, loft(BODY, BOX), white);
+  const cockpitHull = put(root, loft(BODY, BOX), white);
   const canopy = put(root, loft(CABIN, BOX), glass);
   put(root, ribbon(BODY, 0.05, 0.07, 0, 6, BOX), stripe);
   put(root, ribbon(BODY, -0.3, 0.035, 0, 6, BOX), stripe);
-  for (const z of [1.33, 0.35, -0.62]) for (const s of [1, -1]) put(root, new THREE.BoxGeometry(0.05, 0.72, 0.09), white, s * 0.6, 0.62, z);
-  put(root, new THREE.BoxGeometry(1.1, 0.06, 0.12), white, 0, 0.97, 1.36);              // windscreen top frame
+  const cockpitFrames = [];
+  for (const z of [1.33, 0.35, -0.62]) for (const s of [1, -1]) cockpitFrames.push(put(root, new THREE.BoxGeometry(0.05, 0.72, 0.09), white, s * 0.6, 0.62, z));
+  cockpitFrames.push(put(root, new THREE.BoxGeometry(1.1, 0.06, 0.12), white, 0, 0.97, 1.36));              // windscreen top frame
+  const cockpitFrame = pivot(root, 0, 0, 0);
+  cockpitFrames.forEach(part => cockpitFrame.add(part)); batch(cockpitFrame);
   put(root, new THREE.BoxGeometry(0.62, 0.1, 0.5), dark, 0, -0.38, 3.82);                 // air intake under the spinner
   put(root, new THREE.BoxGeometry(0.08, 0.06, 0.6), dark, 0.22, -0.58, 2.6);             // exhaust stub
   // high wing: constant-chord inner panel, slight taper outboard; flaps inboard, ailerons outboard
@@ -88,7 +92,7 @@ export function buildPropPlaneModel() {
     prop.blades.rotation.x = on ? 0.6 : 0;
   };
   const deck = 1.06 + 0.085;   // wing top
-  batch(root, new Set([canopy]));
+  batch(root, new Set([canopy, cockpitHull]));
   const setSpeedBrake = speedBrakePanels(root, stripe, [-1, 1].map(s => ({ x: s * 2.7, y: 1.23, z: .35, w: 1.7, d: .48 })));
   root.userData = { setSpeedBrake,
     wheels, setGear: () => {}, noseWheel: wheels[0].holder, elevator, rudder, aileronL, aileronR, wreck, canopy, propeller: prop,
@@ -100,5 +104,6 @@ export function buildPropPlaneModel() {
       v.wheels?.forEach((wh, i) => { if (wheels[i]) wheels[i].spin.rotation.x = wh.spin; });
     },
   };
+  addCockpit(root, { style: 'prop', eye: PROP_AIRFRAME.eye, width: .55, depth: .8, blockers: [cockpitHull, cockpitFrame] });
   return root;
 }

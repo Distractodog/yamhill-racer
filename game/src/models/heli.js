@@ -1,3 +1,4 @@
+import { addCockpit } from './cockpit.js';
 // Light helicopter model (Bell 206 / AS350 style): bubble cockpit, engine fairing, tail boom with stabiliser and fin,
 // two-blade main rotor and tail rotor that spin with rotor power, skids. Low-poly, flat shaded. +z forward, +x left,
 // origin = the centre the physics moves (heli.js), HELI_SKID_H above the bottom of the skids.
@@ -58,15 +59,17 @@ export function buildHeliModel() {
   loft(root, paint, [[2.55, .3, -.6, -.15], [2.2, .74, -.86, .05], [1.3, .93, -.95, .05], [-.9, .93, -.92, .05], [-1.85, .6, -.6, .1], [-2.45, .3, .3, .45]]);
   const canopy = loft(root, glass, [[2.5, .32, -.15, .0], [2.2, .74, .05, .5], [1.35, .93, .05, .9], [.35, .93, .05, .96]]);
   loft(root, paint, [[.35, .93, .05, .96], [-.9, .9, .05, .96], [-1.85, .6, .1, .82], [-2.45, .3, .45, .7]]);
+  const cockpitFrames = [];
   for (const s of [1, -1]) {
     add(root, new THREE.BoxGeometry(.05, .85, .07), dark, s * .92, .48, .35);             // door frame
-    add(root, new THREE.BoxGeometry(.05, .62, .05), dark, s * .8, .3, 1.75).rotation.x = -.5;   // windscreen post
+    const post = add(root, new THREE.BoxGeometry(.05, .62, .05), dark, s * .8, .3, 1.75);
+    post.rotation.x = -.5; cockpitFrames.push(post);   // windscreen post
     add(root, new THREE.BoxGeometry(.03, .14, 2.6), trim, s * .945, -.38, .25);            // side stripe
     add(root, new THREE.BoxGeometry(.03, .06, 2.6), trim, s * .945, -.22, .25);
     add(root, new THREE.BoxGeometry(.04, .32, .5), dark, s * .45, 1.15, -.5);              // engine intake
     add(root, new THREE.BoxGeometry(.04, .55, .02), dark, s * .935, -.38, -.92);           // rear door seam
   }
-  add(root, new THREE.BoxGeometry(.06, .05, 1.2), dark, 0, .93, 1.0);                       // canopy centre frame
+  cockpitFrames.push(add(root, new THREE.BoxGeometry(.06, .05, 1.2), dark, 0, .93, 1.0));                       // canopy centre frame
   // engine + transmission fairing, exhaust, mast
   add(root, new THREE.BoxGeometry(.95, .42, 1.8), paint, 0, 1.12, -.55);
   add(root, new THREE.BoxGeometry(.7, .2, 1.2), paint, 0, 1.38, -.65);
@@ -147,5 +150,6 @@ export function buildHeliModel() {
       left: new THREE.Vector3(1.1, .62, -5.4), right: new THREE.Vector3(-1.1, .62, -5.4),
       tail: new THREE.Vector3(0, 1.62, -6.75), strobe: new THREE.Vector3(0, 1.52, -.95),
     } } };
+  addCockpit(root, { style: 'heli', eye: [.65, .8], width: .78, depth: 1.0, blockers: [mainRotor, ...cockpitFrames] });
   return root;
 }

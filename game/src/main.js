@@ -1,3 +1,4 @@
+import { createCockpitView } from './models/cockpit.js';
 import { createWind } from './wind.js';
 import { createWindView } from './windview.js';
 import * as THREE from 'three';
@@ -290,6 +291,7 @@ function readInput() {
 
 // ---------------------------------------------------------------- camera
 // Chase cam that follows the car's heading with a little lag, so drifts show the car sideways.
+const cockpitView = createCockpitView(camera);
 let camMode = 0;
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3(), fw = new THREE.Vector3();
 let glideCam = 0;                       // 0 = driving camera, 1 = gliding camera (pulled back, follows the flight path)
@@ -344,8 +346,9 @@ function updateJetCamera(dt) {
   const upB = tmp.set(0, 1, 0).lerp(jUp, roll).normalize();
   if (camMode === 2) {
     camCeiling = Infinity;
-    camera.position.copy(rp).addScaledVector(jUp, v.cam?.eye?.[0] ?? 1.05).addScaledVector(fw, v.cam?.eye?.[1] ?? 2.9);   // eye: aircraft types' seat
-    camLook.copy(camera.position).add(fw.clone().multiplyScalar(50));
+    const eye = v.mesh?.userData.cockpit?.eye ?? v.cam?.eye;
+    camera.position.copy(rp).addScaledVector(jUp, eye?.[0] ?? 1.05).addScaledVector(fw, eye?.[1] ?? 2.9);   // eye: aircraft types' seat
+    camLook.copy(camera.position).addScaledVector(fw, 50);
     camera.up.copy(jUp);
   } else {
     const dist = camMode === 1 ? 46 : 19 + Math.min(sp, 300) * 0.012, high = camMode === 1 ? 12 : 4.6;
@@ -373,7 +376,7 @@ function updateJetCamera(dt) {
   camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
 }
 function updateCamera(dt) {
-  if (vehicles.current.cam?.jet) { updateJetCamera(dt); return; }
+  if (vehicles.current.cam?.jet || (camMode === 2 && vehicles.current.mesh?.userData.cockpit)) { updateJetCamera(dt); return; }
   jFollowing = false;
   const vc = vehicles.current.cam || {};
   fw.set(0, 0, 1).applyQuaternion(car.renderQuat);
@@ -509,6 +512,7 @@ function frame(now) {
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
   audio.update(car, input, dt, atmosphere);
+  cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open, vehicles.current);
   if (builder.open) builder.update(dt); else updateCamera(dt);
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
