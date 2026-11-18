@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Aircraft cockpit review</title>
+<style>
+body { margin:0; background:#172530; color:#eef3f6; font:14px system-ui; } header { padding:16px; }
+#views { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:12px; }
+section { position:relative; aspect-ratio:16/9; } canvas { width:100%;height:100%;display:block; }
+label { position:absolute;top:10px;left:12px;text-shadow:0 1px 4px #000; } button { margin-left:14px; }
+</style>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+<header>Aircraft cockpit review — level flight, 70° FOV <button id="mode">Show exteriors</button></header><div id="views"></div>
+<script type="module">
+import * as THREE from 'three';
+import { VEHICLE_TYPES, buildVehicleTypeModel } from '../game/src/vehicletypes.js';
+import { createCockpitView } from '../game/src/models/cockpit.js';
+const views = [];
+const params = new URLSearchParams(location.search);
+for (const {id, name} of VEHICLE_TYPES.jet) {
+  const section = document.createElement('section'), label = document.createElement('label');
+  label.textContent = name; section.append(label); document.querySelector('#views').append(section);
+  const renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(800,450); section.append(renderer.domElement);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x95bdd4);
+  scene.add(new THREE.HemisphereLight(0xeaf5ff,0x78705f,2));
+  const sun = new THREE.DirectionalLight(0xfff0d8,2.5); sun.position.set(-30,70,50); scene.add(sun);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(20000,20000),new THREE.MeshLambertMaterial({color:0x708957}));
+  ground.rotation.x = -Math.PI/2; ground.position.y = -30; scene.add(ground);
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(12,18000),new THREE.MeshLambertMaterial({color:0x74777a}));
+  road.rotation.x = -Math.PI/2; road.position.y = -29.95; scene.add(road);
+  const model = buildVehicleTypeModel('jet',id); scene.add(model);
+  const camera = new THREE.PerspectiveCamera(70,16/9,.3,20000), view = createCockpitView(camera);
+  const state = {renderQuat:new THREE.Quaternion().setFromEuler(new THREE.Euler(-.08, .3, Number(params.get('bank') || 0))),
+    renderPos:new THREE.Vector3(0,340,0), vel:new THREE.Vector3(0,3,70), throttle:.75, rotor:.92};
+  views.push({renderer,scene,model,camera,view,state});
+}
+let cockpit = !params.has('exterior');
+function draw() {
+  for (const {renderer,scene,model,camera,view,state} of views) {
+    view(model,cockpit,state);
+    if (cockpit) { camera.position.set(0,...model.userData.cockpit.eye); camera.lookAt(camera.position.clone().add(new THREE.Vector3(0,0,1))); }
+    else { camera.position.set(10,6,12);camera.lookAt(0,0,0); }
+    renderer.render(scene,camera);
+    console.log(model.name, cockpit ? 'cockpit' : 'exterior', renderer.info.render.triangles, 'triangles', renderer.info.render.calls, 'draws');
+  }
+}
+document.querySelector('#mode').onclick = () => { cockpit = !cockpit; document.querySelector('#mode').textContent = cockpit ? 'Show exteriors' : 'Show cockpits'; draw(); };
+draw();
+</script></html>

@@ -394,10 +394,20 @@ export class Car extends Vehicle {
   collideGround() {
     const W = this.world;
     const width = this.typePhysics?.width ?? 1, length = this.typePhysics?.length ?? 1;
-    let worst = 0;
+    let worst = 0, contacts = 0;
+    _damageCenter.set(0, 0, 0);
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
       _w.set((BOX_C.x + sx * BOX_H.x) * width, BOX_C.y + sy * BOX_H.y, (BOX_C.z + sz * BOX_H.z) * length).applyQuaternion(this.quat).add(this.pos);
       const pen = terrainLift(W, _w, W.heightAt(_w.x, _w.z, _w.y) - _w.y, this.t.restLength);
+      if (pen > 0) {
+        // Cosmetic contacts cover the whole touching face, including the roof on a
+        // rollover. The deepest corner below still owns the unchanged physics response.
+        _damageCenter.add(_w); contacts++;
+        W.normalAt(this.pos.x, this.pos.z, _damageNormal, this.pos.y);
+        _damageArm.copy(_w).sub(this.pos);
+        _damageVelocity.copy(this.ang).cross(_damageArm).add(this.vel);
+        this.recordImpact?.(_w.x, _w.y, _w.z, _damageNormal.x, _damageNormal.y, _damageNormal.z, -_damageVelocity.dot(_damageNormal), 'ground');
+      }
       if (pen > worst) { worst = pen; _r.copy(_w).sub(this.pos); }
     }
     if (worst > 0) {
@@ -405,6 +415,12 @@ export class Car extends Vehicle {
       const contactX = this.pos.x + _r.x, contactY = this.pos.y + _r.y, contactZ = this.pos.z + _r.z;
       _v.copy(this.ang).cross(_r).add(this.vel);
       const vn = _v.dot(_n);
+      if (contacts > 1) {
+        _damageCenter.divideScalar(contacts);
+        _damageArm.copy(_damageCenter).sub(this.pos);
+        _damageVelocity.copy(this.ang).cross(_damageArm).add(this.vel);
+        this.recordImpact?.(_damageCenter.x, _damageCenter.y, _damageCenter.z, _n.x, _n.y, _n.z, -_damageVelocity.dot(_n), 'ground');
+      }
       this.recordImpact?.(contactX, contactY, contactZ, _n.x, _n.y, _n.z, -vn, 'ground');
       this.pos.addScaledVector(_n, worst);
       if (vn < 0) {
@@ -512,3 +528,5 @@ export class Car extends Vehicle {
 }
 
 function addTorque(T, r, dir, mag) { T.x += (r.y * dir.z - r.z * dir.y) * mag; T.y += (r.z * dir.x - r.x * dir.z) * mag; T.z += (r.x * dir.y - r.y * dir.x) * mag; }
+const _damageCenter = new THREE.Vector3(), _damageArm = new THREE.Vector3();
+const _damageNormal = new THREE.Vector3(), _damageVelocity = new THREE.Vector3();

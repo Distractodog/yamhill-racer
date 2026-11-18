@@ -1,0 +1,44 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>Garage dents — loading</title>
+<style>body{margin:0;background:#17251f;color:white;font:14px system-ui}#result{padding:12px}</style>
+<script type="importmap">{"imports":{"three":"./node_modules/car-damage-three/build/three.module.js","three/addons/":"./node_modules/car-damage-three/examples/jsm/"}}</script>
+</head><body><p id="result">Production Garage on a flat fixture; no world streaming or performance proof.</p>
+<script type="module">
+// Prepare offline imports with: node tools/car_damage_check.mjs --check-only --prepare-preview
+import * as THREE from 'three';
+import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
+import { applyVehicleType } from '../game/src/vehicletypes.js';
+import { createCosmetics } from '../game/src/cosmetics.js';
+import { createGarage } from '../game/src/garage.js';
+const assert = (ok, message) => { if (!ok) throw Error(message); };
+const world = { heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0, surfaceAt: () => 3,
+  normalAt: (_x, _z, n) => n.set(0, 1, 0), buildingsNear: () => [], treesNear() {},
+  loadedAt: () => true, spawn: [0, 0], extent: [-1000, -1000, 1000, 1000] };
+const car = new Car(world, { ...TUNING_DEFAULTS });
+applyVehicleType(car, new URLSearchParams(location.search).get('type') || 'sports');
+const listeners = [];
+const vehicles = { all: { car }, current: car, getType: () => car.type,
+  setType(kind, type) { applyVehicleType(car, type); listeners.forEach(fn => fn(kind)); return true; },
+  onTypeChange(fn) { listeners.push(fn); } };
+const cosmetics = createCosmetics(vehicles, { storage: null });
+const preview = cosmetics.createPreview('car'), rest = [];
+preview.traverse(o => { if (o.isMesh) rest.push([o, o.geometry.attributes.position.array.slice()]); });
+const dent = () => {
+  car.pos.set(0, .75, -1.45 * (car.typePhysics?.width ?? 1)); car.quat.identity(); car.vel.set(0, 0, 45);
+  car.world.buildingsNear = () => [{ pts: [[-20, 0], [20, 0], [20, 20], [-20, 20]], top: 10, h: 10 }];
+  car.collideBuildings(); car.damage.update();
+};
+dent();
+const garage = createGarage({ cosmetics, vehicles }); garage.show();
+assert(rest.some(([mesh, p]) => mesh.geometry.attributes.position.array.some((v, i) => v !== p[i])), 'Garage must display dent');
+assert(cosmetics.getWear('car').dirt === 0, 'clean-car repair prerequisite');
+document.querySelector('.garage-wash').click();
+assert(car.damage.sites.length === 0, 'Wash button repairs even clean car');
+assert(rest.every(([mesh, p]) => mesh.geometry.attributes.position.array.every((v, i) => v === p[i])), 'Wash button restores preview');
+assert(document.querySelector('.garage-status').textContent.includes('repaired'), 'repair status');
+// Leave the damaged Garage visible by default; ?repaired shows the exact restored state.
+if (!new URLSearchParams(location.search).has('repaired')) { dent(); garage.close(); garage.show(); }
+document.title = 'Garage dents — PASS preview and clean repair';
+console.log('PASS production Garage: current sites displayed; clean Wash button repairs active car and preview; reopen displays dents');
+function frame() { garage.update(); requestAnimationFrame(frame); } frame();
+</script></body></html>
