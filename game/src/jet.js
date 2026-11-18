@@ -1,3 +1,4 @@
+import { addCockpit } from './models/cockpit.js';
 import { driftAir } from './wind.js';
 // Jet. Fixed 120 Hz step. Local axes: +z forward (nose), +y up, +x = left wing.
 //
@@ -536,7 +537,7 @@ export function buildJetModel() {
   white.userData.cosmeticRole = 'body'; orange.userData.cosmeticRole = 'trim';
   const add = (geo, mat, x = 0, y = 0, z = 0, parent = root) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; parent.add(m); return m; };
   // fuselage: an 8-sided tube, tapered nose and tail
-  const fus = new THREE.CylinderGeometry(0.75, 0.6, 9, 8).rotateX(Math.PI / 2); add(fus, white, 0, 0, -0.4);
+  const fus = new THREE.CylinderGeometry(0.75, 0.6, 9, 8).rotateX(Math.PI / 2); const cockpitHull = add(fus, white, 0, 0, -0.4);
   add(new THREE.ConeGeometry(0.75, 3.2, 8).rotateX(Math.PI / 2), white, 0, 0, 5.7);
   add(new THREE.ConeGeometry(0.22, 0.6, 8).rotateX(Math.PI / 2), dark, 0, 0, 7.4);
   add(new THREE.CylinderGeometry(0.62, 0.5, 1.0, 8).rotateX(Math.PI / 2), dark, 0, 0, -5.3);   // nozzle
@@ -610,5 +611,6 @@ export function buildJetModel() {
     left: new THREE.Vector3(5.02, 0, -1.6), right: new THREE.Vector3(-5.02, 0, -1.6),     // on the tip caps' ends
     tail: new THREE.Vector3(0, .58, -5.82), strobe: new THREE.Vector3(0, .82, -.6),
   } } };
+  addCockpit(root, { style: 'fighter', eye: [.94, 2.5], width: .48, depth: .8, blockers: [cockpitHull] });
   return root;
 }

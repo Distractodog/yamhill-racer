@@ -1,3 +1,4 @@
+import { addCockpit } from './cockpit.js';
 // Light helicopter model (Bell 206 / AS350 style): bubble cockpit, engine fairing, tail boom with stabiliser and fin,
 // two-blade main rotor and tail rotor that spin with rotor power, skids. Low-poly, flat shaded. +z forward, +x left,
 // origin = the centre the physics moves (heli.js), HELI_SKID_H above the bottom of the skids.
@@ -147,5 +148,6 @@ export function buildHeliModel() {
       left: new THREE.Vector3(1.1, .62, -5.4), right: new THREE.Vector3(-1.1, .62, -5.4),
       tail: new THREE.Vector3(0, 1.62, -6.75), strobe: new THREE.Vector3(0, 1.52, -.95),
     } } };
+  addCockpit(root, { style: 'heli', eye: [.65, .8], width: .78, depth: 1.0, blockers: [] });
   return root;
 }

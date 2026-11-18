@@ -1,3 +1,4 @@
+import { addCockpit } from './cockpit.js';
 // Compact stealth airframe in the jet's collision envelope: +z nose, +x left wing.
 // Static pieces are merged by paint role; moving parts share the Jet.syncMesh contract.
 import * as THREE from 'three';
@@ -43,9 +44,9 @@ export function buildStealthModel() {
     g.rotateX(Math.PI / 2).translate(0, thickness / 2, 0);
     return add(parent, g, material);
   };
-  hull(root, body, [[6.6,.035,-.02,.025],[4.3,.66,-.30,.34],[1.8,1.35,-.55,.55],[-1.7,1.70,-.52,.60],[-4.7,1.56,-.34,.36],[-5.4,1.38,-.23,.22]]);
+  const cockpitHull = hull(root, body, [[6.6,.035,-.02,.025],[4.3,.66,-.30,.34],[1.8,1.35,-.55,.55],[-1.7,1.70,-.52,.60],[-4.7,1.56,-.34,.36],[-5.4,1.38,-.23,.22]]);
   // Gold smoked, faceted canopy and its raised rim.
-  hull(root, trim, [[4.05,.16,0,.04],[2.85,.55,0,.57],[1.25,.50,0,.44],[.7,.16,0,.04]]).position.y = .34;
+  const cockpitRim = hull(root, trim, [[4.05,.16,0,.04],[2.85,.55,0,.57],[1.25,.50,0,.44],[.7,.16,0,.04]]); cockpitRim.position.y = .34;
   const canopy = hull(root, glass, [[3.95,.12,.035,.06],[2.85,.49,.05,.61],[1.30,.44,.05,.48],[.82,.12,.035,.06]]);
   canopy.position.y = .34;
   const elevator = pivot(0, .05, -4.35), rudder = pivot();
@@ -109,7 +110,7 @@ export function buildStealthModel() {
   for (const group of groups) {
     if (wheels.some(w => w.spin === group)) continue;
     const batches = new Map();
-    for (const m of [...group.children]) if (m.isMesh && m !== canopy && m !== flame) {
+    for (const m of [...group.children]) if (m.isMesh && m !== canopy && m !== flame && m !== cockpitHull && m !== cockpitRim) {
       m.updateMatrix();
       const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(m.matrix);
       g.deleteAttribute('uv');
@@ -136,5 +137,6 @@ export function buildStealthModel() {
       wheels.forEach((w,i) => { w.spin.rotation.x = vehicle.wheels[i].spin; });
     },
   };
+  addCockpit(root, { style: 'stealth', eye: [.84, 2.3], width: .48, depth: .8, blockers: [cockpitHull, cockpitRim] });
   return root;
 }
