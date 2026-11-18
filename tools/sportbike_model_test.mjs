@@ -54,5 +54,7 @@ Bike.prototype.syncMesh.call(pose,1/60);
 assert.equal(u.bars.rotation.y,-.225);assert.equal(u.lean.rotation.z,.3);
 u.wheels.forEach(w=>assert.equal(w.spin.rotation.x,1.4));
 console.log(JSON.stringify({type:'sport',before,near,far,ratio:near.triangles/before}));
-const dirt=buildBikeModel();console.log(JSON.stringify({type:'dirt (unchanged)',near:stats(dirt,3),far:stats(dirt,200)}));
+const dirt=buildBikeModel(),dirtBefore=1606,dirtNear=stats(dirt,3);
+assert.equal(dirtNear.triangles,dirtBefore,'dirt geometry remains unchanged');
+console.log(JSON.stringify({type:'dirt (unchanged)',before:dirtBefore,near:dirtNear,far:stats(dirt,200),ratio:dirtNear.triangles/dirtBefore}));
 console.log('PASS sport model contract, named anchors, paint, animation and triangle budget');

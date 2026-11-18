@@ -142,7 +142,8 @@ export function buildSportBikeModel() {
       [.34,tyreWidth*.24],[.34*.84,tyreWidth/2],[.235,tyreWidth/2]];
     w.spin.children[0].geometry.dispose();
     w.spin.children[0].geometry=new THREE.LatheGeometry(profile.map(p=>new THREE.Vector2(...p)),16).rotateZ(Math.PI/2);
-    mesh(casting,new THREE.TorusGeometry(.225,.018,4,16).rotateY(Math.PI/2),rim);
+    for(const s of [-1,1])mesh(casting,new THREE.TorusGeometry(.225,.012,4,16).rotateY(Math.PI/2),rim,s*(tyreWidth/2-.012),0,0);
+    mesh(casting,new THREE.CylinderGeometry(.221,.221,tyreWidth-.024,16,1,true).rotateZ(Math.PI/2),rim);
     mesh(casting,new THREE.CylinderGeometry(.05,.05,width*2,8).rotateZ(Math.PI/2),rim);
     for(let i=0;i<5;i++) {
       const a=i*Math.PI*2/5;
@@ -173,15 +174,15 @@ export function buildSportBikeModel() {
     const ball = (m, r, x, y, z) => mesh(group, new THREE.IcosahedronGeometry(r, detail ? 1 : 0), m, ...R(x, y, z));
     const limb = (m, a, b, r) => rod(group, m, R(...a), R(...b), r, 7);
     // Low racing tuck: chest flat on the tank behind the screen, hips on the seat, back sloping up to the shoulders.
-    hull(group, jacket, H([[.12,.19,.60,.80,.20],[-.12,.18,.56,.78,.18],[-.34,.16,.50,.70,.16],[-.52,.14,.43,.60,.15]]));
+    shell(group, jacket, H([[.12,.19,.60,.80,.13],[-.12,.18,.56,.78,.12],[-.34,.16,.50,.70,.11],[-.52,.14,.43,.60,.10]]));
     box(group, black, .30, .13, .22, ...R(0, .46, -.46));
     for (const s of [-1, 1]) {
       // legs stay outside the tank and fairing: thighs hug the tank sides, knees against it, boots on the pegs
       ball(black, .085, s * .13, .47, -.46);
-      limb(black, [s * .13, .47, -.46], [s * .22, .50, -.30], .08);
-      limb(black, [s * .22, .50, -.30], [s * .32, .50, .00], .077);
-      ball(black, .08, s * .32, .50, .00);
-      limb(black, [s * .32, .50, .00], [s * .37, -.01, -.31], .062);
+      limb(black, [s * .13, .47, -.46], [s * .27, .39, -.27], .08);
+      limb(black, [s * .27, .39, -.27], [s * .36, .25, .04], .077);
+      ball(black, .08, s * .36, .25, .04);
+      limb(black, [s * .36, .25, .04], [s * .37, -.01, -.31], .062);
       box(group, black, .11, .09, .27, ...R(s * .38, -.065, -.19));          // boot, ball of the foot on the peg
       // shoulder, upper arm down and out, forearm forward to the glove on the grip
       ball(jacket, .09, s * .20, .72, .03);
@@ -190,7 +191,7 @@ export function buildSportBikeModel() {
       limb(jacket, [s * .35, .58, .27], [s * .37, .55, .47], .056);
       box(group, gloves, .10, .085, .13, ...R(s * .37, .545, .49));
       if (detail) {
-        box(group, trim, .025, .08, .13, ...R(s * .405, .50, .01)); // knee slider
+        box(group, trim, .025, .08, .13, ...R(s * .435, .25, .04)); // knee slider
         ball(black,.065,s*.255,.72,.04); // shoulder armour
         box(group,trim,.018,.045,.18,...R(s*.071,.66,-.22),-.18); // suit seam
         box(group,trim,.114,.025,.09,...R(s*.38,-.015,-.16)); // boot reinforcement
@@ -204,8 +205,11 @@ export function buildSportBikeModel() {
     hull(group, glass, H([[.388,.09,.76,.84,.105],[.335,.15,.74,.86,.15],[.27,.16,.75,.86,.16]]));
     box(group, helmet, .20, .075, .12, ...R(0, .715, .315), .16);
     if (detail) {
-      box(group, trim, .07, .025, .18, ...R(0, .966, .16), .08);
-      for(const s of [-1,1])box(group,black,.035,.018,.055,...R(s*.07,.916,.29),-.3);
+      // Visor pivots sit on the shell; a flat crown stripe would float above its facets.
+      for(const s of [-1,1]) {
+        mesh(group,new THREE.CylinderGeometry(.018,.018,.012,6).rotateZ(Math.PI/2),trim,...R(s*.172,.805,.22));
+        box(group,black,.035,.018,.055,...R(s*.07,.916,.29),-.3);
+      }
       shell(group,black,H([[-.05,.10,.77,.83,.06],[-.30,.09,.71,.77,.05]])); // aero hump
     }
     group.rotation.x = -.12;
