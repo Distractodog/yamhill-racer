@@ -312,6 +312,12 @@ function restore(model) {
   for (const [glow, part] of state.glows) glow.position.copy(part.rest);
   state.sites = []; state.version++;
 }
+// Garage models own their buffers and pivot transforms; share only the body-local field.
+// Call on opening/changing the preview, never from its render loop.
+export function applyCarDamageSites(model, sites = []) {
+  if (sites.length) deformModel(model, sites);
+  else restore(model);
+}
 // A Garage livery rebuild or lazily attached lamp lens must inherit the current field.
 // Called only by those attachment changes, never by ordinary paint/wetness or light updates.
 export function refreshCarDamageAttachments(model) {

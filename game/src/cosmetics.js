@@ -1,4 +1,4 @@
-import { refreshCarDamageAttachments } from './cardamage.js';
+import { refreshCarDamageAttachments, applyCarDamageSites } from './cardamage.js';
 import { splitPanelGeometry } from './models/panelskin.js';
 import * as THREE from 'three';
 import { buildCarModel } from './carmodel.js';
@@ -162,7 +162,7 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
   const configs = {}, custom = {}, bindings = {}, wear = {}, listeners = new Set(); let accumulator = 0, forcedWet = 0;
   // one binding per model, made once: type models are kept and reused (vehicletypes.js typeModel), and binding a model
   // twice would add its livery / scuff / hub pieces twice
-  const bound = new WeakMap(), previews = new Map();
+  const bound = new WeakMap(), previews = new Map(), previewDamage = new WeakMap();
   const bindingFor = (model, kind) => { let b = bound.get(model); if (!b) bound.set(model, b = bindModel(model, kind)); return b; };
   // what a kind is painted with now: the player's config, with the current type's factory colours where they picked none
   const effective = kind => withTypeColors(configs[kind], kind, vehicles.getType?.(kind), custom[kind]);
@@ -200,7 +200,12 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
       if (!configs[kind]) return;
       configs[kind] = sanitizeCosmetics(DEFAULT_COSMETICS[kind], kind, isUnlocked); custom[kind].clear(); persist(); api.wash(kind);
     },
-    wash(kind) { if (!wear[kind]) return; wear[kind] = { dirt: 0, scuff: 0, wet: 0 }; applyBinding(bindings[kind], effective(kind), wear[kind]); notify(kind); },
+    wash(kind) {
+      if (kind === 'car') vehicles.all.car?.damage?.repair();
+      if (!wear[kind]) return;
+      wear[kind] = { dirt: 0, scuff: 0, wet: 0 };
+      applyBinding(bindings[kind], effective(kind), wear[kind]); notify(kind);
+    },
     setWetness(value) { forcedWet = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     refreshUnlocks() { notify(vehicles.current.kind); },
@@ -209,7 +214,13 @@ export function createCosmetics(vehicles, { isUnlocked = () => false, storage = 
       const type = vehicles.getType?.(kind) || null, key = `${kind}/${type}`;
       let model = previews.get(key);
       if (!model) { model = type ? buildVehicleTypeModel(kind, type) : BUILDERS[kind](); previews.set(key, model); }
-      applyBinding(bindingFor(model, kind), effective(kind), wear[kind]); return model;
+      applyBinding(bindingFor(model, kind), effective(kind), wear[kind]);
+      const car = kind === 'car' ? vehicles.all.car : null, damage = car?.damage;
+      if (damage && previewDamage.get(model) !== damage.revision) {
+        applyCarDamageSites(model, car.type === type ? damage.sites : []);
+        previewDamage.set(model, damage.revision);
+      }
+      return model;
     },
     // paint a model that isn't driven yet (warmup.js), so its livery pieces exist when its shaders are compiled
     prepare(kind, model) { if (wear[kind]) applyBinding(bindingFor(model, kind), effective(kind), wear[kind]); },

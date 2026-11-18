@@ -107,7 +107,7 @@ for (const { id } of VEHICLE_TYPES.car) {
       if (seen.has(key)) assert.deepEqual(value, seen.get(key), `${id}: shared position LOD consistency`); else seen.set(key, value);
     }
   }
-  // Paint still targets live colours after a geometry clone; previews never inherit the field.
+  // Paint still targets live colours after a geometry clone; preview buffers stay independent.
   for (const [mesh, attr] of colours) assert.equal(mesh.geometry.attributes.color, attr, 'existing paint binding survives damage');
   cosmetics.set('car', { body: '#123456', trim: '#fedcba' });
   const garage = cosmetics.createPreview('car');
@@ -419,3 +419,67 @@ if (process.argv.includes('--real')) {
   }
   console.log(`PASS distractodog browser rehearsal: ${cases} actual campus impacts at ${site.x.toFixed(2)}, ${site.z.toFixed(2)}; ${site.len.toFixed(1)}m wall`);
 }
+
+// Garage owns a separate, cached model: opening/reopening shares the current type's
+// body-local sites, and a clean Wash & repair restores both without a wear prerequisite.
+for (const { id } of VEHICLE_TYPES.car) {
+  const c = car(id), vehicles = { all: { car: c }, current: c, getType: () => c.type };
+  const cosmetics = createCosmetics(vehicles, { storage: null });
+  const preview = cosmetics.createPreview('car'), clean = snapshot(preview);
+  building(c, 45); c.damage.update();
+  assert.equal(cosmetics.createPreview('car'), preview);
+  assert(change(clean).max > .01, `${id}: Garage displays current sites`);
+  const dented = snapshot(preview), version = carDamageCacheInfo(preview);
+  const uploads = dented.map(({ mesh }) => mesh.geometry.attributes.position.version);
+  cosmetics.createPreview('car'); unchanged(dented);
+  assert.deepEqual(dented.map(({ mesh }) => mesh.geometry.attributes.position.version), uploads, 'unchanged refresh does no deformation/upload');
+  assert.deepEqual(carDamageCacheInfo(preview), version, 'unchanged refresh reuses bindings');
+  cosmetics.set('car', { livery: 'stripes' });
+  assert(change(clean).max > .01, 'paint edits retain dents');
+  cosmetics.set('car', { livery: 'classic' });
+  assert.deepEqual(cosmetics.getWear('car'), { dirt: 0, scuff: 0, wet: 0 });
+  cosmetics.wash('car');
+  assert.equal(c.damage.sites.length, 0, `${id}: clean wash repairs active car`);
+  cosmetics.createPreview('car'); unchanged(clean);
+  building(c, 45); c.damage.update(); cosmetics.createPreview('car');
+  applyVehicleType(c, id === 'hatch' ? 'race' : 'hatch'); cosmetics.createPreview('car');
+  applyVehicleType(c, id); assert.equal(cosmetics.createPreview('car'), preview); unchanged(clean);
+}
+console.log('PASS Garage damage: all five cached previews, repaint, clean wash/repair and type changes');
+
+// Independently exercise each direction, including threshold roof slams in a real
+// inverted physics pose. Both LODs must move, wheels stay byte-identical, response matches.
+for (const { id } of VEHICLE_TYPES.car) for (const direction of ['front', 'rear', 'left', 'right', 'roof', 'underside']) {
+  const a = car(id), b = car(id); b.recordImpact = undefined;
+  const clean = snapshot(a.mesh), wheels = a.mesh.userData.wheels.flatMap(w => snapshot(w.holder));
+  const run = c => {
+    if (direction === 'roof' || direction === 'underside') {
+      c.pos.set(0, -.3, 0); c.vel.set(0, -CAR_DAMAGE.bodySlamThreshold, 0);
+      if (direction === 'roof') c.quat.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
+      c.collideGround();
+    } else building(c, 45, { front: 0, rear: Math.PI, left: Math.PI / 2, right: -Math.PI / 2 }[direction]);
+  };
+  run(a); run(b); assert.deepEqual(physics(a), physics(b), `${id}/${direction}: exact response`);
+  assert(a.damage.sites.length, `${id}/${direction}: contact recorded`);
+  a.damage.update(); unchanged(wheels);
+  const pivot = a.mesh.userData.bodyPivot, lod = pivot.children.find(o => o.isLOD);
+  for (const { object } of lod.levels) {
+    const parts = clean.filter(({ mesh }) => { let o = mesh; while (o && o !== object) o = o.parent; return !!o; });
+    assert(change(parts).max > .001, `${id}/${direction}: visible near/far dent`);
+    if (direction === 'roof') {
+      // Top central vertices exclude bumper/underbody changes from proving roof coverage.
+      let maxY = -Infinity, moved = false;
+      for (const { mesh, p } of parts) for (let i = 0; i < p.length; i += 3) {
+        const q = new THREE.Vector3().fromArray(p, i).applyMatrix4(mesh.matrixWorld);
+        maxY = Math.max(maxY, q.y);
+      }
+      for (const { mesh, p } of parts) for (let i = 0; i < p.length; i += 3) {
+        const rest = new THREE.Vector3().fromArray(p, i).applyMatrix4(mesh.matrixWorld);
+        if (rest.y > maxY - .4 && Math.abs(rest.z) < 1.4 &&
+          mesh.geometry.attributes.position.array.slice(i, i + 3).some((v, k) => Math.abs(v - p[i + k]) > .001)) moved = true;
+      }
+      assert(moved, `${id}: top roof/roll structure dents`);
+    }
+  }
+}
+console.log('PASS whole-body coverage: every type front/rear/left/right/roof/underside, both LODs, protected wheels, exact physics');

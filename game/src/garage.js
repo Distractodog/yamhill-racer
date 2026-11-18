@@ -122,7 +122,7 @@ export function createGarage({ cosmetics, vehicles, gliderColors = null, onOpen 
   }));
   dialog.querySelector('.glider-solid').addEventListener('click', () => gliderMessage(gliderColors.solid(kind)));
   dialog.querySelector('.glider-reset').addEventListener('click', () => gliderMessage(gliderColors.reset(kind)));
-  dialog.querySelector('.garage-wash').addEventListener('click',()=>{cosmetics.wash(kind);message('Washed, dried and polished.');});
+  dialog.querySelector('.garage-wash').addEventListener('click',()=>{cosmetics.wash(kind);message('Washed, repaired and polished.');});
   dialog.querySelector('.garage-reset').addEventListener('click',()=>{cosmetics.reset(kind);message('Factory colors restored. Saved looks are still available.');});
   dialog.querySelectorAll('[data-save]').forEach(b=>b.addEventListener('click',()=>{const slot=+b.dataset.save;if(!Array.isArray(presets[kind]))presets[kind]=[];presets[kind][slot]=cosmetics.get(kind);try{localStorage.setItem(PRESET_KEY,JSON.stringify(presets));message(`Look ${slot+1} saved for your ${NAMES[kind].toLowerCase()}.`);}catch{message('Browser storage is unavailable; this look lasts until you reload.');}refresh();}));
   dialog.querySelectorAll('[data-load]').forEach(b=>b.addEventListener('click',()=>{const p=presets[kind]?.[+b.dataset.load];if(p){cosmetics.set(kind,sanitizeCosmetics(p,kind,cosmetics.isUnlocked));message(`Look ${+b.dataset.load+1} loaded.`);}}));
