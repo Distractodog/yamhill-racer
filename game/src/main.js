@@ -1,4 +1,5 @@
 import { createCockpitView } from './models/cockpit.js';
+import { ensureGroundInterior } from './models/interiors.js';
 import { createWind } from './wind.js';
 import { createWindView } from './windview.js';
 import * as THREE from 'three';
@@ -378,6 +379,14 @@ function updateJetCamera(dt) {
 function updateCamera(dt) {
   if (vehicles.current.cam?.jet || (camMode === 2 && vehicles.current.mesh?.userData.cockpit)) { updateJetCamera(dt); return; }
   jFollowing = false;
+  if (camMode === 2 && vehicles.current.mesh?.userData.interior) {
+    camCeiling = Infinity;
+    vehicles.current.mesh.userData.interior.camera(camera);
+    camYaw = null; camY = null;
+    const fov = vehicles.current.kind === 'bike' ? 76 : 66;
+    camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
+    return;
+  }
   const vc = vehicles.current.cam || {};
   fw.set(0, 0, 1).applyQuaternion(car.renderQuat);
   const sp = car.vel.length();
@@ -512,6 +521,7 @@ function frame(now) {
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
   audio.update(car, input, dt, atmosphere);
+  if (camMode === 2 && !builder.open) ensureGroundInterior(vehicles.current.mesh, vehicles.current.kind, vehicles.current.type);
   cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open, vehicles.current);
   if (builder.open) builder.update(dt); else updateCamera(dt);
   world.tick?.(now / 1000);

@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Ground vehicle interiors</title>
+<style>body{margin:0;background:#172530;color:#fff;font:14px system-ui}header{padding:14px}#views{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:10px}section{position:relative;aspect-ratio:16/9}canvas{width:100%;height:100%;display:block}label{position:absolute;top:8px;left:12px;text-shadow:0 1px 3px #000}button{margin-left:20px}</style>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+<header>Ground interiors — driver eye, body pitch / bike lean <button id="toggle">Show exteriors</button></header><div id="views"></div>
+<script type="module">
+import * as THREE from 'three';
+import { VEHICLE_TYPES, buildVehicleTypeModel } from '../game/src/vehicletypes.js';
+import { ensureGroundInterior } from '../game/src/models/interiors.js';
+import { createCockpitView } from '../game/src/models/cockpit.js';
+const views=[],params=new URLSearchParams(location.search);
+for(const kind of ['car','bike'])for(const {id,name} of VEHICLE_TYPES[kind]){
+  const section=document.createElement('section'),label=document.createElement('label');label.textContent=name;section.append(label);document.querySelector('#views').append(section);
+  const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(800,450);section.append(renderer.domElement);
+  const scene=new THREE.Scene();scene.background=new THREE.Color('#9ac5df');scene.add(new THREE.HemisphereLight(0xeaf5ff,0x78705f,2));
+  const sun=new THREE.DirectionalLight(0xfff0d8,2.5);sun.position.set(-30,70,50);scene.add(sun);
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(500,500),new THREE.MeshLambertMaterial({color:'#708957'}));ground.rotation.x=-Math.PI/2;ground.position.y=-.65;scene.add(ground);
+  const road=new THREE.Mesh(new THREE.PlaneGeometry(10,500),new THREE.MeshLambertMaterial({color:'#63686b'}));road.rotation.x=-Math.PI/2;road.position.y=-.64;scene.add(road);
+  for(let z=4;z<150;z+=7){const stripe=new THREE.Mesh(new THREE.BoxGeometry(.10,.01,3),new THREE.MeshBasicMaterial({color:'#eac35d'}));stripe.position.set(-2,-.63,z);scene.add(stripe);}
+  const model=buildVehicleTypeModel(kind,id);scene.add(model);
+  if(kind==='bike'){model.userData.rider.rotation.x=.12;model.userData.lean.rotation.z=Number(params.get('lean')||0);}
+  else model.userData.bodyPivot.rotation.x=Number(params.get('pitch')||0);
+  const interior=ensureGroundInterior(model,kind,id),camera=new THREE.PerspectiveCamera(kind==='bike'?76:66,16/9,.3,1000),view=createCockpitView(camera);
+  views.push({renderer,scene,model,interior,camera,view,state:{vel:new THREE.Vector3(0,0,30),steer:Number(params.get('steer')||0),t:{topSpeed:300}}});
+}
+let first=!params.has('exterior');
+function draw(){for(const v of views){v.view(v.model,first,v.state);v.model.updateMatrixWorld(true);if(first)v.interior.camera(v.camera);else{v.camera.up.set(0,1,0);v.camera.position.set(4,3,5);v.camera.lookAt(0,0,0);}v.renderer.render(v.scene,v.camera);console.log(v.model.name,v.renderer.info.render.calls,'draws');}}
+document.querySelector('#toggle').onclick=()=>{first=!first;draw();};draw();
+</script></html>

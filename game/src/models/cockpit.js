@@ -188,7 +188,7 @@ export function createCockpitView(camera) {
   const near = camera.near;
   let current = null;
   return (model, enabled, vehicle) => {
-    const next = enabled ? model?.userData.cockpit : null;
+    const next = enabled ? model?.userData.cockpit ?? model?.userData.interior : null;
     if (next !== current) {
       current?.setVisible(false); next?.setVisible(true); current = next;
       camera.near = next ? .06 : near; camera.updateProjectionMatrix();
