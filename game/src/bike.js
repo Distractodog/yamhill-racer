@@ -16,6 +16,7 @@
 //   * Air: W / S (or Shift) lean forward / back (keys held from the take-off don't count), A / D turn the bike in the
 //     air (scrub); hands off it slowly lines up with its flight path. Landing far off line is a bail.
 import * as THREE from 'three';
+import { buildDirtBikeModel } from './models/dirtbike.js';
 import { wetGrip, wetBraking } from './wetgrip.js';
 import { beginTerrainStep, endTerrainStep, terrainWheel, terrainGrip, terrainHold, terrainSlide, terrainLift } from './steepterrain.js';
 import { Vehicle } from './vehicle.js';
@@ -477,65 +478,5 @@ function tyreProfile(w) {
 // low-poly motocross bike + rider. Origin = centre of mass (~0.56 m above the ground at rest); the lean group pivots
 // on the ground line so the bike tips over its tyres.
 export function buildBikeModel() {
-  const root = new THREE.Group(); root.name = 'bike';
-  const lean = new THREE.Group(); lean.position.y = -0.54; root.add(lean);
-  const body = new THREE.Group(); body.position.y = 0.54; lean.add(body);
-  const M = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
-  const orange = M(0xff7a1a), black = M(0x1d1f24), grey = M(0x8a9099), white = M(0xf2f2ee), blue = M(0x2a5bd7), skin = M(0xd9a27a);
-  const helmetMat = M(0xff7a1a), jacketMat = M(0xf2f2ee), gloveMat = M(0x1d1f24), wheelMat = M(0x8a9099);
-  for (const [role, material] of Object.entries({ body: orange, trim: white, helmet: helmetMat, jacket: jacketMat, gloves: gloveMat, wheels: wheelMat })) material.userData.cosmeticRole = role;
-  const box = (w, h, d, mat, x, y, z, rx = 0, parent = body) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.rotation.x = rx;
-    m.castShadow = true; parent.add(m); return m;
-  };
-  // frame, tank, seat, side panels, fenders, engine, exhaust
-  box(0.12, 0.1, 0.9, grey, 0, 0.05, -0.05, 0.25);
-  box(0.36, 0.22, 0.5, orange, 0, 0.3, 0.22, -0.12);            // tank / shrouds
-  box(0.28, 0.08, 0.75, black, 0, 0.36, -0.28, 0.05);           // seat
-  box(0.34, 0.2, 0.36, white, 0, 0.2, -0.45, 0.2);              // side panel with number plate
-  box(0.18, 0.04, 0.55, orange, 0, 0.42, -0.72, -0.35);         // rear fender
-  box(0.16, 0.04, 0.42, orange, 0, 0.14, 0.86, 0.25);           // front fender
-  box(0.26, 0.26, 0.3, grey, 0, -0.08, 0.05);                   // engine
-  box(0.08, 0.08, 0.6, grey, -0.16, 0.12, -0.4, -0.25);         // exhaust
-  // front fork + bars (steer with the bars group)
-  const bars = new THREE.Group(); bars.position.set(0, 0.42, 0.5); bars.rotation.x = -0.45; body.add(bars);
-  box(0.05, 0.75, 0.05, grey, 0.09, -0.32, 0, 0, bars); box(0.05, 0.75, 0.05, grey, -0.09, -0.32, 0, 0, bars);
-  box(0.72, 0.04, 0.04, black, 0, 0.08, 0, 0, bars);
-  box(0.22, 0.16, 0.04, white, 0, -0.02, 0.06, 0, bars);        // number board
-  const lamp = M(0xfff0d1), tailLamp = M(0xc52337);
-  box(0.11, 0.06, 0.02, lamp, 0, 0, 0.09, 0, bars);              // headlight in the number board
-  box(0.08, 0.03, 0.03, tailLamp, 0, 0.328, -0.985);            // tail light on the rear fender's end (not under it: wheelArch)
-  // wheels
-  const wheels = [];
-  for (const [z, front] of [[0.72, true], [-0.73, false]]) {
-    const holder = new THREE.Group(); holder.position.set(0, -0.2, z); body.add(holder);
-    const spin = new THREE.Group(); holder.add(spin);
-    const tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, front ? 0.11 : 0.14, 12).rotateZ(Math.PI / 2), black);
-    tyre.castShadow = true; spin.add(tyre);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.16, 8).rotateZ(Math.PI / 2), wheelMat); spin.add(hub);
-    for (let k = 0; k < 4; k++) { const s = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.5, 0.02), wheelMat); s.rotation.x = k * Math.PI / 4; spin.add(s); }
-    wheels.push({ holder, spin, r: 0.34, front, restY: -0.2 });
-  }
-  // rider: legs, torso, arms, helmet
-  const rider = new THREE.Group(); rider.position.set(0, 0.42, -0.2); body.add(rider);
-  for (const s of [1, -1]) {
-    box(0.13, 0.42, 0.14, jacketMat, s * 0.17, -0.05, 0.12, 0.9, rider);     // thigh
-    box(0.12, 0.42, 0.12, black, s * 0.2, -0.3, 0.3, -0.2, rider);       // shin + boot
-    box(0.1, 0.4, 0.1, jacketMat, s * 0.24, 0.42, 0.33, -1.0, rider);        // arm
-    box(0.09, 0.09, 0.09, gloveMat, s * 0.3, 0.3, 0.6, 0, rider);           // glove
-  }
-  box(0.4, 0.55, 0.26, jacketMat, 0, 0.42, 0.05, 0.35, rider);              // jersey
-  box(0.3, 0.12, 0.2, orange, 0, 0.55, 0.12, 0.35, rider);              // stripe
-  const helmet = new THREE.Mesh(new THREE.IcosahedronGeometry(0.17, 1), helmetMat); helmet.position.set(0, 0.82, 0.24);
-  helmet.castShadow = true; rider.add(helmet);
-  box(0.22, 0.08, 0.14, black, 0, 0.8, 0.38, 0, rider);                 // goggles
-  box(0.12, 0.06, 0.16, helmetMat, 0, 0.7, 0.42, 0.4, rider);              // chin guard
-  // lit lenses (lights.js) on the two lamps' faces; the headlight's turns with the bars, the beam leaves from its rest place
-  root.userData = { lean, bars, wheels, rider, blob: [0.9, 2.0], lightMount: body, lights: {
-    head: [new THREE.Vector3(0, 0, .10)], tail: [new THREE.Vector3(0, .328, -1)], mounts: { head: bars },
-    lens: { head: [[[-.055, -.03, .10], [.055, -.03, .10], [.055, .03, .10], [-.055, .03, .10]]],
-      tail: [[[-.04, .313, -1], [.04, .313, -1], [.04, .343, -1], [-.04, .343, -1]]] },
-    beam: [new THREE.Vector3(0, .42 + .1 * Math.sin(.45), .5 + .1 * Math.cos(.45))],
-  } };
-  return root;
+  return buildDirtBikeModel();
 }
