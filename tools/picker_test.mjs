@@ -90,3 +90,5 @@ for (const [kind, types] of Object.entries(VEHICLE_TYPES)) for (const { id } of 
   assert(seen.size ? [...seen].every(h => h === want) : verts.length, `${kind}/${id}: thumbnail model painted (${[...seen]} want ${want})`);
 }
 console.log('PASS picker: stat bars 1–5 per type, choose vehicle + type (ground, in flight, helicopter slot, refused, respawn hold), thumbnail paint');
+
+assert(st('jet', 'airliner').top < st('jet', 'fighter').top && st('jet', 'airliner').handling < st('jet', 'fighter').handling, 'jumbo is slower and steadier');

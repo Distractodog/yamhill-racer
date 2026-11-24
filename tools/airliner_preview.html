@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Jumbo jet review</title>
+<style>
+body { margin:0; background:#172530; color:#eef3f6; font:14px system-ui; }
+header { padding:16px 20px; } h1 { font-size:22px; margin:0 0 6px; }
+#views { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:12px; }
+section { position:relative; aspect-ratio:16/10; } canvas { width:100%;height:100%;display:block; }
+label { position:absolute;top:12px;left:14px;text-shadow:0 1px 4px #000; }
+</style>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+<header><h1>Jumbo jet</h1>Four turbofans · upper deck · swept wings · bogie gear · two-pilot flight deck</header><div id="views"></div>
+<script type="module">
+import * as THREE from 'three';
+import { buildAirlinerModel } from '../game/src/models/airliner.js';
+import { createCockpitView } from '../game/src/models/cockpit.js';
+import { createVehicleLightLenses } from '../game/src/lights.js';
+for (const [name, position, gear, cockpit] of [
+  ['Chase · scaled game camera · gear retracted', [0,12.88,-44.3], 0, false],
+  ['Front quarter · landing gear', [34,18,43], 1, false],
+  ['Planform · swept low wings', [0,65,1.7], 0, false],
+  ['Flight deck · yokes, overhead, analogue + screens', null, 0, true],
+]) {
+  const section = document.createElement('section'), label = document.createElement('label');
+  label.textContent = name; section.append(label); document.querySelector('#views').append(section);
+  const renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(1000,625,false); section.append(renderer.domElement);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color('#9dc3da');
+  scene.add(new THREE.HemisphereLight('#eaf5ff','#78705f',2.2));
+  const sun = new THREE.DirectionalLight('#fff0d8',2.5); sun.position.set(-30,70,50); scene.add(sun);
+  const fill = new THREE.DirectionalLight('#b2d6ff',1.2); fill.position.set(20,10,-30);scene.add(fill);
+  const model = buildAirlinerModel(); scene.add(model); model.userData.setGear(gear);
+  const lenses = createVehicleLightLenses(model,'jet'); lenses.update({on:true,time:0});
+  const camera = new THREE.PerspectiveCamera(cockpit ? 70 : name.startsWith('Chase') ? 79.4 : 40,1.6,.06,20000);
+  if (cockpit) {
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(20000,20000),new THREE.MeshLambertMaterial({color:'#708957'}));
+    ground.rotation.x = -Math.PI/2; ground.position.y = -200; scene.add(ground);
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(25,18000),new THREE.MeshLambertMaterial({color:'#74777a'}));
+    road.rotation.x = -Math.PI/2; road.position.y = -199.95; scene.add(road);
+    const state = {renderQuat:new THREE.Quaternion(),renderPos:new THREE.Vector3(0,1200,0),vel:new THREE.Vector3(0,0,950/3.6),throttle:1};
+    createCockpitView(camera)(model,true,state);
+    camera.position.set(0,...model.userData.cockpit.eye); camera.lookAt(0,camera.position.y,camera.position.z+1);
+  } else { camera.position.set(...position);camera.lookAt(0,name.startsWith('Chase') ? 2 : 0,name.startsWith('Chase') ? 25 : 1.5); }
+  renderer.render(scene,camera);
+  console.log(name, renderer.info.render.triangles, 'triangles', renderer.info.render.calls, 'draws');
+}
+</script></html>

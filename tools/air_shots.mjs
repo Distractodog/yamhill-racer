@@ -19,9 +19,9 @@ import { GAME_URL, startGame, holdCar, watchErrors } from './lib/startgame.mjs';
 
 const args = process.argv.slice(2), arg = (k, d) => args.includes(k) ? args[args.indexOf(k) + 1] : d;
 const OUT = arg('--out', '/tmp/yr-air-shots');
-const TYPES = arg('--types', 'fighter,stealth,blackbird,prop,stunt,heli').split(',');
+const TYPES = arg('--types', 'fighter,stealth,blackbird,airliner,prop,stunt,heli').split(',');
 // approach speeds for the landing autopilot (a little above each type's stall)
-const APPROACH = { fighter: 330, stealth: 345, blackbird: 400, prop: 115, stunt: 165 };
+const APPROACH = { fighter: 330, stealth: 345, blackbird: 400, airliner: 270, prop: 115, stunt: 165 };
 // metres along the road from each start: take-off run + climb-out, and approach + roll-out from 30 m up (a Node run of
 // this autopilot on the real map stops the fighter / stealth ~3 km out, the prop / stunt planes ~1 km out)
 const RUN = 1500, LANDING = 3600, RAMP_CLEAR = 400;
@@ -150,7 +150,7 @@ try {
     await holdCar(page, { ...ROAD, kind: 'jet' });
     // ---- Garage preview
     const g = await chooseType(type);
-    check(g.chosen === type && g.type === type && ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'].every(t => g.options.includes(t)), `Garage: ${type} chosen (${g.options.join(', ')})`);
+    check(g.chosen === type && g.type === type && ['fighter', 'stealth', 'blackbird', 'airliner', 'prop', 'stunt', 'heli'].every(t => g.options.includes(t)), `Garage: ${type} chosen (${g.options.join(', ')})`);
     await shot(type, '01-garage', 'Garage preview');
     await page.evaluate(() => game.garage.close());
     // ---- on Hwy 18
@@ -256,7 +256,7 @@ try {
   await holdCar(page, { ...ROAD, kind: 'jet' }); await chooseType('fighter'); await page.evaluate(() => game.garage.close());
   for (const agl of [150, 4]) {
     let from = 'fighter';
-    for (const to of ['heli', 'prop', 'heli', 'stealth', 'blackbird', 'stunt', 'heli', 'fighter']) {
+    for (const to of ['heli', 'prop', 'heli', 'stealth', 'blackbird', 'airliner', 'stunt', 'heli', 'fighter']) {
       const r = await chooseType(to, { ...ROAD, agl, kmh: 300 });
       const moved = Math.hypot(...r.pos.map((p, i) => p - r.before[i]));
       check(r.type === to && r.mode === 'air' && moved < 1e-6, `swap ${from} → ${to} at ${agl} m: still flying where it was (${r.mode}, moved ${moved.toExponential(1)} m)`);
