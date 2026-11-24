@@ -18,6 +18,7 @@ export const ENGINES = {
   // Preserve the original 840–2550 audio-rpm mapping for both Corsa and BMW fallback.
   hatch: { loops: 'hatch', idle: 900, redline: 6500, gears: 5, spread: 4, gearTop: 210, shift: 0.22, dip: 0.35, clunk: 0.45, gain: 0.9, bright: 1,
     pitch: [[900, 840], [2600, 1470], [4400, 2040], [6000, 2550]] },
+  rally: { loops: 'hatch', idle: 1100, redline: 7600, gears: 6, spread: 3.8, gearTop: 260, shift: .08, dip: .4, clunk: .5, crackle: .7, turbo: .85, gain: 1.05, bright: 1.45, pitch: [[1100, 840], [3000, 1470], [5200, 2040], [7600, 2550]] },
   suv: { loops: 'suv', idle: 750, redline: 6200, gears: 6, spread: 4, gearTop: 230, shift: 0.18, dip: 0.55, clunk: 0.25, gain: 0.95, bright: 0.75 },
   truck: { loops: 'truck', idle: 650, redline: 3800, gears: 6, spread: 4.5, gearTop: 170, shift: 0.3, dip: 0.4, clunk: 0.6, turbo: 1, gain: 1.15, bright: 0.6 },
   dirt: { loops: 'dirt', idle: 1600, redline: 11000, gears: 5, spread: 3.3, gearTop: 160, shift: 0.07, dip: 0.4, clunk: 0.3, crackle: 0.15, gain: 0.85, bright: 1.4 },
@@ -30,6 +31,7 @@ export const ENGINES = {
   heli: { rotor: true },
 };
 const BY_KIND = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
+BY_KIND.car.push('rally');
 
 // which engine a vehicle (yours, or another player's puppet) has
 export function engineKey(v) {

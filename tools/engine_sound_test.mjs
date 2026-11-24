@@ -15,8 +15,8 @@ async function check(name, fn) {
   try { const note = await fn(); console.log(`ok   ${name}${note ? ` — ${note}` : ''}`); }
   catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }
 }
-const GROUND = ['race', 'sports', 'hatch', 'suv', 'truck', 'dirt', 'sport'];
-const TYPES = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
+const GROUND = ['race', 'sports', 'hatch', 'rally', 'suv', 'truck', 'dirt', 'sport'];
+const TYPES = { car: ['race', 'sports', 'hatch', 'rally', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
 
 // ---------------------------------------------------------------- fake Web Audio
 function fakeAudio() {
