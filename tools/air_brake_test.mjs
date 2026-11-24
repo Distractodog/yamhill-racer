@@ -27,7 +27,7 @@ function coast(type, brake, start, target) {
   const j = make(type); j.placeInAir(0, 5000, 0, 0, start); j.vel.set(0, 0, start / 3.6); j.throttle = 0;
   j.input.handbrake = brake;
   let reached = null;
-  for (let n = 0; n < 120 / dt; n++) {
+  for (let n = 0; n < (type === 'blackbird' ? 600 : 120) / dt; n++) {
     j.step(dt, j.input); sane(j);
     if (reached === null && j.vel.length() * 3.6 <= target) reached = (n + 1) * dt;
     if (brake && j.vel.length() > Math.sqrt(j.t.gravity / (j.t.liftK * (j.t.cl0 + j.t.clA * j.t.stallA))) * 1.35) assert(!j.stall, 'brakes do not cause an above-stall-speed stall');
@@ -48,11 +48,12 @@ function roll(type, spoilers) {
   assert(j.v < .05, 'stopped on runway');
   return j.pos.z;
 }
-for (const [type, top, target] of [['fighter', 1700, 600], ['stealth', 1700, 600], ['prop', 250, 100], ['stunt', 400, 150]]) {
+for (const [type, top, target] of [['fighter', 1700, 600], ['stealth', 1700, 600], ['blackbird', 3500, 600], ['prop', 250, 100], ['stunt', 400, 150]]) {
   const clean = coast(type, false, top, target), braked = coast(type, true, top, target);
   console.log(`${type}: ${top} → ${target} km/h clean ${clean.time.toFixed(2)} s, brakes ${braked.time.toFixed(2)} s`);
   assert(Number.isFinite(clean.time), 'idle coasting reaches the comparison speed');
-  assert(braked.time >= 6 && braked.time <= 8, 'proportional deceleration in 6–8 seconds');
+  if (type === 'blackbird') assert(braked.time >= 9 && braked.time <= 12, 'Mach-3 deceleration in 9–12 seconds');
+  else assert(braked.time >= 6 && braked.time <= 8, 'proportional deceleration in 6–8 seconds');
   assert(braked.time < clean.time * .5, 'brakes substantially faster than idle drag');
   // At the same attitude/speed, deployment adds a small nose-up tendency.
   const pitchClean = make(type), pitchBrake = make(type);

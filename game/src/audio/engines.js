@@ -24,11 +24,12 @@ export const ENGINES = {
   sport: { loops: 'sport', idle: 1300, redline: 14000, gears: 6, spread: 2.6, gearTop: 300, shift: 0.06, dip: 0.45, clunk: 0.25, crackle: 0.4, gain: 0.9, bright: 1.6 },
   fighter: { turbine: 1, whine: 1 },
   stealth: { turbine: 2, whine: 1.15 },                 // twin engines: two whines a little apart (a slow beat)
+  blackbird: { turbine: 2, whine: 1.15 },
   prop: { loops: 'prop', idle: 800, redline: 2450, blades: 2, piston: true, gain: 1, bright: 1 },
   stunt: { loops: 'stunt', idle: 850, redline: 2700, blades: 3, piston: true, gain: 1.1, bright: 1.3 },
   heli: { rotor: true },
 };
-const BY_KIND = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'prop', 'stunt', 'heli'] };
+const BY_KIND = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
 
 // which engine a vehicle (yours, or another player's puppet) has
 export function engineKey(v) {

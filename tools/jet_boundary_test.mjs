@@ -5,12 +5,13 @@ import { makeWorld } from '../game/src/data.js';
 import { Jet } from '../game/src/jet.js';
 const manifest = JSON.parse(fs.readFileSync('game/assets/world.json'));
 const W = makeWorld(manifest), T = manifest.tile;
+for (const kmh of [1733, 3500]) {
 const jet = new Jet(W);
 const keys = new Set(manifest.tiles.map(t => t.join(',')));
 let edges = 0, seams = 0;
 const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 function prepare(x, z, dx, dz) {
-  jet.pos.set(x, 1200, z); jet.vel.set(dx * 1733 / 3.6, 7, dz * 1733 / 3.6);
+  jet.pos.set(x, 1200, z); jet.vel.set(dx * kmh / 3.6, 7, dz * kmh / 3.6);
   jet.quat.identity(); jet._acc.set(1, 2, 3); jet.msg = '';
 }
 for (const [tx, tz] of manifest.tiles) for (const [dx, dz] of dirs) {
@@ -58,4 +59,5 @@ for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
     assert.equal(jet.msg, ''); assert.ok(W.mapContains(jet.pos.x, jet.pos.z, 8));
   }
 }
-console.log(`PASS: ${edges} exposed-edge flights at 1733 km/h, ${seams} unloaded shared seams, ${corners} diagonal corner flights, four off-map recoveries; speed/vertical velocity preserved, no repeated flips.`);
+console.log(`PASS: ${edges} exposed-edge flights at ${kmh} km/h, ${seams} unloaded shared seams, ${corners} diagonal corner flights, four off-map recoveries; speed/vertical velocity preserved, no repeated flips.`);
+}

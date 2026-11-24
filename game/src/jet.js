@@ -169,6 +169,15 @@ export class Jet extends Vehicle {
   }
 
   step(dt, input) {
+    // Fast airframes opt into shorter collision samples: at Mach 3 a 120 Hz step covers >8 m.
+    // Subdivide only their physics; the existing aircraft retain exactly their original steps.
+    if (this.air.maxStepDistance && this.mode !== 'crashed') {
+      const steps = Math.ceil(this.vel.length() * dt / this.air.maxStepDistance);
+      if (steps > 1) {
+        for (let i = 0; i < steps; i++) this.step(dt / steps, input);
+        return;
+      }
+    }
     const J = input.jet || { thr: 0, pitch: 0, roll: 0, yaw: 0 };
     this._prevVel.copy(this.vel);
     this.throttle = clamp(this.throttle + J.thr * this.t.throttleRate * dt, 0, 1);
@@ -246,7 +255,7 @@ export class Jet extends Vehicle {
     for (const wh of this.wheels) wh.spin += this.v * dt / 0.35;
     if (L > g * 1.02 && this.v > 0) { this.toAir(); this.vel.y = Math.max(this.vy, 1); return; }
     // obstacles: trunks along the fuselage, buildings
-    const hit = Math.max(this.collideTrees(A.treeR, A.treeZ, 0.2, 0.3), this.collideBuildings(2.6));
+    const hit = Math.max(this.collideTrees(A.treeR, A.treeZ, 0.2, 0.3), this.collideBuildings(A.buildingR ?? 2.6));
     if (hit > 9) { this.crash('impact'); return; }
     if (hit > 0) { this.v = Math.min(this.v, 2); }
     this.keepInBounds();
@@ -396,7 +405,7 @@ export class Jet extends Vehicle {
     }
     if (scrape) { this.pos.y += scrape; if (this.vel.y < 0) this.vel.y = 0; this.hit = Math.max(this.hit, 4); }
     if (this.agl < 45 && this.hitTree()) { this.crash('tree'); return; }
-    if (this.agl < 120 && this.collideBuildings(3.5) > 0) { this.crash('building'); return; }
+    if (this.agl < 120 && this.collideBuildings(A.buildingR ?? 3.5) > 0) { this.crash('building'); return; }
     this.keepInBounds(false);
   }
 

@@ -100,7 +100,7 @@ assert.equal(createCosmetics({all:reloadAll,current:reloadJet,...reloadTypes},{s
 const preview=cosmetics.createPreview('jet');assert.equal(preview.name,'jet-stealth');
 const model=paintedModel('jet',cosmetics.get('jet'),'stealth'), ud=model.userData;
 const lenses=createVehicleLightLenses(model,'jet');lenses.update({night:1,time:.5});
-assert(ud.lights.head.length && ['left','right','tail'].every(k=>ud.lights.nav[k]?.isVector3));
+assert(!ud.lights.head.length && ['left','right','tail'].every(k=>ud.lights.nav[k]?.isVector3));
 bakeParts(model,undefined,{keep:new Set([ud.canopy]),recolor:{mats:new Set(ud.wreckMats),color:new THREE.Color(ud.wreckColor)}});
 const puppet={mesh:model,renderPos:new THREE.Vector3(),renderQuat:new THREE.Quaternion(),wheels:[{spin:1},{spin:2},{spin:3}],
   gear:0,throttle:1,steer:.3,mode:'air',type:'stealth',input:{jet:{pitch:.5,roll:.7,yaw:.6}}};

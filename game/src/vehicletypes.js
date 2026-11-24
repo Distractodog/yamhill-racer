@@ -6,6 +6,7 @@ import { BIKE, buildBikeModel } from './bike.js';
 import { buildCarModel } from './carmodel.js';
 import { buildTypeCarModel, buildSportBikeModel } from './vehicletypemodels.js';
 import { JET, buildJetModel } from './jet.js';
+import { BLACKBIRD_AIRFRAME, buildBlackbirdModel } from './models/blackbird.js';
 import { buildStealthModel } from './models/stealth.js';
 import { PROP_AIRFRAME, buildPropPlaneModel } from './models/propplane.js';
 import { STUNT_AIRFRAME, buildStuntPlaneModel } from './models/stuntplane.js';
@@ -46,6 +47,11 @@ export const VEHICLE_TYPES = {
       // Terminal speed scales with sqrt(thrust / (liftK * cd0)); ~25% above the fighter.
       tuning: { thrust: 22.5, liftK: .00205, maxG: 10, minG: -3, rollRate: 3.4, yawRate: .65, rotateKmh: 250 },
       colors: { body: '#424a53', trim: '#727b83' } },
+    { id: 'blackbird', name: 'SR-71 Blackbird', description: 'Mach 3 spy plane. Fastest aircraft: long take-off, wide turns, lands fast.',
+      // Gear-up level terminal speed sqrt(thrust / (liftK * cd0)) ≈ 3,500 km/h.
+      tuning: { thrust: 10, liftK: .0013, cd0: .008135, maxG: 3.5, minG: -1,
+        rollRate: .85, yawRate: .18, rotateKmh: 360, landKmh: 580, landSink: 6 },
+      physics: BLACKBIRD_AIRFRAME, colors: { body: '#16181c', trim: '#2c3036' } },
     { id: 'prop', name: 'Prop plane', description: 'High-wing trainer, about 250 km/h. Slow stall, short take-off and landing: easy on roads and fields.',
       tuning: { gravity: 11, thrust: 4.6, throttleRate: .8, liftK: .01763, cl0: .3, clA: 4.5, stallA: .28, cd0: .04, cdK: .08,
         maxG: 4.5, minG: -2, rollRate: 1.4, yawRate: .5, rotateKmh: 60, brakes: 6, landSink: 9, landKmh: 230, landUp: .85 },
@@ -58,7 +64,7 @@ export const VEHICLE_TYPES = {
       tuning: {}, physics: { flight: 'heli' } },
   ],
 };
-const AIRCRAFT_MODELS = { stealth: buildStealthModel, prop: buildPropPlaneModel, stunt: buildStuntPlaneModel, heli: buildHeliModel };
+const AIRCRAFT_MODELS = { stealth: buildStealthModel, blackbird: buildBlackbirdModel, prop: buildPropPlaneModel, stunt: buildStuntPlaneModel, heli: buildHeliModel };
 export const typeInfo = (kind, id) => VEHICLE_TYPES[kind]?.find(t => t.id === id) || VEHICLE_TYPES[kind]?.[0];
 export function sanitizeVehicleTypes(value) {
   return Object.fromEntries(Object.keys(VEHICLE_TYPES).map(kind => [kind, typeInfo(kind, value?.[kind]).id]));

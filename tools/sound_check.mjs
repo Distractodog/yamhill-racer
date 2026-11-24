@@ -12,7 +12,7 @@ import puppeteer from 'puppeteer-core';
 const args = process.argv.slice(2), out = args.includes('--out') ? args[args.indexOf('--out') + 1] : '/tmp/yr-sound';
 const URL0 = process.env.YR_URL || 'http://127.0.0.1:8173/';
 fs.mkdirSync(out, { recursive: true });
-const TYPES = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'prop', 'stunt', 'heli'] };
+const TYPES = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: 'new', args: ['--window-size=1280,800', '--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal', '--autoplay-policy=no-user-gesture-required'] });

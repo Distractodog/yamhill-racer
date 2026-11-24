@@ -32,8 +32,8 @@ function scores(kind, id) {
     return { top: v, handling: 2 * HELI.yawRate * Math.sqrt(JET.maxG), rough: 1 / HELI.landKmh };
   }
   if (kind === 'jet') {
-    // flat-out speed where thrust meets the zero-lift drag (jet.js: a = thrust − liftK·v²·(cd0 + 0.012))
-    const v = Math.sqrt(t.thrust / (t.liftK * (t.cd0 + 0.012)));
+    // Flat-out flight: retractable gear is up; fixed gear retains its drag.
+    const v = Math.sqrt(t.thrust / (t.liftK * (t.cd0 + (p.fixedGear ? 0.012 : 0))));
     return { top: v, handling: t.rollRate * Math.sqrt(t.maxG), rough: 1 / t.rotateKmh };
   }
   const handling = t.cornerGrip * (p.grip?.[3] ?? 1) * mean([t.turnResponse / d.turnResponse, t.steerRate / d.steerRate]) *
