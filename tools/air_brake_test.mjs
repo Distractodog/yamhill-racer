@@ -48,11 +48,12 @@ function roll(type, spoilers) {
   assert(j.v < .05, 'stopped on runway');
   return j.pos.z;
 }
-for (const [type, top, target] of [['fighter', 1700, 600], ['stealth', 1700, 600], ['blackbird', 3500, 600], ['prop', 250, 100], ['stunt', 400, 150]]) {
+for (const [type, top, target] of [['fighter', 1700, 600], ['stealth', 1700, 600], ['blackbird', 3500, 600], ['airliner', 950, 400], ['prop', 250, 100], ['stunt', 400, 150]]) {
   const clean = coast(type, false, top, target), braked = coast(type, true, top, target);
   console.log(`${type}: ${top} → ${target} km/h clean ${clean.time.toFixed(2)} s, brakes ${braked.time.toFixed(2)} s`);
   assert(Number.isFinite(clean.time), 'idle coasting reaches the comparison speed');
   if (type === 'blackbird') assert(braked.time >= 9 && braked.time <= 12, 'Mach-3 deceleration in 9–12 seconds');
+  else if (type === 'airliner') assert(braked.time >= 5 && braked.time <= 7, 'jumbo air brakes shed cruise speed promptly');
   else assert(braked.time >= 6 && braked.time <= 8, 'proportional deceleration in 6–8 seconds');
   assert(braked.time < clean.time * .5, 'brakes substantially faster than idle drag');
   // At the same attitude/speed, deployment adds a small nose-up tendency.

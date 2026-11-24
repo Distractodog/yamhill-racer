@@ -4,7 +4,7 @@ import puppeteer from 'puppeteer-core';
 import { startGame, holdCar, watchErrors, openMenu, CAMPUS, RELAY_URL } from './lib/startgame.mjs';
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: 'new', args: ['--window-size=1280,800', '--enable-gpu', '--use-angle=metal'] });
-const rows = [], errors = [], types = ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'];
+const rows = [], errors = [], types = ['fighter', 'stealth', 'blackbird', 'airliner', 'prop', 'stunt', 'heli'];
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function fresh(type = 'fighter', name = 'Matrix') {
   const context = await browser.createBrowserContext(), page = await context.newPage();

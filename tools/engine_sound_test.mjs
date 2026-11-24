@@ -16,7 +16,7 @@ async function check(name, fn) {
   catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }
 }
 const GROUND = ['race', 'sports', 'hatch', 'suv', 'truck', 'dirt', 'sport'];
-const TYPES = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
+const TYPES = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'airliner', 'prop', 'stunt', 'heli'] };
 
 // ---------------------------------------------------------------- fake Web Audio
 function fakeAudio() {
@@ -293,6 +293,13 @@ await check('jets: whine rises with throttle, afterburner rumbles at full with o
     assert.equal(w.a.engine.part.whineOsc.length, 2, `${type}: twin`);
   }
   return `whine ${lo.whine.toFixed(0)} → ${full.whine.toFixed(0)} Hz, afterburner rumble ${full.ab.toFixed(2)}`;
+});
+await check('airliner: four low turbofan whines, no afterburner', async () => {
+  const v = air('airliner', { mode: 'air', throttle: 1 }), { a, ctx } = await voice(v);
+  for (let i = 0; i < 300; i++) { ctx.currentTime += 1 / 60; a.update(v, {}, 1 / 60); }
+  assert.equal(a.engine.part.whineOsc.length, 4);
+  assert.equal(a.engine.part.abRumble.gain.last, 0);
+  assert.equal(a.engine.st.ab, 0);
 });
 await check('prop and stunt planes: piston loops at engine rpm, blade beat tied to rpm, stunt higher', async () => {
   const res = {};

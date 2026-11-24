@@ -22,3 +22,27 @@ for (const fps of [30, 60, 120]) for (const kmh of [600, 1000, 1750, 3500]) {
  v.renderPos.x+=5000;ctx.tick(1/fps);assert(camera.position.distanceTo(v.renderPos)<60);
  console.log(`PASS ${kmh} km/h @ ${fps} fps: no camera snaps; teleport follows`);
 }
+// The jumbo's optional chase scales frame its entire 36 x 32 m airframe in both chase modes.
+const { Jet } = await import('../game/src/jet.js');
+const { applyVehicleType } = await import('../game/src/vehicletypes.js');
+for (const mode of [0, 1]) for (const fps of [30, 60, 120]) {
+ const v = new Jet({}); applyVehicleType(v, 'airliner');
+ v.renderPos.set(0, 1500, 0); v.vel.set(0, 0, 950 / 3.6); v.mode = 'air';
+ const camera = new THREE.PerspectiveCamera(68, 16/9, .1, 10000);
+ const ctx = vm.createContext({ THREE, vehicles: { current: v }, world: { heightAt: () => 0 }, camera });
+ vm.runInContext(cameraCode + `\ncamMode = ${mode}; this.tick = updateJetCamera;`, ctx);
+ let previous, jump = 0;
+ for (let n = 0; n < fps*8; n++) {
+  v.renderPos.addScaledVector(v.vel, 1/fps); ctx.tick(1/fps);
+  const offset = camera.position.clone().sub(v.renderPos);
+  if (previous) jump = Math.max(jump, offset.distanceTo(previous)); previous = offset;
+ }
+ assert(jump < .001); camera.updateMatrixWorld();
+ for (const x of [-16, 16]) for (const y of [-3.2, 7]) for (const z of [-18, 18]) {
+  const p = new THREE.Vector3(x, y, z).add(v.renderPos).project(camera);
+  assert(Math.abs(p.x) < .95 && Math.abs(p.y) < .95 && p.z < 1, 'jumbo fits inside chase view');
+ }
+ applyVehicleType(v, 'fighter');
+ assert.equal(v.cam.chaseDistance, undefined); assert.equal(v.cam.chaseHeight, undefined);
+ console.log(`PASS jumbo chase ${mode} @ ${fps} fps: whole airframe visible, no snaps, factory scales restored`);
+}

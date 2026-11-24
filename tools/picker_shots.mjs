@@ -78,7 +78,7 @@ try {
   await press('ArrowRight', 'ArrowRight', 'ArrowDown');
   s = await state(); console.log('aircraft types:', JSON.stringify(s));
   assert(s.sel === 'jet' && s.row === 'jet' && s.cur === 'car', 'aircraft selected, car still current');
-  assert.deepEqual(s.chips, ['fighter*<', 'stealth', 'blackbird', 'prop', 'stunt', 'heli']);
+  assert.deepEqual(s.chips, ['fighter*<', 'stealth', 'blackbird', 'airliner', 'prop', 'stunt', 'heli']);
   await shot('picker-aircraft-types');
 
   // 4. → → to the Prop plane, Enter: vehicle + type in one go; then paint it blue and reopen

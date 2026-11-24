@@ -25,11 +25,13 @@ export const ENGINES = {
   fighter: { turbine: 1, whine: 1 },
   stealth: { turbine: 2, whine: 1.15 },                 // twin engines: two whines a little apart (a slow beat)
   blackbird: { turbine: 2, whine: 1.15 },
+  airliner: { turbine: 4, whine: .65, afterburner: false },
   prop: { loops: 'prop', idle: 800, redline: 2450, blades: 2, piston: true, gain: 1, bright: 1 },
   stunt: { loops: 'stunt', idle: 850, redline: 2700, blades: 3, piston: true, gain: 1.1, bright: 1.3 },
   heli: { rotor: true },
 };
 const BY_KIND = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
+BY_KIND.jet.push('airliner');
 
 // which engine a vehicle (yours, or another player's puppet) has
 export function engineKey(v) {
@@ -326,7 +328,7 @@ export class EngineVoice {
   updateTurbine(jet, part, t, kmh, dt) {
     const p = part.p, st = this.st, on = jet.mode === 'crashed' ? 0 : 1, th = Math.max(0, Math.min(1, jet.throttle || 0)) * on;
     st.spool += (th - st.spool) * Math.min(1, dt / (th > st.spool ? 1.4 : 1.0));
-    const N = st.spool, ab = on && th > 0.97 && N > 0.85 ? 1 : 0;
+    const N = st.spool, ab = p.afterburner !== false && on && th > 0.97 && N > 0.85 ? 1 : 0;
     if (ab && st.ab < 0.2) this.oneShot(boomBuf(this.ctx), 0.9);
     st.ab += (ab - st.ab) * Math.min(1, dt / (ab ? 0.08 : 0.35));
     ease(part.roar.gain, on * (0.1 + N * 0.5) + st.ab * 0.15, t, 0.15);

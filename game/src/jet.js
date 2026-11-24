@@ -77,6 +77,7 @@ export class Jet extends Vehicle {
     this.wheels = A.gear.map(([x, z, h = A.gearH], i) => ({ x, z, h, front: i === 0, contact: false, surf: 0, comp: 0, contactPoint: new THREE.Vector3(), spin: 0 }));
     this.half = { ...A.half };
     this.sit = A.tail;
+    this.cam.chaseDistance = A.chaseDistance; this.cam.chaseHeight = A.chaseHeight;
     this.cam.eye = A.eye;            // cockpit view (main.js): [up, forward] of the pilot's eye; none = the jet's
   }
 
