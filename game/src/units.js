@@ -2,6 +2,8 @@
 // records stay metric; everything here converts at draw time. U toggles, or choose in Settings.
 const KEY = 'yr-units-1';
 const MPH = 1 / 1.609344, FT = 3.28084, MI = 1609.344;
+export const MACH_MPS = 343;
+const MACH_ENTER = MACH_MPS, MACH_EXIT = MACH_MPS * 0.98;
 
 let units = 'metric';
 try { if (globalThis.localStorage?.getItem(KEY) === 'imperial') units = 'imperial'; } catch {}
@@ -20,6 +22,12 @@ export const onUnits = f => { listeners.add(f); return () => listeners.delete(f)
 export const speedUnit = () => (imperial() ? 'mph' : 'km/h');
 /** speed in m/s → whole number in the current unit */
 export const speedValue = ms => Math.round(ms * 3.6 * (imperial() ? MPH : 1));
+/** Aircraft HUD speed in m/s. Pass the previous Mach state to apply boundary hysteresis. */
+export function aircraftSpeed(ms, wasMach = false) {
+  if (wasMach ? ms >= MACH_EXIT : ms >= MACH_ENTER)
+    return { value: (ms / MACH_MPS).toFixed(2), unit: 'Mach', inMach: true };
+  return { value: speedValue(ms), unit: speedUnit(), inMach: false };
+}
 /** a km/h figure (e.g. "90 km/h" in a hint) → text in the current unit */
 export const fmtKmh = kmh => imperial() ? `${Math.round(kmh * MPH)} mph` : `${kmh} km/h`;
 
