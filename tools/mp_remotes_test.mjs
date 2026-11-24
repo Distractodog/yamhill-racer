@@ -125,6 +125,11 @@ assert.equal(byId('a').body, '#1188ff', 'their own colours'); assert.equal(byId(
 assert.equal(byId('a').host, true);
 const remoteRoot = id => group.children.filter(o => o.name === 'mp-remote')[[...R.list()].findIndex(r => r.id === id)];
 const drawCalls = root => { let n = 0; root.traverseVisible(o => { if (o.isMesh) n++; }); return n; };
+// WebGLRenderer updates LOD visibility before drawing. Reproduce that step for Node mesh budgets.
+const updateLODs = (root, camera) => {
+  root.updateMatrixWorld(true); camera.updateMatrixWorld();
+  root.traverse(o => { if (o.isLOD) o.update(camera); });
+};
 assert.equal(drawCalls(remoteRoot('a')), 0, 'near: no stand-in block');
 assert.ok(drawCalls(R.model('a')) <= 5, `near car is ≤ 5 draw calls: body + 4 wheels (${drawCalls(R.model('a'))})`);
 // skin change: colour follows, mesh rebuilt
@@ -196,14 +201,14 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   let dark = 0;
   const R3 = makeRemotes({ scene: scene3, camera, mp: m3, fx: false, night: () => dark });
   camera.position.set(0, 3, -25); camera.lookAt(0, 0, 0);
-  const people = [['t', 'car', 'truck', 0], ['s', 'bike', 'sport', 6], ['j', 'jetski', undefined, 12], ['o', 'boat', undefined, 20], ['x', 'car', 'bogus', -8]];
+  const people = [['t', 'car', 'truck', 0], ['s', 'bike', 'sport', 6], ['j', 'jetski', undefined, 12], ['o', 'boat', undefined, 20], ['x', 'car', 'bogus', -8], ['r', 'car', 'rally', -14]];
   m3.emit('roster', { t: 'roster', players: people.map(([id, vehicle, type]) => ({ id, name: id, skin: { vehicle, type, colors: { body: '#3366cc' } } })) });
   const by = id => R3.list().find(r => r.id === id);
   const st = (id, v, x, extra = {}) => m3.emit('state', { t: 'state', from: id, srvT: m3.now(), p: [x, 0, 0], q: (extra.q || yawQ(0)).toArray(), vel: [0, 0, 8], v, ts: m3.now(), ...extra.a });
   const go = (n, extra = {}) => { for (let i = 0; i < n; i++) { if (i % 4 === 0) for (const [id, v, , x] of people) st(id, v, x, extra[id] || {}); m3.advance(1000 / 60); R3.update(1 / 60); } };
   go(16);
   assert.deepEqual(people.map(([id]) => [by(id).kind, by(id).type, by(id).model]),
-    [['car', 'truck', 'car-truck'], ['bike', 'sport', 'bike-sport'], ['car', 'race', by('j').model], ['car', 'race', by('o').model], ['car', 'race', by('x').model]],
+    [['car', 'truck', 'car-truck'], ['bike', 'sport', 'bike-sport'], ['car', 'race', by('j').model], ['car', 'race', by('o').model], ['car', 'race', by('x').model], ['car', 'rally', 'car-rally']],
     'kind + type → that model (an unknown type falls back to the Race car)');
   assert.notEqual(by('x').model, 'car-truck');
   // Missing / unknown skin kinds are ignored, preserving the current model, type, paint and tuning.
@@ -226,10 +231,11 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   go(8, { j: { a: {} } }); assert.equal(by('j').visible, true);
   // lights: off by day, lenses at night (no light sources), brake lights with the brake, the type's own anchors
   const lightsOf = id => by(id).anim.lights, isLight = root => { let n = 0; root.traverse(o => { if (o.isLight) n++; }); return n; };
-  assert.deepEqual(people.map(([id]) => lightsOf(id).length), [0, 0, 0, 0, 0], 'day: no lenses lit');
+  assert.deepEqual(people.map(([id]) => lightsOf(id).length), [0, 0, 0, 0, 0, 0], 'day: no lenses lit');
   dark = 1; go(8, { t: { a: { grounded: true, br: 1, w: [9, 9, 9, 9] } }, x: { a: { grounded: true, w: [9, 9, 9, 9] } } });
   assert.deepEqual(lightsOf('t').sort(), [...Array(8).fill('head'), 'tail', 'tail'], 'truck: 2 × 3 headlight bars, bumper and roof bars, two tail');
   assert.deepEqual(lightsOf('s').sort(), ['head', 'head', 'tail'], 'sport bike: twin head, one tail');
+  assert.deepEqual(lightsOf('r').sort(), [...Array(6).fill('head'), 'tail', 'tail'], 'Rally: road lamps, four-light pod and tail lamps');
   for (const id of ['j', 'o']) assert.ok(['head', 'tail'].every(k => lightsOf(id).includes(k)), `${id}: car head and tail lights`);
   const tailI = id => { let v = 0; R3.model(id).traverse(o => { if (o.name === 'vehicle-light-tail') v = Math.max(v, o.material.emissiveIntensity); }); return v; };
   assert.ok(tailI('t') > tailI('x'), 'braking truck: brighter tail lights');
@@ -242,8 +248,37 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   m3.emit('skin', { t: 'skin', from: 't', skin: { vehicle: 'car', type: 'hatch', colors: { body: '#3366cc' } } }); go(8);
   assert.equal(by('t').model, 'car-hatch');
   dark = 0; go(4); assert.equal(lightsOf('t').length, 0, 'lights off again by day');
+  // Rally uses the real car's steering/wheel animation after batching, with one body draw and four wheels.
+  go(16, { r: { a: { st: .6, grounded: true, w: [10, 10, 10, 10], ws: [3, 3, 3, 3] } } });
+  const rally = R3.model('r'), rallyAnim = by('r').anim;
+  assert(rallyAnim.frontYaw < -.1, 'Rally front wheels steer');
+  assert(rallyAnim.spin.every(s => s > 0), 'Rally wheels spin');
+  updateLODs(rally, camera);
+  assert.equal(drawCalls(rally), 5, 'Rally daytime body and four wheels remain batched');
+  const hasColour = (root, hex) => {
+    const c = new THREE.Color(hex); let found = false;
+    root.traverseVisible(o => {
+      const a = o.geometry?.attributes.color;
+      for (let i = 0; a && i < a.count && !found; i++) found = Math.abs(a.getX(i) - c.r) + Math.abs(a.getY(i) - c.g) + Math.abs(a.getZ(i) - c.b) < 1e-4;
+    });
+    return found;
+  };
+  assert(hasColour(rally, '#3366cc'), 'Rally remote body paint is baked');
+  m3.emit('skin', { t: 'skin', from: 'r', skin: { vehicle: 'car', type: 'rally', colors: { body: '#cc3377', trim: '#18bb66', wheels: '#aabbcc' } } }); go(8);
+  const repainted = R3.model('r');
+  updateLODs(repainted, camera);
+  assert.notEqual(repainted, rally); assert.equal(rally.parent, null, 'old Rally model removed on repaint');
+  for (const color of ['#cc3377', '#18bb66', '#aabbcc']) assert(hasColour(repainted, color), `Rally remote paint ${color}`);
+  // The renderer updates body LODs; both levels preserve batching and the repainted shell.
+  repainted.updateMatrixWorld(true);
+  const lod = repainted.getObjectByName('body-lod'), lodCamera = camera.clone();
+  lodCamera.position.set(-14, 3, -110); lodCamera.updateMatrixWorld(); lod.update(lodCamera);
+  assert(lod.levels[1].object.visible && !lod.levels[0].object.visible);
+  assert.equal(drawCalls(repainted), 5); assert(hasColour(repainted, '#cc3377'));
+  lodCamera.position.set(-14, 3, -10); lodCamera.updateMatrixWorld(); lod.update(lodCamera);
+  assert(lod.levels[0].object.visible && !lod.levels[1].object.visible);
   R3.dispose(); assert.equal(scene3.children.length, 0);
-  console.log('PASS new kinds/types: truck, sport bike, legacy kind sanitizers; older client; lenses at night with brake lights; no light sources; type change rebuilds');
+  console.log('PASS new kinds/types: truck, Rally, sport bike, legacy kind sanitizers; older client; night/brake lights; Rally animation, repaint and LOD batching; no light sources; type change rebuilds');
 }
 
 // ---------------------------------------------------------------- 16 remotes: per-frame cost
@@ -251,7 +286,7 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   const m2 = stubMp(), scene2 = new THREE.Scene(), R2 = makeRemotes({ scene: scene2, camera, mp: m2 });
   camera.position.set(0, 3, -40); camera.lookAt(0, 0, 0);
   const kinds = ['car', 'bike', 'jet'], ids = Array.from({ length: 16 }, (_, i) => 'p' + i);
-  m2.emit('roster', { t: 'roster', players: ids.map((id, i) => ({ id, name: 'Racer' + (100 + i), skin: skin(kinds[i % 3], '#' + (0x123456 * (i + 1) % 0xffffff).toString(16).padStart(6, '0')) })) });
+  m2.emit('roster', { t: 'roster', players: ids.map((id, i) => ({ id, name: 'Racer' + (100 + i), skin: { ...skin(kinds[i % 3], '#' + (0x123456 * (i + 1) % 0xffffff).toString(16).padStart(6, '0')), ...(i === 0 ? { type: 'rally' } : {}) } })) });
   let t = 0;
   const tick = () => {
     for (const [i, id] of ids.entries()) {
@@ -269,23 +304,43 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   }
   // receiving states is part of the cost too
   const b0 = performance.now(); for (let k = 0; k < 100; k++) { tick(); m2.advance(66); R2.update(0.066); } const per15 = (performance.now() - b0) / 100;
+  updateLODs(scene2, camera);
   let calls16 = 0; scene2.traverseVisible(o => { if (o.isMesh || o.isSprite) calls16++; });
   const vis = R2.list(); const nearN = vis.filter(r => !r.far).length;
   console.log(`16 remotes: update ${(total / N).toFixed(3)} ms avg, ${worst.toFixed(3)} ms worst; 16 states + update ${per15.toFixed(3)} ms; ${nearN} near / ${16 - nearN} far; ${calls16} visible meshes+tags`);
   assert.equal(vis.filter(r => r.visible).length, 16);
+  assert.equal(vis.find(r => r.id === 'p0').model, 'car-rally', 'Rally participates in the 16-player budget');
   assert.ok(total / N < 0.5, 'update well under 1 ms per frame in Node');
-  // Car/bike: body + wheels (5). Fighter: body, 4 control surfaces, 3 legs, 3 wheels,
+  // Car: body + four wheels (5). Dirt bike: chassis, bars, rider, two wheels and two
+  // brake-disc LOD meshes (7 close, 5 beyond 38 m). Budget the close detail and
+  // explicitly check the disc switch below.
+  // Fighter: body, 4 control surfaces, 3 legs, 3 wheels,
   // nose steering assembly, 3 speed-brake panels and flame (16); retracted gear draws fewer.
   // Budget each model separately so an expensive type cannot hide behind cheaper neighbours.
   let meshBudget = 4; // shared particle meshes
   for (const r of vis) {
-    const limit = r.far ? 1 : (r.kind === 'jet' ? 16 : 5) + (r.glide ? 1 : 0);
+    const limit = r.far ? 1 : (r.kind === 'jet' ? 16 : r.kind === 'bike' ? 7 : 5) + (r.glide ? 1 : 0);
     let meshes = 0;
     R2.model(r.id)?.traverseVisible(o => { if (o.isMesh || o.isSprite) meshes++; });
     assert.ok(meshes <= limit, `${r.id} ${r.kind}: ${meshes} meshes exceed ${limit}`);
     meshBudget += limit + 1; // one name tag per player
   }
   assert.ok(calls16 <= meshBudget, `draw calls stay within model budgets (${calls16}/${meshBudget})`);
+  const bike = R2.model('p1'), ud = bike.userData;
+  const closeCamera = camera.clone(); closeCamera.position.copy(bike.position).add(new THREE.Vector3(0, 0, 10));
+  updateLODs(bike, closeCamera);
+  assert.equal(drawCalls(bike), 7, 'close bike: five body/animation meshes plus two brake discs');
+  assert.equal(drawCalls(ud.bars), 1); assert.equal(drawCalls(ud.rider), 1);
+  for (const w of ud.wheels) {
+    assert.equal(drawCalls(w.holder), 2, 'close bike wheel: tyre/rim batch and separate brake disc');
+    const disc = w.spin.children.find(o => o.isLOD);
+    assert(disc && disc.levels.length === 2, 'brake disc has its own detail switch');
+    bike.updateMatrixWorld(true);
+    const distantCamera = camera.clone(); distantCamera.position.copy(bike.position).add(new THREE.Vector3(0, 0, 100)); distantCamera.updateMatrixWorld();
+    disc.update(distantCamera);
+    assert.equal(drawCalls(w.holder), 1, 'distant bike wheel hides only the brake disc');
+  }
+  assert.equal(drawCalls(bike), 5, 'bike returns to five body/animation meshes beyond disc detail range');
   R2.dispose();
 }
 // ---------------------------------------------------------------- every aircraft type: its own model, animated
