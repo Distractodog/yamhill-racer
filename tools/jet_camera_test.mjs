@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 const source = fs.readFileSync(new URL('../game/src/main.js', import.meta.url), 'utf8');
 const cameraCode = source.slice(source.indexOf('let camMode = 0;'), source.indexOf('function updateCamera(dt)'));
-for (const fps of [30, 60, 120]) for (const kmh of [600, 1000, 1750]) {
+for (const fps of [30, 60, 120]) for (const kmh of [600, 1000, 1750, 3500]) {
  const v = {renderPos:new THREE.Vector3(0,1500,0),renderQuat:new THREE.Quaternion(),vel:new THREE.Vector3(0,0,kmh/3.6),mode:'air',hit:0,landing:0};
  const camera = new THREE.PerspectiveCamera(68,1,0.1,10000);
  const ctx=vm.createContext({THREE,vehicles:{current:v},world:{heightAt:()=>0},camera});

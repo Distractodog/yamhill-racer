@@ -28,7 +28,7 @@ try {
   });
   await page.waitForFunction(() => game.world.pendingTiles() === 0, { timeout: 120000 });
   // Keep the test flight on a loaded patch so the screenshots isolate moving panels and HUD.
-  for (const type of ['fighter', 'stealth', 'prop', 'stunt']) {
+  for (const type of ['fighter', 'stealth', 'blackbird', 'prop', 'stunt']) {
     await page.evaluate(type => {
       game.vehicles.choose('jet', type); game.setCam(0);
       const j = game.vehicles.current, x = j.pos.x, z = j.pos.z;

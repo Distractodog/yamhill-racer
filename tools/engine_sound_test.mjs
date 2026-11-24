@@ -16,7 +16,7 @@ async function check(name, fn) {
   catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }
 }
 const GROUND = ['race', 'sports', 'hatch', 'suv', 'truck', 'dirt', 'sport'];
-const TYPES = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'prop', 'stunt', 'heli'] };
+const TYPES = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
 
 // ---------------------------------------------------------------- fake Web Audio
 function fakeAudio() {
@@ -280,7 +280,7 @@ await check('lift-off crackle: sports car pops, SUV doesn\'t; truck turbo whistl
 });
 
 // ---------------------------------------------------------------- aircraft
-await check('jets: whine rises with throttle, afterburner rumbles at full with one boom; stealth has two whines', async () => {
+await check('jets: whine rises with throttle, afterburner rumbles at full with one boom; stealth and Blackbird have two whines', async () => {
   const v = air('fighter', { mode: 'air' }), { a, ctx, stats } = await voice(v), part = () => a.engine.part;
   const at = th => { v.throttle = th; for (let i = 0; i < 300; i++) { ctx.currentTime += 1 / 60; a.update(v, {}, 1 / 60); } return { whine: part().whineOsc[0].frequency.last, roar: part().roar.gain.last, ab: part().abRumble.gain.last }; };
   const lo = at(0.1), mid = at(0.8), before = stats.list.length, full = at(1), booms = stats.shots(before, 0.7);
@@ -288,8 +288,10 @@ await check('jets: whine rises with throttle, afterburner rumbles at full with o
   assert(mid.ab === 0 && full.ab > 0.7, `afterburner ${mid.ab} at 80 %, ${full.ab.toFixed(2)} at 100 %`);
   assert.equal(booms, 1, 'one boom when it lights');
   v.mode = 'crashed'; at(0); assert(part().roar.gain.last < 1e-3 && part().abRumble.gain.last < 1e-3, 'crashed: silent');
-  const s = air('stealth'), w = await voice(s);
-  assert.equal(w.a.engine.part.whineOsc.length, 2, 'twin');
+  for (const type of ['stealth', 'blackbird']) {
+    const s = air(type), w = await voice(s);
+    assert.equal(w.a.engine.part.whineOsc.length, 2, `${type}: twin`);
+  }
   return `whine ${lo.whine.toFixed(0)} → ${full.whine.toFixed(0)} Hz, afterburner rumble ${full.ab.toFixed(2)}`;
 });
 await check('prop and stunt planes: piston loops at engine rpm, blade beat tied to rpm, stunt higher', async () => {

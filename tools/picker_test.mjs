@@ -27,7 +27,7 @@ assert(st('car', 'sports').top >= st('car', 'race').top && st('car', 'race').top
 assert(st('car', 'truck').offroad === 5 && st('car', 'sports').offroad === 1, 'truck best off-road, sports car worst');
 assert(st('car', 'suv').offroad > st('car', 'hatch').offroad, 'SUV beats the hatchback off-road');
 assert(st('bike', 'sport').top > st('bike', 'dirt').top && st('bike', 'dirt').offroad > st('bike', 'sport').offroad, 'bikes');
-assert(st('jet', 'stealth').top === 5 && st('jet', 'heli').offroad === 5 && st('jet', 'prop').offroad > st('jet', 'fighter').offroad, 'aircraft');
+assert(st('jet', 'blackbird').top === 5 && st('jet', 'stealth').top < st('jet', 'blackbird').top && st('jet', 'heli').offroad === 5 && st('jet', 'prop').offroad > st('jet', 'fighter').offroad, 'aircraft');
 console.table(rows);
 
 // 2) choose

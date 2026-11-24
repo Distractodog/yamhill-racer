@@ -106,7 +106,7 @@ export function addCockpit(root, { style, eye, width = .52, depth = .8, blockers
       bar([s * width, -.20, depth + .05], [s * width * .94, .25, depth * .96], .0065);
       bar([s * width * .94, .25, depth * .96], [0, .25, depth * .96], .0065);
     } else {
-      const top = heli ? .32 : .26, shoulder = style === 'stealth' ? .78 : .83;
+      const top = heli ? .32 : .26, shoulder = (style === 'stealth' || style === 'blackbird') ? .78 : .83;
       bar([s * width, -.20, depth + .05], [s * width * .98, .02, depth * .95], .0065);
       bar([s * width * .98, .02, depth * .95], [s * width * shoulder, top * .6, depth * .83], .0065);
       bar([s * width * shoulder, top * .6, depth * .83], [s * width * .43, top, depth * .63], .0065);
@@ -155,7 +155,7 @@ export function addCockpit(root, { style, eye, width = .52, depth = .8, blockers
       const dial = dials[i];
       let value = 0;
       switch (dial.signal) {
-        case 'speed': value = v.vel.length() * 3.6 / (jet ? 2000 : style === 'stunt' ? 450 : 300); break;
+        case 'speed': value = v.vel.length() * 3.6 / (style === 'blackbird' ? 3600 : jet ? 2000 : style === 'stunt' ? 450 : 300); break;
         case 'rotor': value = v.rotor ?? v.throttle ?? 0; break;
         case 'altitude': value = Math.max(0, v.renderPos.y) % 1000 / 1000; break;
         case 'climb': value = .5 + v.vel.y / 40; break;
