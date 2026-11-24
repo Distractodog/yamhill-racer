@@ -361,7 +361,8 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
     const spin = () => ud.mainRotor?.rotation.y ?? ud.propeller?.hub.rotation.z;
     const a = spin(); frames(10, 30);
     if (a !== undefined) assert.notEqual(spin(), a, `${id}: rotor / propeller turns`);
-    else assert(ud.aileronL.rotation.x > 0 && R.list().find(x => x.id === from).anim.flame > 1, `${id}: control surfaces + flame`);
+    // the jumbo's engines spool slowly (throttleRate .25) and have no afterburner: control surfaces only
+    else assert(ud.aileronL.rotation.x > 0 && (id === 'airliner' || R.list().find(x => x.id === from).anim.flame > 1), `${id}: control surfaces + flame`);
     assert(r.anim.lights.includes('left'), `${id}: nav lights at night`);
   }
   R.dispose();
