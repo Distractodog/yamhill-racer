@@ -14,22 +14,35 @@ import * as THREE from 'three';
 import { buildAirlinerModel } from '../game/src/models/airliner.js';
 import { createCockpitView } from '../game/src/models/cockpit.js';
 import { createVehicleLightLenses } from '../game/src/lights.js';
+const params = new URLSearchParams(location.search), cockpitOnly = params.has('cockpit');
+if (cockpitOnly) {
+  document.querySelector('header').hidden = true;
+  document.querySelector('#views').style.cssText = 'display:block;padding:0';
+}
 for (const [name, position, gear, cockpit] of [
   ['Chase · scaled game camera · gear retracted', [0,12.88,-44.3], 0, false],
   ['Front quarter · landing gear', [34,18,43], 1, false],
   ['Planform · swept low wings', [0,65,1.7], 0, false],
   ['Flight deck · yokes, overhead, analogue + screens', null, 0, true],
 ]) {
+  if (cockpitOnly && !cockpit) continue;
   const section = document.createElement('section'), label = document.createElement('label');
-  label.textContent = name; section.append(label); document.querySelector('#views').append(section);
-  const renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(1000,625,false); section.append(renderer.domElement);
+  label.textContent = cockpit ? 'Captain seat · HUD clearance review' : name; section.append(label); document.querySelector('#views').append(section);
+  if (cockpitOnly) section.style.cssText = 'width:100vw;height:100vh;aspect-ratio:auto';
+  if (cockpit) {
+    const hud = document.createElement('div');
+    hud.style.cssText = 'position:absolute;left:0;bottom:0;width:25.78125%;height:21.05263%;box-sizing:border-box;padding:16px;background:#172530e8;color:white';
+    hud.innerHTML = '<b style="font-size:36px">285</b> km/h<br>HUD clearance area';
+    section.append(hud);
+  }
+  const renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(cockpitOnly ? innerWidth : 1000,cockpitOnly ? innerHeight : 625,false); section.append(renderer.domElement);
   const scene = new THREE.Scene(); scene.background = new THREE.Color('#9dc3da');
   scene.add(new THREE.HemisphereLight('#eaf5ff','#78705f',2.2));
   const sun = new THREE.DirectionalLight('#fff0d8',2.5); sun.position.set(-30,70,50); scene.add(sun);
   const fill = new THREE.DirectionalLight('#b2d6ff',1.2); fill.position.set(20,10,-30);scene.add(fill);
   const model = buildAirlinerModel(); scene.add(model); model.userData.setGear(gear);
   const lenses = createVehicleLightLenses(model,'jet'); lenses.update({on:true,time:0});
-  const camera = new THREE.PerspectiveCamera(cockpit ? 70 : name.startsWith('Chase') ? 79.4 : 40,1.6,.06,20000);
+  const camera = new THREE.PerspectiveCamera(cockpit ? +(params.get('fov') || 70) : name.startsWith('Chase') ? 79.4 : 40,cockpitOnly ? innerWidth/innerHeight : 1.6,.06,20000);
   if (cockpit) {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(20000,20000),new THREE.MeshLambertMaterial({color:'#708957'}));
     ground.rotation.x = -Math.PI/2; ground.position.y = -200; scene.add(ground);

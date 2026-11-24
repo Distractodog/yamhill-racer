@@ -10,7 +10,8 @@ export const AIRLINER_AIRFRAME = {
   half: { x: 16, front: 18, back: -18 }, rotMax: .16, scrapeZ: -15,
   // Forgiving wings on narrow roads; trunks along the fuselage still collide.
   treeR: 1.5, treeZ: [-15, -10, -5, 0, 5, 10, 15], wing: 1.5, buildingR: 3,
-  authV: 85, eye: [2.15, 13.5], maxStepDistance: 2, fixedGear: false, airKmh: 950,
+  // Eye: height, forward, captain's lateral seat coordinate in the first-person deck.
+  authV: 85, eye: [2.15, 13.5, .43], maxStepDistance: 2, fixedGear: false, airKmh: 950,
   chaseDistance: 2, chaseHeight: 2.8,
 };
 
