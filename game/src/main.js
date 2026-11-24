@@ -37,7 +37,7 @@ import { createMPMenu } from './mp/menu.js';
 import { makeRim } from './rim.js';
 import { createCollisions } from './mp/collide.js';
 import { createRemotes } from './mp/remotes.js';
-import { toggleUnits, onUnits, speedUnit, speedValue, fmtKmh } from './units.js';
+import { toggleUnits, onUnits, speedUnit, speedValue, aircraftSpeed, fmtKmh } from './units.js';
 import { createGraphics } from './graphicsapply.js';
 import { bindGraphicsSettings } from './graphicsui.js';
 
@@ -449,8 +449,16 @@ vlineEl.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px;font-v
 speedEl.before(vlineEl);
 // speed number + unit label (km/h ⇄ mph). U and Settings change the display units.
 const speedNumEl = document.getElementById('speed-num'), speedUnitEl = document.getElementById('speed-unit');
+let speedInMach = false;
 const showUnits = () => {
-  speedUnitEl.textContent = speedUnit();
+  const v = vehicles.current;
+  const reading = v.kind === 'jet' ? aircraftSpeed(car.vel.length(), speedInMach) : null;
+  if (reading) speedInMach = reading.inMach;
+  else speedInMach = false;
+  const unit = reading ? reading.unit : speedUnit();
+  if (unit !== speedUnitEl._last) { speedUnitEl.textContent = unit; speedUnitEl._last = unit; }
+  const spd = reading ? reading.value : speedValue(car.vel.length());
+  if (spd !== speedNumEl._last) { speedNumEl.textContent = spd; speedNumEl._last = spd; }
   document.querySelectorAll('[data-kmh]').forEach(el => { el.textContent = fmtKmh(+el.dataset.kmh); });
 };
 onUnits(showUnits); showUnits();
@@ -550,9 +558,14 @@ function frame(now) {
   minimap.update(car.renderPos.x, car.renderPos.z, Math.atan2(fw.set(0, 0, 1).applyQuaternion(car.renderQuat).x, -fw.z), car.vel.length(), dt);
   frames++; fpsT += dt;
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
-  const spd = speedValue(car.vel.length());
-  if (spd !== speedNumEl._last) { speedNumEl.textContent = spd; speedNumEl._last = spd; }
   const v = vehicles.current;
+  const reading = v.kind === 'jet' ? aircraftSpeed(car.vel.length(), speedInMach) : null;
+  if (reading) speedInMach = reading.inMach;
+  else speedInMach = false;
+  const spd = reading ? reading.value : speedValue(car.vel.length());
+  if (spd !== speedNumEl._last) { speedNumEl.textContent = spd; speedNumEl._last = spd; }
+  const unit = reading ? reading.unit : speedUnit();
+  if (unit !== speedUnitEl._last) { speedUnitEl.textContent = unit; speedUnitEl._last = unit; }
   const info = `${v.kind === 'car' ? 'Car' : v.name}${car.drifting ? ' · DRIFT' : ''}`;
   if (info !== infoEl._last) { infoEl.innerHTML = info; infoEl._last = info; }
   const vline = v.hudInfo ? v.hudInfo().replace(/ · $/, '') : '';
