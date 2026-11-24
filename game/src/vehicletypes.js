@@ -13,6 +13,7 @@ import { STUNT_AIRFRAME, buildStuntPlaneModel } from './models/stuntplane.js';
 import { buildHeliModel } from './models/heli.js';
 import { primeWheelArch } from './wheeltravel.js';
 import { buildHatchModel } from './models/hatch.js';
+import { buildRallyModel } from './models/rally.js';
 import { buildSuvModel } from './models/suv.js';
 
 export const VEHICLE_TYPE_KEY = 'yr-vtype-1';
@@ -26,6 +27,11 @@ export const VEHICLE_TYPES = {
     { id: 'hatch', name: 'Hatchback', description: 'Light and nimble, with a modest top speed.',
       tuning: { accel: 25, topSpeed: 480, steerRate: 9, turnResponse: 22, restLength: .40, springK: 50000, damping: 4900 },
       physics: { mass: 720, width: .88, length: .84, radius: .34, lean: 1.15 } },
+    { id: 'rally', name: 'Rally car', description: 'Built for gravel: loose-surface grip, long-travel suspension, quick steering.',
+      tuning: { accel: 32, topSpeed: 600, cornerGrip: 28, gripAlign: 15, steerRate: 10, turnResponse: 24, restLength: .48, springK: 60000, damping: 6500 },
+      // grass, forest floor, trail, asphalt, gravel, water, concrete, running track: loose grip beats the truck; road grip below sports.
+      physics: { mass: 1250, width: .98, length: .84, radius: .36, lean: 1.1, grip: [1.48,1.45,1.5,1.02,1.5,1,1,1], drive: [1.35,1.3,1.4,1,1.4,1,1,1] },
+      colors: { body: '#1d4fa8', trim: '#f2c230', wheels: '#d6ad45' } },
     { id: 'suv', name: 'SUV', description: 'Tall, soft suspension and sure footing on dirt and gravel.',
       tuning: { accel: 22, topSpeed: 650, cornerGrip: 27, turnResponse: 13, restLength: .62, springK: 70000, damping: 7500, downforce: .0015 },
       physics: { mass: 1500, width: 1.12, length: 1.05, radius: .46, lean: 2, grip: [1.22,1.2,1.22,.96,1.25,1,1,1] } },
@@ -76,6 +82,7 @@ export function loadVehicleTypes(storage) {
 export function buildVehicleTypeModel(kind, id) {
   const type = typeInfo(kind, id)?.id;
   if (kind === 'car' && type === 'hatch') return buildHatchModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
+  if (kind === 'car' && type === 'rally') return buildRallyModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car' && type === 'suv') return buildSuvModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car') return type === 'race' ? buildCarModel() : buildTypeCarModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'bike') return type === 'dirt' ? buildBikeModel() : buildSportBikeModel();

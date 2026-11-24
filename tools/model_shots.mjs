@@ -1,7 +1,7 @@
 // Director: every car and bike type model in the real game. Run through the heavy gate with the no-cache server on
 // 127.0.0.1:8173 (Chrome with a GPU, like tools/lights_shots.mjs):
 //   /Users/ethanbristol/argus-runs/.heavy/heavy node tools/model_shots.mjs --out /tmp/yr-models [--only sports,truck]
-// For each car type (race, sports, hatch, suv, truck) and bike type (dirt, sport) it writes, as <type>-<shot>.png:
+// For each car type (race, sports, hatch, rally, suv, truck) and bike type (dirt, sport) it writes, as <type>-<shot>.png:
 //   garage (the Garage preview, as opened), front34, rear34, side, top (parked at midday), drive150 (chase camera at
 //   ~150 km/h), night-front34 / night-rear34 (lights on); and per CAR type wheelclip-side / wheelclip-front34, the car
 //   held at 1000 km/h on the spot (the wheel-clip check: no tyre through the body), and low600-side / low1000-side: a
@@ -17,7 +17,7 @@ import { GAME_URL, startGame, holdCar, watchErrors } from './lib/startgame.mjs';
 const args = process.argv.slice(2), opt = (k, d) => args.includes(k) ? args[args.indexOf(k) + 1] : d;
 const out = opt('--out', args.find(a => !a.startsWith('--')) || '/tmp/yr-models');
 const only = opt('--only', '') ? opt('--only', '').split(',') : null;
-const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport']]
+const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'rally'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport']]
   .filter(([, type]) => !only || only.includes(type));
 const SPOT = { x: 19451, z: -11032, yaw: -1.573 };          // a straight road (tools/lights_shots.mjs)
 const report = { pageErrors: [], consoleErrors: [], shots: [], visualReview: 'NOT REVIEWED' };

@@ -1,6 +1,6 @@
 // Director: serve game/ at YR_URL (default http://127.0.0.1:8173/), then run through the heavy gate:
 //   node tools/headlight_shots.mjs --out /tmp/yr-headlights [--only race,dirt] [--no-bench]
-// Headlights at night in the real game (lights.js): every car type (race, sports, hatch, SUV, truck), both bikes and
+// Headlights at night in the real game (lights.js): every car type (race, sports, hatch, rally, SUV, truck), both bikes and
 // the aircraft with a landing light, parked on a McMinnville road (the lights_shots.mjs spot) with physics frozen,
 // night preset. Per type: from behind (the road pool), a front 3/4 close-up of the lamps (lenses + glow) and a low
 // side view of the beam on the road; plus the car with the lights off (L) for contrast. Then: shader programs must
@@ -18,7 +18,7 @@ import { GAME_URL, startGame, holdCar, watchErrors } from './lib/startgame.mjs';
 const { values } = parseArgs({ options: { out: { type: 'string' }, only: { type: 'string' }, 'no-bench': { type: 'boolean' } } });
 const out = values.out || '/tmp/yr-headlights', only = values.only?.split(',');
 const SPOT = { x: 19451, z: -11032, yaw: -1.573 };              // a straight McMinnville road (tools/lights_shots.mjs)
-const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport'],
+const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'rally'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport'],
   ['jet', 'prop'], ['jet', 'stunt'], ['jet', 'stealth'], ['jet', 'blackbird'], ['jet', 'heli']].filter(([, t]) => !only || only.includes(t));
 const VIEWS = ['behind', 'front', 'side'];
 await mkdir(out, { recursive: true });
