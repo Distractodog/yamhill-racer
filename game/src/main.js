@@ -1,4 +1,5 @@
 import { isTank, tankDriveKey, tankGunRay } from './tankgun.js';
+import { createCombat } from './combat.js';
 import { createWeapons } from './weapons.js';
 import { createCockpitView } from './models/cockpit.js';
 import { ensureGroundInterior } from './models/interiors.js';
@@ -103,7 +104,9 @@ const BIKE_RANGES = { accel: [5, 40, 0.5], topSpeed: [80, 500, 5], cornerGrip: [
 const JET_RANGES = { thrust: [6, 40, 0.5], liftK: [0.001, 0.005, 0.0001], rollRate: [0.5, 5, 0.1], maxG: [3, 12, 0.5], gravity: [9.8, 30, 0.2] };
 loadSaved('yr-tuning-bike-1', bikeTuning, BIKE, BIKE_RANGES);
 loadSaved('yr-tuning-jet-1', jetTuning, JET, JET_RANGES);
+let combat;
 const vehicles = createVehicles({ scene, world, tuning, bikeTuning, jetTuning, roadPlacementAllowed: () => challenges.state === 'idle', canSwitch: kind => {
+  if (combat?.state.wrecked && mp.inGame) return false;
   // switching vehicle mid-race ends the race (each race belongs to one vehicle)
   if (challenges.state !== 'idle' && challenges.vehicle !== kind) challenges.quit();
   return true;
@@ -228,6 +231,7 @@ settings.ready(clearKeys, () => {
 const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, wind, gui, beforeOpen: () => garage.close() });
 const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft],
   predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
+combat = createCombat({ mp, vehicles, remotes, racing: () => challenges.state !== 'idle' });
 addEventListener('keydown', e => {
   if (e.gameUI || builder.open) return;
   // Repeat continues an owned press; it must not resurrect one after key-up or focus/UI clearing.
@@ -235,9 +239,9 @@ addEventListener('keydown', e => {
   keys.add(e.code);
   if (/^[a-z]$/i.test(e.key)) letters.set(e.code, 'Key' + e.key.toUpperCase());
   audio.start();
-  if (e.code === 'KeyR') car.resetToSafe();
-  if (e.code === 'KeyF') flipUpright();
-  if (e.code === 'KeyH' && !e.repeat) goHome();
+  if (e.code === 'KeyR' && !combat.stopped) car.resetToSafe();
+  if (e.code === 'KeyF' && !combat.stopped) flipUpright();
+  if (e.code === 'KeyH' && !e.repeat && !combat.stopped) goHome();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
   if ((e.code === 'KeyL' || e.key?.toLowerCase() === 'l') && !e.repeat) vehicleLights.toggle(atmosphere.night);
   if (e.code === 'KeyU' && !e.repeat) toggleUnits();
@@ -295,9 +299,9 @@ function readInput() {
   }
 }
 
-weapons = createWeapons({ scene, world, effects, audio, mp, camera, canvas: renderer.domElement,
+weapons = createWeapons({ combat, scene, world, effects, audio, mp, camera, canvas: renderer.domElement,
   vehicle: () => vehicles.current,
-  blocked: () => challenges.state !== 'idle' || sessionSpawn.blocked || respawnHold.blocked || challenges.blocked ||
+  blocked: () => combat.blocked || challenges.state !== 'idle' || sessionSpawn.blocked || respawnHold.blocked || challenges.blocked ||
     settings.open || garage.open || vehicles.open || challenges.menuOpen || builder.open || minimap.open || document.hidden,
 });
 
@@ -528,12 +532,13 @@ function frame(now) {
   readInput();
   challenges.holdInput(input);
   respawnHold.update(dt);
+  combat.update(dt);
   // the V picker and the race menu pause the game like the Garage (race clock too), except in multiplayer where the
   // others play on
   const picking = (vehicles.open || challenges.menuOpen) && !mp.inGame, frozen = garage.open || picking || builder.open;
   if (challenges.blocked) acc = 0;
   acc += sessionSpawn.blocked || frozen || respawnHold.blocked || challenges.blocked ? 0 : dt;
-  while (acc >= STEP && !challenges.blocked && !respawnHold.blocked && !builder.open) { car.savePrev(); car.step(STEP, input); builder.step(vehicles.current); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); acc -= STEP; }
+  while (acc >= STEP && !challenges.blocked && !respawnHold.blocked && !builder.open) { car.savePrev(); if (!combat.stopped) { car.step(STEP, input); builder.step(vehicles.current); mpCollisions.step(STEP); challenges.constrain(); rim?.constrain(car); } acc -= STEP; }
   challenges.update(picking || builder.open ? 0 : dt);
   car.interpolate(acc / STEP);          // draw the car between physics steps so motion is smooth
   car.input = input;
@@ -558,6 +563,7 @@ function frame(now) {
   cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open && !isTank(vehicles.current), vehicles.current);
   if (builder.open) builder.update(dt); else updateCamera(dt);
   weapons.shakeCamera(dt);
+  combat.draw();
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
   // Race loading always builds/renders, even if a map gesture was left active behind its overlay.
@@ -619,6 +625,6 @@ window.game.audio = audio;              // tools/sound_check.mjs
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim, vehicles });
 window.game.sessionSpawn = sessionSpawn;
 
-Object.assign(window.game, { weapons, graphics, builder, wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
+Object.assign(window.game, { weapons, combat, graphics, builder, wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
 Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

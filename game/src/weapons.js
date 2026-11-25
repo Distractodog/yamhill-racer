@@ -15,7 +15,7 @@ export function projectWeaponAim(mesh, camera, out) {
   return Math.abs(out.x) <= 1 && Math.abs(out.y) <= 1;
 }
 
-export function createWeapons({ scene, world, effects, audio, mp, camera, canvas, vehicle, blocked }) {
+export function createWeapons({ scene, world, effects, audio, mp, camera, canvas, vehicle, blocked, combat }) {
   const origin = new THREE.Vector3(), velocity = new THREE.Vector3(), direction = new THREE.Vector3(), axis = new THREE.Vector3(0, 0, 1);
   const shellAim = new THREE.Vector3();
   let aimTimer = 0;
@@ -87,6 +87,7 @@ export function createWeapons({ scene, world, effects, audio, mp, camera, canvas
     onFire(p) {
       flash(p.p, p.kind === 'shell' ? 2 : p.kind === 'cannon' ? .45 : .8, p.kind === 'shell' ? .12 : .07);
       if (p.kind === 'shell') { smoke(p.p, 2); if (!p.remote) { vehicle().mesh.userData.gunRecoil = .22; shake = Math.max(shake, .12); } }
+      if (!p.remote) combat?.fired();
       sound(p.kind, p.p); if (!p.remote) mp?.send(encodeShot(p.kind, p.n, p.p, p.v));
     },
     onTrail(p) { smoke(p.p); },
@@ -97,6 +98,11 @@ export function createWeapons({ scene, world, effects, audio, mp, camera, canvas
       if (!p.remote && p.kind !== 'cannon') mp?.send(encodeShot('blast', p.n, p.p, zero));
     },
   });
+  if (combat) {
+    core.sweepPlayers = combat.sweep;
+    const worldHit = core.onHit;
+    core.onHit = (target, point, kind, n) => { worldHit(target, point, kind); combat.impact(target, point, kind, n); };
+  }
   const off = mp?.on('shot', m => {
     if (m.from === mp.me.id || !validShot(m) || blocked()) return;
     origin.fromArray(m.p); velocity.fromArray(m.v);

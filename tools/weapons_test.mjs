@@ -42,7 +42,7 @@ function fixture(trees = [], buildings = []) {
   assert(!breaks.broken.has(treeId(0, 0, 2)), 'outside 12m preserved');
 }
 {
-  const { w, hits, breaks } = fixture([[0, 5, 20]], [{ pts: [[-2, 1], [2, 1], [2, 1.1], [-2, 1.1]], top: 15 }]);
+  const { w, hits, breaks } = fixture([[0, 10, 20]], [{ pts: [[-2, 4], [2, 4], [2, 4.1], [-2, 4.1]], top: 15 }]);
   w.spawn('cannon', p(), p(0, 0, 1000)); w.step(.01); assert.equal(hits[0].type, 'building'); assert.equal(breaks.broken.size, 0);
 }
 {
@@ -194,7 +194,7 @@ for (const remote of [false, true]) {
   assert.equal(hits[0].type, 'tree'); assert.equal(breaks.broken.size, remote ? 0 : 2, '12m shell blast, local authority only');
 }
 {
-  const { w, hits } = fixture([], [{ pts: [[-2, 1], [2, 1], [2, 1.1], [-2, 1.1]], top: 15 }]);
+  const { w, hits } = fixture([], [{ pts: [[-2, 4], [2, 4], [2, 4.1], [-2, 4.1]], top: 15 }]);
   w.spawn('shell', p(), p(0, 0, SHELL_SPEED)); w.step(.01); assert.equal(hits[0].type, 'building');
   w.spawn('shell', p(0, 1000), p(0, 0, SHELL_SPEED));
   for (let i = 0; i < 61; i++) w.step(.1);

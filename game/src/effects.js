@@ -21,7 +21,7 @@ const SURF = [
   { smoke: rgb(230, 230, 230) },                                                                                                     // 6 concrete
   { smoke: rgb(232, 212, 206) },                                                                                                     // 7 running track
 ];
-const RUBBER = rgb(14, 14, 14), SPRAY = rgb(214, 230, 244), FOAM = rgb(236, 243, 248), SOOT = rgb(26, 24, 22);
+const RUBBER = rgb(14, 14, 14), SPRAY = rgb(214, 230, 244), FOAM = rgb(236, 243, 248), SOOT = rgb(26, 24, 22), FIRE = rgb(255, 126, 25);
 const TAU = Math.PI * 2;
 const OFF = 'gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return;';   // outside the view: nothing drawn
 
@@ -357,8 +357,11 @@ export class Effects {
     if (!dt) return;
     // far from the camera: fewer puffs (none past ~260 m), the marks stay
     const far = (this.camSeen ? smooth(260, 110, rp.distanceTo(this.cam)) : 1) * this.caps.puffs / this.maxCaps.puffs;
-    if (car.burning && car.mode === 'crashed') {               // jet wreck: black smoke
-      for (this.wreck += dt * 30 * far; this.wreck >= 1; this.wreck--) this.puff(car.pos, car.vel, SOOT, 1.8, 0.6, 0.15, 2.4, 3, 4, car.pos.y - 1.5);
+    if (car.combatWreck || car.burning && car.mode === 'crashed') { // Shared wreck smoke; ground combat adds flames.
+      for (this.wreck += dt * 30 * far; this.wreck >= 1; this.wreck--) {
+        this.puff(car.pos, car.vel, SOOT, 1.8, 0.6, 0.15, 2.4, 3, 4, car.pos.y - 1.5);
+        if (car.combatWreck) this.puff(car.pos, car.vel, FIRE, .6, .3, .1, .4, .8, 2, car.pos.y - .5);
+      }
     }
 
     const sp = car.vel.length(), inp = car.input || {}, P = this.puffs;

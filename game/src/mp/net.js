@@ -36,6 +36,8 @@ export function animState(v) {
   put('st', v.steer);
   put('th', kind === 'jet' ? v.throttle : inp.throttle);
   if (kind !== 'jet') { put('br', inp.brake); if (inp.handbrake) a.hb = 1; }
+  if (v.combatProtected) a.cp = 1;
+  if (v.combatWreck) a.cw = 1;
   if (v.drifting) a.dr = 1;
   put('hi', v.hit, r1); put('ld', v.landing);
   put('sl', v.slip); put('la', v.latAcc, r1); put('lo', v.lonAcc, r1);
@@ -87,7 +89,7 @@ export class Net {
       name: read('yr-mp-name-1', v => validName(v) && !/^Racer\d{3}$/.test(v.trim()), () => ''),
     };
     if (!this.me.name) try { storage?.removeItem('yr-mp-name-1'); } catch {}
-    this.inGame = false; this.isHost = false; this.roomCode = null; this.players = new Map();
+    this.weaponsEnabled = true; this.inGame = false; this.isHost = false; this.roomCode = null; this.players = new Map();
     this._offset = 0; this._pings = new Map(); this._socket = null; this._pending = null;
     this._heartbeatTimer = null; this._stateTimer = null; this._pingTimer = null; this._timeout = null; this._retryTimer = null;
     this._source = () => null; this._skinSignature = ''; this._retried = false;
@@ -136,7 +138,7 @@ export class Net {
   }
   _start(code, host) {
     this.leave();
-    this.roomCode = code; this.isHost = host; this._retried = false; this._offset = 0;
+    this.weaponsEnabled = true; this.roomCode = code; this.isHost = host; this._retried = false; this._offset = 0;
     return new Promise((resolve, reject) => {
       this._pending = { resolve, reject };
       this._connect();
@@ -180,7 +182,9 @@ export class Net {
       this._end(msg.reason || msg.t);
       return;
     }
+    if (msg.t === 'weapons-policy' && typeof msg.enabled === 'boolean') this.weaponsEnabled = msg.enabled;
     if (msg.t === 'roster' && Array.isArray(msg.players)) {
+      this.weaponsEnabled = msg.weapons !== false;
       this.players.clear();
       for (const p of msg.players) if (p && typeof p.id === 'string') this.players.set(p.id, p);
       if (!this.inGame && this.players.has(this.me.id)) {
@@ -254,7 +258,7 @@ export class Net {
     const active = !!this.roomCode;
     this._timers.clearTimeout(this._retryTimer); this._retryTimer = null;
     this.statsGameId = null;
-    this._clearConnection(); this.inGame = false; this.isHost = false; this.roomCode = null; this.players.clear();
+    this._clearConnection(); this.weaponsEnabled = true; this.inGame = false; this.isHost = false; this.roomCode = null; this.players.clear();
     this._pending?.reject(error(reason)); this._pending = null;
     if (active) this._emit('disconnected', { reason, retrying: false });
   }

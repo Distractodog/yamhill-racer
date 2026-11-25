@@ -348,3 +348,26 @@ test('shot validation, identity, rate limiting and persisted bucket', () => {
   tick(1000); send(host, { ...shot, k: 'blast', v: [0, 0, 0] });
   assert.equal(ofType(guest, 'shot').length, 25);
 });
+
+test('combat hits reach only an admitted target, validate damage and rate limit the authenticated sender', () => {
+  const { host, join, send, tick } = fixture(), guest = join(2), other = join(3);
+  const hit = { t: 'hit', to: id(2), k: 'missile', n: 1, d: 70, p: [0, 0, 0], from: 'forged', extra: true };
+  send(host, hit);
+  assert.deepEqual(ofType(guest, 'hit'), [{ t: 'hit', to: id(2), k: 'missile', n: 1, d: 70, p: [0, 0, 0], from: id(1), srvT: 1000 }]);
+  assert.equal(ofType(host, 'hit').length, 0); assert.equal(ofType(other, 'hit').length, 0);
+  for (const patch of [{ d: 71 }, { to: id(99) }, { to: id(1) }, { k: 'blast' }, { n: -1 }, { p: [0, 0] }]) send(host, { ...hit, ...patch });
+  assert.equal(ofType(guest, 'hit').length, 1);
+  for (let n = 0; n < 100; n++) send(host, { ...hit, n });
+  assert.equal(ofType(guest, 'hit').length, 64);
+  tick(1000); send(host, hit); assert.equal(ofType(guest, 'hit').length, 65);
+  send(guest, { t: 'weapons-policy', enabled: false }); send(host, hit); assert.equal(ofType(guest, 'hit').length, 66);
+  send(host, { t: 'weapons-policy', enabled: false }); send(host, hit);
+  send(host, { t: 'shot', k: 'missile', n: 3, p: [0,0,0], v: [0,0,280] });
+  assert.equal(ofType(guest, 'hit').length, 66); assert.equal(ofType(guest, 'shot').length, 0);
+  const late = join(4); assert.equal(ofType(late, 'roster').at(-1).weapons, false);
+  send(host, { t: 'weapons-policy', enabled: true }); send(host, hit); assert.equal(ofType(guest, 'hit').length, 67);
+  send(guest, { t: 'wrecked', by: id(1), from: 'forged' });
+  assert.equal(ofType(host, 'wrecked')[0].from, id(2)); assert.equal(ofType(other, 'wrecked')[0].by, id(1));
+  assert.equal(ofType(guest, 'wrecked').length, 0);
+  send(guest, { t: 'wrecked', by: id(99) }); send(guest, { t: 'wrecked', by: id(1) }); assert.equal(ofType(host, 'wrecked').length, 1);
+});

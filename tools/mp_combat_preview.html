@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Multiplayer combat HUD preview</title>
+<style>body{margin:0;background:#5d8063;color:white;font:14px system-ui}#hud{position:fixed;left:16px;bottom:14px}#speed{font-size:46px;font-weight:bold}#veh-msg{max-width:300px;font-size:13px}#minimap{position:fixed;right:14px;top:14px;width:210px;height:210px;background:#243b2d;border-radius:14px;display:grid;place-items:center}main{margin:30px;max-width:400px}button{padding:10px;margin:4px}</style>
+<main><h1>Multiplayer combat</h1><p>Health and protection appear above speed. Wreck notifications appear below the map.</p><button id="protected">Protected</button><button id="damage">Take damage</button><button id="wreck">Wreck</button></main><div id="minimap">Minimap</div><div id="hud"><div id="speed">0 <small>km/h</small></div><div id="info">Car</div><div id="veh-msg"></div></div>
+<script type="module">
+import { createCombatUI } from '../game/src/combatui.js';
+if(new URLSearchParams(location.search).has('aircraft')) {
+  document.querySelector('#info').textContent='Fighter';
+  document.querySelector('#veh-msg').textContent='THR 70% · ALT 150 m · AIR BRAKE · Pull up';
+}
+const ui=createCombatUI(), state={health:100,protected:true,wrecked:false};
+ui.update(0,true,state); ui.feed('Ace wrecked Driver');
+requestAnimationFrame(() => {
+  const bar=document.querySelector('#combat-health').getBoundingClientRect(), box=document.querySelector('#hud').getBoundingClientRect();
+  if(bar.bottom > box.top-9) throw Error('Health overlaps vehicle HUD');
+});
+document.querySelector('#protected').onclick=()=>{Object.assign(state,{health:100,protected:true,wrecked:false});ui.update(0,true,state)};
+document.querySelector('#damage').onclick=()=>{Object.assign(state,{health:30,protected:false,wrecked:false});ui.hit();ui.update(0,true,state)};
+document.querySelector('#wreck').onclick=()=>{Object.assign(state,{health:0,protected:false,wrecked:true});ui.feed('Ace wrecked Driver');ui.update(0,true,state)};
+</script></html>

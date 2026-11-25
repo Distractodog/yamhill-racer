@@ -178,3 +178,23 @@ test('guest-driven roster publications retain the host timestamp and cannot rene
   now = 30000; assert.deepEqual(lobby.list(), []);
   lobby.update({ ...entry, players: 1 }); assert.deepEqual(lobby.list(), []);
 });
+
+test('combat policy and sender hit bucket survive Durable Object hibernation', async () => {
+  const { relay, host, env, ctx } = await adapterFixture();
+  const guest = socket(); relay.room.connect(id(2), guest);
+  await relay.webSocketMessage(guest, JSON.stringify(hello()));
+  await relay.webSocketMessage(host, JSON.stringify({ t: 'join-accept', id: id(2) }));
+  const hit = { t: 'hit', to: id(2), k: 'shell', n: 0, d: 80, p: [0,0,0] };
+  await relay.webSocketMessage(host, JSON.stringify(hit));
+  assert.equal(host.attachment.session.hitTokens, 63);
+  await relay.webSocketMessage(host, JSON.stringify({ t: 'weapons-policy', enabled: false }));
+  assert.equal(host.attachment.session.weapons, false);
+  const wakeCtx = context([host, guest], ctx.data), wake = new RelayRoom(wakeCtx, env); await wakeCtx.ready;
+  assert.equal(wake.room.host.weapons, false); assert.equal(wake.room.host.hitTokens, 63);
+  await wake.webSocketMessage(host, JSON.stringify(hit)); assert.equal(guest.messages.filter(m => m.t === 'hit').length, 1);
+  const late = socket(); wake.room.connect(id(3), late); await wake.webSocketMessage(late, JSON.stringify(hello()));
+  await wake.webSocketMessage(host, JSON.stringify({ t: 'join-accept', id: id(3) })); assert.equal(last(late, 'roster').weapons, false);
+  await wake.webSocketMessage(host, JSON.stringify({ t: 'weapons-policy', enabled: true }));
+  assert.equal(last(guest, 'weapons-policy').enabled, true);
+  await wake.webSocketMessage(host, JSON.stringify(hit)); assert.equal(guest.messages.filter(m => m.t === 'hit').length, 2);
+});
