@@ -35,6 +35,7 @@ export const VEHICLE_TYPES = {
       physics: { mass: 1250, width: .98, length: .84, radius: .36, lean: 1.1, grip: [1.48,1.45,1.5,1.02,1.5,1,1,1], drive: [1.35,1.3,1.4,1,1.4,1,1,1] },
       colors: { body: '#1d4fa8', trim: '#f2c230', wheels: '#d6ad45' } },
     { id: 'tank', name: 'Tank', description: 'Heavy armour, steady tracks and diesel torque. Slow, planted off-road driving.',
+      cam: { dist: 8.5, high: 3.5 },
       tuning: { accel: 8, topSpeed: 70, brakeDecel: 18, steerLock: .38, steerRate: 3, turnResponse: 6, cornerGrip: 25,
         restLength: .65, springK: 240000, damping: 28000, snap: 100, downforce: .004 },
       physics: { mass: 6000, width: 1.65, length: 1.65, radius: .46, lean: .12,
@@ -123,6 +124,7 @@ export function applyVehicleType(vehicle, id) {
   });
   if (vehicle.kind === 'car') {
     const p = spec.physics;
+    vehicle.cam = spec.cam; // Tank's larger hull needs room; other car types keep the camera defaults.
     vehicle.typeHalf = p ? new THREE.Vector3(.9 * p.width, .38, 2.15 * p.length) : null;
     vehicle.half = p ? { x: 1.15 * p.width, front: 2.4 * p.length, back: -2.4 * p.length } : undefined;
     vehicle.wheels.forEach((w, i) => {

@@ -10,7 +10,7 @@ export function buildTankModel(type, p, suspension) {
   const bodyPivot = new THREE.Group(); root.add(bodyPivot);
   const body = material('#5b6540', 'body'), trim = material('#3a3f2c', 'trim');
   const rim = material('#3a3f2c', 'wheels'), rubber = material('#242623'), steel = material('#45483e');
-  const glass = material('#233b3b'), head = material('#e1dfc4'), tail = material('#a3221c');
+  const glass = material('#233b3b'), head = material('#fff1cf'), tail = material('#a3221c');
   const wheels = buildWheels(root, WHEEL_POS, p, suspension, rubber, rim,
     { width: .42, rimR: .36, spokes: 8, segs: 12, spokeW: .045 });
   for (const w of wheels) {
@@ -78,7 +78,7 @@ export function buildTankModel(type, p, suspension) {
     if (!far) {
       for (let z = -2.55; z < -1.4; z += .15) box(group, trim, 1.5, .035, .06, 0, .725, z);
       box(group, glass, .48, .09, .04, .56, .73, 1.44);
-      for (const side of [-1, 1]) rod(group, steel, [side * 1.1, .16, 2.96], [side * 1.1, .38, 2.86], .05);
+      for (const side of [-1, 1]) rod(group, steel, [side * .82, .16, 2.96], [side * .82, .38, 2.86], .05);
     }
     return group;
   }
@@ -108,9 +108,14 @@ export function buildTankModel(type, p, suspension) {
   mesh(barrel, new THREE.CircleGeometry(.082, 8), rubber, 0, 0, 4.675);
   batch(barrel);
   const muzzle = new THREE.Object3D(); muzzle.name = 'tank-muzzle'; muzzle.position.z = 4.68; barrel.add(muzzle);
+  // Match the small rectangular lamp faces; the default car lenses are wider than these housings.
+  const lamp = (x, y, z, w, h) => [[x - w / 2, y - h / 2, z], [x + w / 2, y - h / 2, z],
+    [x + w / 2, y + h / 2, z], [x - w / 2, y + h / 2, z]];
   root.userData = { bodyPivot, turret, barrel, muzzle, wheels, lightMount: bodyPivot,
-    blob: [3.95, 6.1], lights: { head: [-1, 1].map(s => new THREE.Vector3(s * 1.05, .30, 2.91)),
-      tail: [-1, 1].map(s => new THREE.Vector3(s * 1.3, .38, -2.90)) },
+    blob: [3.95, 6.1], lights: { head: [-1, 1].map(s => new THREE.Vector3(s * 1.05, .30, 2.90)),
+      tail: [-1, 1].map(s => new THREE.Vector3(s * 1.3, .38, -2.89)),
+      lens: { head: [-1, 1].map(s => lamp(s * 1.05, .30, 2.90, .17, .12)),
+        tail: [-1, 1].map(s => lamp(s * 1.3, .38, -2.89, .15, .12)) } },
     linkage: { update() {
       for (const w of wheels) w.holder.rotation.y = 0;
       for (let i = 0; i < rollers.length; i++) rollers[i].rotation.x = wheels[i < 4 ? 1 : 0].spin.rotation.x;

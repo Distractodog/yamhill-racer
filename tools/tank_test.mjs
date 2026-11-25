@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Car, TUNING_DEFAULTS } from '../game/src/car.js';
 import { applyVehicleType, buildVehicleTypeModel, typeInfo } from '../game/src/vehicletypes.js';
 import { paintedModel } from '../game/src/cosmetics.js';
+import { createVehicleLightLenses } from '../game/src/lights.js';
 import { makeWorld, makeTileData } from '../game/src/data.js';
 import { readTileData } from '../game/src/tilepack.js';
 import { makeTrack } from '../game/src/track.js';
@@ -38,6 +39,26 @@ for (const [role, color] of Object.entries(typeInfo('car', 'tank').colors)) {
   assert(found, role);
 }
 console.log(`Tank triangles: near ${counts['body-near'] + wheels}, far ${counts['body-far'] + wheels} (wheels ${wheels})`);
+// The live lenses must fit the small lamp faces and remain clear of the towing hooks.
+const skin = [];
+model.traverseVisible(o => { if (o.isMesh) skin.push(o); });
+const lights = createVehicleLightLenses(model, 'car'); lights.update({ on: true }); model.updateMatrixWorld(true);
+const ray = new THREE.Raycaster(), sample = new THREE.Vector3(), direction = new THREE.Vector3();
+lights.group.traverse(o => {
+  if (!/^vehicle-light-(head|tail)$/.test(o.name)) return;
+  const position = o.geometry.attributes.position, normal = o.geometry.attributes.normal;
+  direction.fromBufferAttribute(normal, 0).transformDirection(o.matrixWorld).negate();
+  for (let i = 0; i < position.count; i++) {
+    sample.fromBufferAttribute(position, i).applyMatrix4(o.matrixWorld);
+    ray.set(sample.clone().addScaledVector(direction, -.4), direction); ray.far = .5;
+    assert.equal(ray.intersectObjects([...skin, o], false)[0]?.object, o, 'lit lens visible');
+    const hit = ray.intersectObjects(skin, false)[0];
+    assert(hit && hit.distance > .398 && hit.distance < .417, 'lit lens sits on the drawn lamp');
+    const color = new THREE.Color().fromBufferAttribute(hit.object.geometry.attributes.color, hit.face.a).getHexString();
+    assert.equal(color, o.name.endsWith('head') ? 'fff1cf' : 'a3221c', 'lamp face behind every lens sample');
+  }
+});
+lights.dispose();
 const dt = 1 / 120, input = { throttle: 1, brake: 0, steer: 0, handbrake: false };
 const flat = { heightAt: () => 0, terrainAt: () => 0, groundAt: () => 0, surfaceAt: () => 3,
   normalAt: (x, z, out = new THREE.Vector3()) => out.set(0, 1, 0), waterLevelAt: () => -Infinity,
@@ -61,7 +82,7 @@ for (const degrees of [45, 50, 55]) {
   console.log(`Tank ${degrees}° bare slope: slides ${(-tank.pos.z).toFixed(1)} m downhill`);
 }
 
-// Real South woods trail course, identical cautious bot and 30 km/h cap for both cars.
+// Real South woods trail course with a cautious bot and a 30 km/h cap.
 // Uses the normal race barriers and ordered gate crossings; never corrects vehicle pose or velocity.
 const manifest = JSON.parse(fs.readFileSync('game/assets/world.json')), world = makeWorld(manifest);
 const bytes = async f => { const b = fs.readFileSync(`game/assets/tiles/0_0/${f}`); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
@@ -95,4 +116,9 @@ world.setRaceBarriers(null);
 top.interpolate(1); top.syncMesh(dt);
 assert(ud.wheels.every(w => w.spin.isGroup));
 assert(top.mesh.userData.wheels.every(w => w.holder.rotation.y === 0 && Math.abs(w.spin.rotation.x) > 1));
+assert.equal(top.cam, typeInfo('car', 'tank').cam, 'Tank uses its hull-sized chase camera');
+applyVehicleType(top, 'race');
+assert.equal(top.cam, undefined, 'switching away restores the normal car camera');
+applyVehicleType(top, 'tank');
+assert.equal(top.cam, typeInfo('car', 'tank').cam, 'cached Tank restores its camera');
 console.log('PASS Tank model hooks, factory paint, top speed, track animation and campus trail');
