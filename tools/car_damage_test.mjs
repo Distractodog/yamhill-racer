@@ -357,7 +357,7 @@ console.log('PASS distractodog contact coordinates: physics orientation, body le
 // Ray-cast triangle INTERIORS, not just vertices: independently triangulated layers used
 // to sink behind the shell/grille frame. Track the visible surface colour and order at
 // many grille, lamp, plate and trim points after real front/side building collisions.
-for (const type of ['hatch', 'suv']) for (const level of [0, 1]) {
+for (const type of ['hatch', 'rally', 'suv']) for (const level of [0, 1]) {
   const c = car(type), body = c.mesh.userData.bodyPivot.children.find(o => o.isLOD).levels[level].object;
   const meshes = []; body.traverse(o => { if (o.isMesh) meshes.push(o); });
   c.mesh.position.set(0, 0, 0); c.mesh.quaternion.identity(); c.mesh.updateMatrixWorld(true);
@@ -445,7 +445,7 @@ for (const { id } of VEHICLE_TYPES.car) {
   applyVehicleType(c, id === 'hatch' ? 'race' : 'hatch'); cosmetics.createPreview('car');
   applyVehicleType(c, id); assert.equal(cosmetics.createPreview('car'), preview); unchanged(clean);
 }
-console.log('PASS Garage damage: all five cached previews, repaint, clean wash/repair and type changes');
+console.log('PASS Garage damage: all cached previews, repaint, clean wash/repair and type changes');
 
 // Independently exercise each direction, including threshold roof slams in a real
 // inverted physics pose. Both LODs must move, wheels stay byte-identical, response matches.

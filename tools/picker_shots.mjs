@@ -60,7 +60,7 @@ try {
   let s = await state(); console.log('open on car:', JSON.stringify(s));
   assert(s.open && s.visible && s.cur === 'car' && s.sel === 'car' && s.row === 'car', 'opens on the car, car types under it');
   assert.equal(s.empty, 0, 'every picture is drawn');
-  assert.deepEqual(s.chips, ['race*', 'sports', 'hatch', 'suv', 'truck']);
+  assert.deepEqual(s.chips, ['race*', 'sports', 'hatch', 'rally', 'suv', 'truck']);
   assert(/^Car: Race car\. Key 1\. Top speed \d of 5/.test(s.focus), `focused card has an accessible name (${s.focus})`);
   await page.keyboard.down('KeyW'); await wait(150);
   assert.equal(await page.evaluate(() => !!(game.keys.has('KeyW') || game.input.throttle)), false, 'game keys held off while open');
@@ -78,7 +78,7 @@ try {
   await press('ArrowRight', 'ArrowRight', 'ArrowDown');
   s = await state(); console.log('aircraft types:', JSON.stringify(s));
   assert(s.sel === 'jet' && s.row === 'jet' && s.cur === 'car', 'aircraft selected, car still current');
-  assert.deepEqual(s.chips, ['fighter*<', 'stealth', 'blackbird', 'prop', 'stunt', 'heli']);
+  assert.deepEqual(s.chips, ['fighter*<', 'stealth', 'blackbird', 'airliner', 'prop', 'stunt', 'heli']);
   await shot('picker-aircraft-types');
 
   // 4. → → to the Prop plane, Enter: vehicle + type in one go; then paint it blue and reopen

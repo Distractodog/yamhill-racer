@@ -18,6 +18,7 @@ export const ENGINES = {
   // Preserve the original 840–2550 audio-rpm mapping for both Corsa and BMW fallback.
   hatch: { loops: 'hatch', idle: 900, redline: 6500, gears: 5, spread: 4, gearTop: 210, shift: 0.22, dip: 0.35, clunk: 0.45, gain: 0.9, bright: 1,
     pitch: [[900, 840], [2600, 1470], [4400, 2040], [6000, 2550]] },
+  rally: { loops: 'hatch', idle: 1100, redline: 7600, gears: 6, spread: 3.8, gearTop: 260, shift: .08, dip: .4, clunk: .5, crackle: .7, turbo: .85, gain: 1.05, bright: 1.45, pitch: [[1100, 840], [3000, 1470], [5200, 2040], [7600, 2550]] },
   suv: { loops: 'suv', idle: 750, redline: 6200, gears: 6, spread: 4, gearTop: 230, shift: 0.18, dip: 0.55, clunk: 0.25, gain: 0.95, bright: 0.75 },
   truck: { loops: 'truck', idle: 650, redline: 3800, gears: 6, spread: 4.5, gearTop: 170, shift: 0.3, dip: 0.4, clunk: 0.6, turbo: 1, gain: 1.15, bright: 0.6 },
   dirt: { loops: 'dirt', idle: 1600, redline: 11000, gears: 5, spread: 3.3, gearTop: 160, shift: 0.07, dip: 0.4, clunk: 0.3, crackle: 0.15, gain: 0.85, bright: 1.4 },
@@ -25,11 +26,14 @@ export const ENGINES = {
   fighter: { turbine: 1, whine: 1 },
   stealth: { turbine: 2, whine: 1.15 },                 // twin engines: two whines a little apart (a slow beat)
   blackbird: { turbine: 2, whine: 1.15 },
+  airliner: { turbine: 4, whine: .65, afterburner: false },
   prop: { loops: 'prop', idle: 800, redline: 2450, blades: 2, piston: true, gain: 1, bright: 1 },
   stunt: { loops: 'stunt', idle: 850, redline: 2700, blades: 3, piston: true, gain: 1.1, bright: 1.3 },
   heli: { rotor: true },
 };
 const BY_KIND = { car: ['race', 'sports', 'hatch', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'prop', 'stunt', 'heli'] };
+BY_KIND.car.push('rally');
+BY_KIND.jet.push('airliner');
 
 // which engine a vehicle (yours, or another player's puppet) has
 export function engineKey(v) {
@@ -326,7 +330,7 @@ export class EngineVoice {
   updateTurbine(jet, part, t, kmh, dt) {
     const p = part.p, st = this.st, on = jet.mode === 'crashed' ? 0 : 1, th = Math.max(0, Math.min(1, jet.throttle || 0)) * on;
     st.spool += (th - st.spool) * Math.min(1, dt / (th > st.spool ? 1.4 : 1.0));
-    const N = st.spool, ab = on && th > 0.97 && N > 0.85 ? 1 : 0;
+    const N = st.spool, ab = p.afterburner !== false && on && th > 0.97 && N > 0.85 ? 1 : 0;
     if (ab && st.ab < 0.2) this.oneShot(boomBuf(this.ctx), 0.9);
     st.ab += (ab - st.ab) * Math.min(1, dt / (ab ? 0.08 : 0.35));
     ease(part.roar.gain, on * (0.1 + N * 0.5) + st.ab * 0.15, t, 0.15);

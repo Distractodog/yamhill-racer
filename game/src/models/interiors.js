@@ -6,6 +6,7 @@ const SEATS = {
   race:   { eye: [0, .40, -.06], width: .23, depth: .48, drop: .16, cowl: .24, front: .68 },
   sports: { eye: [.34, .64, -.38], width: .80, depth: .86, drop: .28, cowl: .34, front: 1.04 },
   hatch:  { eye: [.39, .80, -.25], width: .87, depth: .82, drop: .28, cowl: .43, front: .82 },
+  rally:  { eye: [.39, .80, -.25], width: .87, depth: .82, drop: .28, cowl: .43, front: .82 },
   suv:    { eye: [.48, .94, -.18], width: 1.05, depth: .92, drop: .31, cowl: .50, front: 1.00 },
   truck:  { eye: [.48, 1.48, -.12], width: 1.02, depth: .86, drop: .29, cowl: .82, front: .89 },
 };
@@ -96,7 +97,7 @@ export function ensureGroundInterior(model, kind, type) {
   }
   if (!bike) {
     group.position.copy(eye);
-    const { width: w, depth: d, drop } = spec, cx = -eye.x, small = race ? .64 : 1;
+    const { width: w, depth: d, drop } = spec, cx = -eye.x, small = race ? .64 : type === 'rally' ? .84 : 1;
     const chunky = type === 'truck' || type === 'suv';
     box(fittings, race ? dark : lower, w * 2, (chunky ? .25 : .20) * small, .20, cx, -drop - .12 * small, d);
     box(fittings, dark, w * 2, .025, .25, cx, -drop, d);
@@ -144,6 +145,18 @@ export function ensureGroundInterior(model, kind, type) {
       for (const x of [cx - .12, cx + .12]) box(fittings, rubber, .14, .035, .012, x, -drop - .055, d - .108);
     } else {
       for (const s of [-1, 1]) box(fittings, dark, .055, .18, .65, s * w, -.24, .12);
+    }
+    if (type === 'rally') {
+      // Cage follows the cabin perimeter, leaving the road and both gauges clear.
+      for (const s of [-1, 1]) {
+        const x = cx + s * w * .90;
+        rod(fittings, trim, [x, -.45, -.55], [x, .08, -.55], .025, 4);
+        rod(fittings, trim, [x, .08, -.55], [x, .08, .08], .025, 4);
+        rod(fittings, trim, [x, .08, .08], [x, -.25, .68], .025, 4);
+        rod(fittings, trim, [x, -.45, -.55], [x, -.25, .48], .022, 4);
+        box(fittings, dark, .07, .30, .42, s * .24, -.29, -.25);
+      }
+      rod(fittings, trim, [cx - w * .90, .08, -.55], [cx + w * .90, .08, -.55], .025, 4);
     }
   } else {
     // Keep the real tank, forks, mudguard and turning handlebars. The extra instruments and

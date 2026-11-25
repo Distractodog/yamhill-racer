@@ -5,11 +5,13 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export function addCockpit(root, { style, eye, width = .52, depth = .8, blockers = [] }) {
   const group = new THREE.Group(); group.name = 'cockpit'; group.visible = false;
-  group.position.set(0, eye[0], eye[1]); root.add(group);
+  // Optional lateral seat coordinate: translate the first-person deck around the eye.
+  // The camera's existing height/forward convention and exterior framing stay unchanged.
+  group.position.set(style === 'airliner' ? -(eye[2] ?? 0) : 0, eye[0], eye[1]); root.add(group);
   const solid = [], lit = [], dials = [];
   let attitude = null;
   const dark = 0x30353a, edge = 0x788287, leather = 0x393532, face = style === 'prop' ? 0x59584f : 0x343e44;
-  const jet = style === 'fighter' || style === 'stealth', heli = style === 'heli';
+  const jet = style === 'fighter' || style === 'stealth', heli = style === 'heli', airliner = style === 'airliner';
   function part(g, color, x, y, z, luminous = false) {
     const geo = g.index ? g.toNonIndexed() : g;
     if (geo !== g) g.dispose();
@@ -86,6 +88,25 @@ export function addCockpit(root, { style, eye, width = .52, depth = .8, blockers
     bar([-.15, .04, depth + .09], [.15, .04, depth + .09], .006);
     box(.10, .004, .004, 0, -.075, depth + .075, 0x68cda2, true);
     box(.004, .026, .004, 0, -.075, depth + .075, 0x68cda2, true);
+  } else if (airliner) {
+    // Captain's primary instruments sit ahead, clear of the lower-left HUD overlay.
+    for (const side of [-1, 1]) {
+      const x = side * .43;
+      gauge(x - .12, -.39, .065, 'speed');
+      gauge(x + .12, -.39, .065, 'altitude');
+      const screenX = x - .31;
+      box(.22, .14, .014, screenX, -.41, depth - .055, 0x151c20);
+      plane(.20, .12, screenX, -.41, depth - .065, 0x143c40);
+      plane(.15, .003, screenX, -.41, depth - .068, 0x7ba9a5);
+      plane(.003, .09, screenX, -.41, depth - .068, 0x7ba9a5);
+    }
+    box(.29, .24, .6, 0, -.65, .33, face); // centre pedestal and four thrust levers
+    for (const x of [-.09, -.03, .03, .09]) box(.025, .09, .04, x, -.49, .43, 0xd6d1b9);
+    // Shallow, light overhead: only its front edge is in view, even at cruise FOV.
+    box(.48, .035, .12, 0, .65, .72, 0x8b9499, true);
+    for (const z of [.68, .72, .76]) for (const x of [-.12, .12])
+      box(.022, .012, .025, x, .625, z, 0xd7d4bd, true);
+    bar([0, -.34, depth + .08], [0, .64, depth * .88], .0065); // windscreen centre post
   } else {
     gauge(-.23 * width / .52, -.4, .066, heli ? 'rotor' : 'speed');
     gauge(0, -.4, .066, 'altitude');
@@ -102,7 +123,10 @@ export function addCockpit(root, { style, eye, width = .52, depth = .8, blockers
     box(.09, .35, .32, s * .24, -.61, -.17);
     for (const z of [.23, .34]) box(.025, .018, .04, s * width, -.395, z, 0xc2b89b);
     // Trainer's squared windscreen; the other aircraft have swept, faceted bubble bows.
-    if (style === 'prop') {
+    if (airliner) {
+      bar([s * width, -.20, depth + .05], [s * width * .94, .64, depth * .96], .0045);
+      bar([s * width * .94, .64, depth * .96], [0, .64, depth * .88], .0045);
+    } else if (style === 'prop') {
       bar([s * width, -.20, depth + .05], [s * width * .94, .25, depth * .96], .0065);
       bar([s * width * .94, .25, depth * .96], [0, .25, depth * .96], .0065);
     } else {
@@ -115,9 +139,18 @@ export function addCockpit(root, { style, eye, width = .52, depth = .8, blockers
   }
   box(.26, .23, .12, 0, -.12, -.3);
   // Throttle / collective to the left; central stick or the trainer's forked yoke.
-  bar([width - .07, -.57, .16], [width - .07, -.34, .30], .016);
-  box(.095, .04, .05, width - .07, -.33, .30, heli ? 0x444c50 : 0xb38345);
-  if (style === 'prop') {
+  if (!airliner) {
+    bar([width - .07, -.57, .16], [width - .07, -.34, .30], .016);
+    box(.095, .04, .05, width - .07, -.33, .30, heli ? 0x444c50 : 0xb38345);
+  }
+  if (airliner) {
+    for (const x of [-.43, .43]) {
+      bar([x, -.73, .24], [x, -.47, .70], .014);
+      bar([x-.14, -.47, .70], [x+.14, -.47, .70], .012);
+      for (const s of [-1, 1]) bar([x+s*.14, -.47, .70], [x+s*.14, -.43, .70], .016, dark);
+      box(.3, .35, .12, x, -.55, -.28, leather);
+    }
+  } else if (style === 'prop') {
     bar([0, -.55, depth - .05], [0, -.47, depth - .12], .02);
     bar([-.15, -.47, depth - .12], [.15, -.47, depth - .12], .018);
     for (const s of [-1, 1]) bar([s * .15, -.47, depth - .12], [s * .15, -.40, depth - .12], .023, dark);
@@ -155,7 +188,7 @@ export function addCockpit(root, { style, eye, width = .52, depth = .8, blockers
       const dial = dials[i];
       let value = 0;
       switch (dial.signal) {
-        case 'speed': value = v.vel.length() * 3.6 / (style === 'blackbird' ? 3600 : jet ? 2000 : style === 'stunt' ? 450 : 300); break;
+        case 'speed': value = v.vel.length() * 3.6 / (style === 'blackbird' ? 3600 : airliner ? 1000 : jet ? 2000 : style === 'stunt' ? 450 : 300); break;
         case 'rotor': value = v.rotor ?? v.throttle ?? 0; break;
         case 'altitude': value = Math.max(0, v.renderPos.y) % 1000 / 1000; break;
         case 'climb': value = .5 + v.vel.y / 40; break;

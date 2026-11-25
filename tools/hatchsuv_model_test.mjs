@@ -1,4 +1,4 @@
-// Node geometry checks for the shaped Hatchback and SUV models (game/src/models/hatch.js, suv.js): triangle budget near /
+// Node geometry checks for the shaped Hatchback, Rally and SUV models (game/src/models/hatch.js, rally.js, suv.js): triangle budget near /
 // far, finite positions, outward-facing surfaces, size, paint roles, light anchors, and the wheels inside their arches.
 // node tools/hatchsuv_model_test.mjs
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ function volume(g) {
   return v;
 }
 const table = [];
-for (const id of ['hatch', 'suv']) {
+for (const id of ['hatch', 'rally', 'suv']) {
   const spec = typeInfo('car', id), p = spec.physics, model = buildVehicleTypeModel('car', id), ud = model.userData;
   model.updateMatrixWorld(true);
   const lod = model.getObjectByName('body-lod'), near = model.getObjectByName('body-near'), far = model.getObjectByName('body-far');
@@ -58,7 +58,7 @@ for (const id of ['hatch', 'suv']) {
     const wb = new THREE.Box3().setFromObject(w.holder);
     assert(Math.abs(wb.max.x) <= box.max.x + .005 && Math.abs(wb.min.x) <= box.max.x + .005, `${id}: wheel ${i} sticks out of the body width`);
   }
-  assert(ud.lights.head.length === 2 && ud.lights.tail.length === 2);
+  assert(ud.lights.head.length === (id === 'rally' ? 6 : 2) && ud.lights.tail.length === 2);
   for (const v of ud.lights.head) assert(v.z > box.max.z - .2 && v.z < box.max.z + .08, `${id}: headlight anchor off the nose`);
   for (const v of ud.lights.tail) assert(v.z < box.min.z + .45, `${id}: tail anchor off the tail`);
   // multiplayer: the painted copy still merges (remotes.js bakes it per group)
@@ -70,4 +70,4 @@ for (const id of ['hatch', 'suv']) {
     wheelArch: ud.wheelArch.join(' '), physWidth: p.width, physLength: p.length });
 }
 console.table(table);
-console.log('PASS: hatch + SUV geometry (budget, finite, outward faces, paint roles, lights, wheel arches).');
+console.log('PASS: hatch + Rally + SUV geometry (budget, finite, outward faces, paint roles, lights, wheel arches).');

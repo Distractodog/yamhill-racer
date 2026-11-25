@@ -352,7 +352,8 @@ function updateJetCamera(dt) {
     camLook.copy(camera.position).addScaledVector(fw, 50);
     camera.up.copy(jUp);
   } else {
-    const dist = camMode === 1 ? 46 : 19 + Math.min(sp, 300) * 0.012, high = camMode === 1 ? 12 : 4.6;
+    const dist = (camMode === 1 ? 46 : 19 + Math.min(sp, 300) * 0.012) * (v.cam?.chaseDistance ?? 1),
+      high = (camMode === 1 ? 12 : 4.6) * (v.cam?.chaseHeight ?? 1);
     const target = fw.clone().copy(rp).addScaledVector(jDir, -dist).addScaledVector(upB, high);
     if (v.mode === 'air') camCeiling = Infinity;
     if (v.mode !== 'air') target.y = Math.min(target.y, chaseCeiling(target, rp, v.vel, dt));
