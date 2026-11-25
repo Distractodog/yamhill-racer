@@ -26,6 +26,7 @@ import { createVehicleLightLenses } from '../lights.js';
 import { Effects } from '../effects.js';
 import { DrivingFX } from '../drivingfx.js';
 import { CarAudio } from '../audio.js';
+import { PITCH_MIN, PITCH_MAX } from '../tankgun.js';
 import { wheelArch } from '../wheeltravel.js';
 
 export const DELAY = 120;            // ms behind the newest states we draw
@@ -49,7 +50,7 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 // ---------------------------------------------------------------- smoothing maths (pure, tested in Node)
 // The animation fields of a state (see net.js animState), range-checked, or null for an older client without them.
 const ANIM_RANGE = { hi: [0, 1000], ld: [0, 1], st: [-1, 1], th: [0, 1], br: [0, 1], sl: [-3, 3], la: [-300, 300], lo: [-300, 300], wd: [0, 5],
-  ln: [-1.2, 1.2], pr: [-30, 30], gr: [0, 1] };
+  ty: [-Math.PI, Math.PI], tp: [PITCH_MIN, PITCH_MAX], ln: [-1.2, 1.2], pr: [-30, 30], gr: [0, 1] };
 const ANIM_NUM = Object.keys(ANIM_RANGE);
 const surfOf = x => Number.isInteger(x) && x >= 0 && x < 8 ? x : 0;
 export function parseAnim(msg) {
@@ -132,6 +133,7 @@ export function animAt(buf, t, out = { w: [], ws: [], jc: [0, 0, 0] }) {
   if (!a || !b) { a = b = a || b; u = 0; }
   const near = u < 0.5 ? a : b;
   for (const k of ANIM_NUM) out[k] = a[k] + (b[k] - a[k]) * u;
+  out.ty = a.ty + Math.atan2(Math.sin(b.ty - a.ty), Math.cos(b.ty - a.ty)) * u;
   // Impact/landing strengths are event peaks: interpolation can hide their onset at high frame rates.
   for (const k of ['ab', 'hb', 'dr', 'ow', 'wl', 'sf', 'md', 'hi', 'ld']) out[k] = near[k];
   out.w.length = out.ws.length = near.w.length;
@@ -202,6 +204,10 @@ export function animate(pz, a, r, V, F, dt, moving = true) {
     inp.throttle = pz.lonAcc > 1 ? 1 : 0; inp.brake = pz.lonAcc < -8 ? 1 : 0;
     pz.lean += (clamp(-Math.atan(speed * r.yawRate / 17), -1, 1) - pz.lean) * k;   // lean = atan(v·ω / g)
     pz.throttle = speed < 3 ? 0 : clamp(speed / 250, 0.05, 1); pz.gear = speed < 85 ? 1 : 0; pz.mode = speed > 60 ? 'air' : 'ground';
+  }
+  if (kind === 'car' && pz.type === 'tank') {
+    pz.mesh.userData.turret.rotation.y = a?.ty || 0;
+    pz.mesh.userData.barrel.rotation.x = -(a?.tp || 0);
   }
   if (kind === 'jet') {
     const brake = a?.ab && pz.mode !== 'crashed' ? 1 : 0;

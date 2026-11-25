@@ -4,6 +4,7 @@
 <header>Aircraft weapons — E/LMB cannon, Q/RMB missile; LB/RB on gamepad<br><button id="view">Chase / cockpit</button><button id="lock">Toggle race lockout</button><span id="stats"></span></header>
 <script type="module">
 import * as THREE from 'three';
+import { tankGunRay } from '../game/src/tankgun.js';
 import { createWeapons } from '../game/src/weapons.js';
 import { Effects } from '../game/src/effects.js';
 import { CarAudio } from '../game/src/audio.js';
@@ -14,8 +15,12 @@ scene.add(new THREE.HemisphereLight(0xe1f0ff, 0x586b36, 2.5)); const sun = new T
 const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, .1, 1800);
 const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(innerWidth, innerHeight); document.body.append(renderer.domElement);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000).rotateX(-Math.PI/2), new THREE.MeshStandardMaterial({ color: 0x536b38, roughness: 1 })); scene.add(ground);
-const vehicle = { kind: 'jet', type: new URLSearchParams(location.search).get('type') || 'fighter', vel: new THREE.Vector3(), mode: 'air' };
-vehicle.mesh = buildVehicleTypeModel('jet', vehicle.type); vehicle.mesh.position.set(0, 14, 0); scene.add(vehicle.mesh); vehicle.mesh.rotation.x = Number(params.get('pitch')) || 0; vehicle.mesh.updateMatrixWorld(true);
+const tank = params.get('type') === 'tank';
+const vehicle = { kind: tank ? 'car' : 'jet', type: params.get('type') || 'fighter', vel: new THREE.Vector3(), mode: tank ? 'ground' : 'air' };
+if (tank) { document.title = 'Tank cannon review'; document.querySelector('header').firstChild.textContent = 'Tank — arrows / right stick aim, E / LMB / LB fire; Q / RMB disabled'; }
+vehicle.mesh = buildVehicleTypeModel(vehicle.kind, vehicle.type); vehicle.mesh.position.set(0, tank ? .6 : 14, 0); scene.add(vehicle.mesh); vehicle.mesh.rotation.x = Number(params.get('pitch')) || 0; vehicle.mesh.updateMatrixWorld(true);
+if (tank) { vehicle.mesh.userData.turret.rotation.y = .35; vehicle.mesh.userData.barrel.rotation.x = .10; vehicle.mesh.updateMatrixWorld(true); }
+const gunOrigin = new THREE.Vector3(), gunDirection = new THREE.Vector3();
 const trees = [];
 for (let i = 0; i < (blast ? 0 : 50); i++) { const x = i % 5 === 0 ? 0 : ((i % 5) - 2) * 15, z = 55 + Math.floor(i / 5) * 22, height = 22;
  const tree = new THREE.Group(); const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.4, .6, height, 5), new THREE.MeshStandardMaterial({ color: 0x705231 })); trunk.position.y = height / 2; tree.add(trunk);
@@ -30,9 +35,20 @@ document.querySelector('#view').onclick = () => { cockpit = !cockpit; vehicle.me
 document.querySelector('#lock').onclick = () => { locked = !locked; };
 let last = performance.now(), elapsed = 0, maxMs = 0, frames = 0, totalMs = 0;
 let demoShot = false;
-function frame(now) { const dt = Math.min(.05, Math.max(0, (now-last)/1000), Math.max(0, freeze-elapsed)); last = now; elapsed += dt;
+function frame(now) { let dt = Math.min(.05, Math.max(0, (now-last)/1000), Math.max(0, freeze-elapsed)); last = now; elapsed += dt;
  if (!blast && elapsed < 2) keys.add('KeyE'); else keys.delete('KeyE'); if (!blast && elapsed > .4 && elapsed < .5) keys.add('KeyQ'); else keys.delete('KeyQ');
  camera.position.set(cockpit ? 0 : 5, cockpit ? 15 : 20, cockpit ? 3 : -24); camera.lookAt(0, 14, 180);
+ if (tank) {
+   tankGunRay(vehicle.mesh, gunOrigin, gunDirection);
+   camera.position.copy(cockpit ? gunOrigin : vehicle.mesh.position).addScaledVector(gunDirection, cockpit ? .25 : -14);
+   if (!cockpit) camera.position.y += 6;
+   camera.lookAt(gunOrigin.clone().addScaledVector(gunDirection, 60));
+   if (!demoShot && Number.isFinite(freeze)) {
+     demoShot = true; keys.add('KeyE');
+     for (let t = 0; t < freeze; t += .01) { const step = Math.min(.01, freeze - t); weapons.update(step, keys, null); effects.advance(step); }
+     keys.clear(); elapsed = freeze; dt = 0;
+   }
+ }
  if (blast && !demoShot) {
    demoShot = true; weapons.core.spawn('missile', new THREE.Vector3(0, .1, blast), new THREE.Vector3(0, -280, 0));
    // Fixed simulation time makes distant-effect screenshots independent of headless frame rate.

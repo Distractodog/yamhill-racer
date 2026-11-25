@@ -1,3 +1,4 @@
+import { isTank, tankDriveKey, tankGunRay } from './tankgun.js';
 import { createWeapons } from './weapons.js';
 import { createCockpitView } from './models/cockpit.js';
 import { ensureGroundInterior } from './models/interiors.js';
@@ -267,7 +268,8 @@ function activePad() {
 let weaponPad = null;
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
-  const k = c => !builder.open && !settings.open && !garage.open && !vehicles.open && held(c);
+  const tank = isTank(vehicles.current);
+  const k = c => !builder.open && !settings.open && !garage.open && !vehicles.open && tankDriveKey(tank, c) && held(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
@@ -389,6 +391,17 @@ function updateJetCamera(dt) {
 function updateCamera(dt) {
   if (vehicles.current.cam?.jet || (camMode === 2 && vehicles.current.mesh?.userData.cockpit)) { updateJetCamera(dt); return; }
   jFollowing = false;
+  const tank = isTank(vehicles.current);
+  if (tank && camMode === 2) {
+    camCeiling = Infinity;
+    tankGunRay(car.mesh, tmp, fw);
+    camera.position.copy(tmp).addScaledVector(fw, .25);
+    camLook.copy(tmp).addScaledVector(fw, 100);
+    camera.up.set(0, 1, 0); camera.lookAt(camLook);
+    camYaw = null; camY = null;
+    camera.fov += (66 - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
+    return;
+  }
   if (camMode === 2 && vehicles.current.mesh?.userData.interior) {
     camCeiling = Infinity;
     vehicles.current.mesh.userData.interior.camera(camera);
@@ -399,10 +412,11 @@ function updateCamera(dt) {
   }
   const vc = vehicles.current.cam || {};
   fw.set(0, 0, 1).applyQuaternion(car.renderQuat);
+  if (tank) tankGunRay(car.mesh, tmp, fw);
   const sp = car.vel.length();
   const gl = car.glide?.active, hs = Math.hypot(car.vel.x, car.vel.z);
   glideCam += ((gl ? 1 : 0) - glideCam) * Math.min(1, dt * 1.5);
-  const yaw = gl && hs > 4 ? Math.atan2(car.vel.x, car.vel.z) : Math.atan2(fw.x, fw.z);
+  const yaw = !tank && gl && hs > 4 ? Math.atan2(car.vel.x, car.vel.z) : Math.atan2(fw.x, fw.z);
   if (camYaw === null) camYaw = yaw;
   let d = yaw - camYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
   camYaw += d * Math.min(1, dt * (car.drifting ? 3.5 : gl ? 4 : 11));
@@ -540,8 +554,8 @@ function frame(now) {
   const garageBlocked = sessionSpawn.blocked || challenges.state !== 'idle';
   if (garageButton.disabled !== garageBlocked) { garageButton.disabled = garageBlocked; garageButton.title = garageBlocked ? 'Choose a spawn and finish or leave your race to customize' : 'Customize your vehicles'; }
   audio.update(car, input, dt, atmosphere);
-  if (camMode === 2 && !builder.open) ensureGroundInterior(vehicles.current.mesh, vehicles.current.kind, vehicles.current.type);
-  cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open, vehicles.current);
+  if (camMode === 2 && !builder.open && !isTank(vehicles.current)) ensureGroundInterior(vehicles.current.mesh, vehicles.current.kind, vehicles.current.type);
+  cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open && !isTank(vehicles.current), vehicles.current);
   if (builder.open) builder.update(dt); else updateCamera(dt);
   weapons.shakeCamera(dt);
   world.tick?.(now / 1000);
