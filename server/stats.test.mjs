@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import worker, { RelayRoom } from './worker.js';
 import { Lobby } from './lobby.mjs';
-import { Stats, DAY, VISITOR_CAP, RECORD_CAP, ORIGIN, peakConcurrent, renderStats } from './stats.mjs';
+import { Stats, DAY, VISITOR_CAP, RECORD_CAP, CHAT_CAP, RETENTION, ORIGIN, peakConcurrent, renderStats } from './stats.mjs';
 import { countVisit } from '../game/src/visits.js';
 globalThis.crypto ??= webcrypto;
 
@@ -436,4 +436,67 @@ test('solo rooms never count and removing a retained record removes it from ever
   const html = await checkGameCount(f, 0);
   assert.equal((html.match(/MP games with 2\+ players<\/dt><dd>0<\/dd>/g) || []).length, 3);
   assert.equal(f.data.has(dayKey()), false);
+});
+
+test('accepted relay chat logs authoritative game and sender, survives hibernation, and private Chats escapes text', async () => {
+  const f = fixture(), pending = [], sockets = [];
+  const ctx = { ...f.ctx, getWebSockets: () => sockets, waitUntil: p => pending.push(p) };
+  let relay = new RelayRoom(ctx, f.env);
+  await ctx.blockConcurrencyWhile(async () => {}); relay.room.code = 'ABCDE';
+  const send = (ws, msg) => relay.webSocketMessage(ws, JSON.stringify(msg));
+  async function open(id, name, host) {
+    const ws = { messages: [], send(text) { this.messages.push(JSON.parse(text)); }, close() {},
+      serializeAttachment(a) { this.a = structuredClone(a); }, deserializeAttachment() { return this.a; } };
+    sockets.push(ws); relay.room.connect(id, ws);
+    await send(ws, { t: host ? 'hello' : 'join-request', name, host, code: 'ABCDE', skin: { vehicle: 'car' } });
+    return ws;
+  }
+  const host = await open('Host00000001', '<Host>', true);
+  const guest = await open('Guest0000001', '<Guest>', false);
+  await send(host, { t: 'join-accept', id: 'Guest0000001' });
+  const game = guest.messages.find(m => m.t === 'stats-game').id;
+  await send(guest, { t: 'chat', text: '  <script>\n  ', from: 'forged', name: 'forged', game: 'forged' });
+  for (let i = 0; i < 4; i++) await send(guest, { t: 'chat', text: 'burst' });
+  relay = new RelayRoom(ctx, f.env); await ctx.blockConcurrencyWhile(async () => {});
+  await send(guest, { t: 'chat', text: 'hibernation bypass' });
+  await send(host, { t: 'chat', text: 'host reply' });
+  await Promise.all(pending);
+  const lines = [...f.data].filter(([k]) => k.startsWith('chat:')).map(([, v]) => v);
+  assert.equal(lines.length, 4); assert.equal(f.data.get('chat-count'), 4);
+  const first = lines.find(l => l.text === '<script>');
+  assert.deepEqual(first, { time: first.time, game, code: 'ABCDE', host: '<Host>', name: '<Guest>', session: 'Guest0000001', text: '<script>' });
+  assert.ok(lines.every(l => l.game === game));
+  assert.ok(lines.some(l => l.name === '<Host>' && l.session === 'Host00000001'));
+  const response = await worker.fetch(new Request('https://relay/stats?key=test-key'), f.env), html = await response.text();
+  assert.equal(response.status, 200); assert.match(html, /<h2>Chats<\/h2>/);
+  assert.ok(html.includes('&lt;script&gt;') && html.includes('&lt;Guest&gt;') && html.includes('&lt;Host&gt;'));
+  assert.ok(!html.includes('<script>') && !html.includes('hibernation bypass'));
+  for (const url of ['https://relay/stats', 'https://relay/stats?key=wrong']) assert.equal((await worker.fetch(new Request(url), f.env)).status, 404);
+  assert.equal((await worker.fetch(new Request('https://relay/chat', { method: 'POST' }), f.env)).status, 400, 'internal chat ingestion is not public');
+});
+
+test('chat retention and total cap drop oldest, preserve full logs and sort games newest first', async () => {
+  const f = fixture(), now = Date.now();
+  const line = (time, game = 'old-game') => ({ time, game, code: 'ABCDE', host: 'Host', name: 'Guest', session: 'Guest0000001', text: 'hello' });
+  for (let i = 0; i < CHAT_CAP; i++) {
+    const time = now - 100000 + i;
+    f.data.set(`chat:${String(time).padStart(16, '0')}:seed`, line(time));
+  }
+  const expired = now - (RETENTION + 1) * DAY;
+  const expiredKey = `chat:${String(expired).padStart(16, '0')}:expired`;
+  f.data.set(expiredKey, line(expired)); f.data.set('chat-count', CHAT_CAP + 1);
+  const post = lines => f.stats.fetch(new Request('https://stats/chat', { method: 'POST', body: JSON.stringify({ lines }) }));
+  await post([line(now, 'new-game')]);
+  assert.equal(f.data.has(expiredKey), false); assert.equal(f.data.get('chat-count'), CHAT_CAP);
+  const records = await f.stats.records('chat:', CHAT_CAP); assert.equal(records.length, CHAT_CAP);
+  assert.equal(Math.min(...records.map(l => l.time)), now - 99999);
+  await post([line(expired), { ...line(now), text: 'x'.repeat(201) }, null]);
+  assert.equal(f.data.get('chat-count'), CHAT_CAP);
+  const html = renderStats([], [], [], now, records.slice(0, 3).concat(line(now, 'new-game')));
+  assert.ok(html.indexOf('Game: new-game') < html.indexOf('Game: old-game'));
+  assert.equal((html.match(/<td>hello<\/td>/g) || []).length, 4);
+  const realNow = Date.now;
+  try { Date.now = () => now + (RETENTION + 1) * DAY; await f.stats.alarm(); }
+  finally { Date.now = realNow; }
+  assert.equal((await f.stats.records('chat:', CHAT_CAP)).length, 0); assert.equal(f.data.has('chat-count'), false);
 });

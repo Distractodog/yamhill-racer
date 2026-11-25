@@ -36,6 +36,7 @@ export class RelayRoom {
     const first = sockets[0]?.deserializeAttachment();
     this.room = new Room(first?.code);
     this.stats = new RelayStats(ctx, env, this.room);
+    this.room.onChat = line => this.stats.chat(line);
     for (const ws of sockets) {
       const attachment = ws.deserializeAttachment();
       if (attachment?.session) this.room.restore(ws, attachment.session);

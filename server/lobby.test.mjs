@@ -157,11 +157,12 @@ test('request preparation handles cancellation and duplicate messages during Lob
   assert.equal(lobby.state.requests.get(id(2)).until, 0);
   assert.equal(guest.attachment.session, null);
 });
-test('largest allowed pending/host attachments remain below Cloudflare 2 KiB after heartbeat', async () => {
+test('largest allowed pending/host attachments remain below Cloudflare 2 KiB after heartbeat and chat', async () => {
   const { relay, host } = await adapterFixture();
   const skin = { vehicle: 'car', data: '' }; skin.data = 'x'.repeat(1024 - JSON.stringify(skin).length);
   relay.room.host.player.name = '\u0000'.repeat(128); relay.room.host.player.skin = skin;
   await relay.webSocketMessage(host, JSON.stringify({ t: 'heartbeat' }));
+  await relay.webSocketMessage(host, JSON.stringify({ t: 'chat', text: 'hello' }));
   const guest = socket(); relay.room.connect(id(2), guest);
   await relay.webSocketMessage(guest, JSON.stringify({ ...hello(), name: '\u0000'.repeat(128), skin }));
   for (const ws of [host, guest]) {

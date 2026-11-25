@@ -1,4 +1,5 @@
 import { validShot, validHit } from '../game/src/weaponswire.js';
+import { chatText } from '../game/src/mp/chatwire.js';
 import { LobbyState } from './lobby.mjs';
 import { validChunk, acceptChunk } from '../game/src/builder/wire.js';
 // Transport-independent protocol. Clients provide send(JSON text) and close(code, reason).
@@ -20,9 +21,10 @@ const skinOK = skin => object(skin) && ['car', 'bike', 'jet'].includes(skin.vehi
   new TextEncoder().encode(JSON.stringify(skin)).length <= 1024;
 
 export class Room {
-  constructor(code, { now = Date.now, admission = new LobbyState({ now }) } = {}) {
+  constructor(code, { now = Date.now, admission = new LobbyState({ now }), onChat = () => {} } = {}) {
     this.code = code;
     this.now = now; this.admission = admission;
+    this.onChat = onChat;
     this.clients = new Map();
     this.world = null;
     this.layout = null; this.layoutPending = null;
@@ -134,6 +136,17 @@ export class Room {
       this.send(target[0], { t: 'kicked' });
       this.leave(target[0]);
       this.close(target[0], 'kicked');
+    } else if (msg.t === 'chat') {
+      const text = chatText(msg.text);
+      if (!text) return;
+      // A three-token bucket expressed as one refill timestamp (one token per 1000 ms).
+      // Keeping only this integer also leaves room in the 2 KiB hibernation attachment.
+      const next = Math.max(srvT - 2000, session.chatNext ?? -Infinity);
+      if (next > srvT) return;
+      session.chatNext = next + 1000;
+      const line = { t: 'chat', from: session.id, name: session.player.name, text, srvT };
+      this.broadcast(line);
+      this.onChat(line);
     } else if (msg.t === 'shot') {
       if (this.host?.weapons === false || !validShot(msg)) return;
       // Token bucket survives Durable Object hibernation in the session attachment.
@@ -175,6 +188,7 @@ export class Room {
     if (this.players.length >= MAX_PLAYERS) return this.removeRejected(client, 'full');
     s.player = { id: s.id, ...s.pending, host };
     this.finishRequest(s);
+    if (host) delete s.key; // Hosts never claim a Lobby request; their admission key is now unused.
     this.broadcast({ t: 'joined', player: s.player }, client);
     this.roster();
     if (this.world) this.send(client, this.world);

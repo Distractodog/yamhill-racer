@@ -1,8 +1,10 @@
 // Bounded anonymous session analytics. Never retain addresses, paths or raw visitor IDs.
+import { chatText } from '../game/src/mp/chatwire.js';
 export const ORIGIN = 'https://distractodog.github.io';
 export const DAY = 86400000;
 export const VISITOR_CAP = 10000;
 export const RECORD_CAP = 2000;
+export const CHAT_CAP = 20000;
 export const RETENTION = 60;
 const date = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 const empty = () => ({ visits: 0, unique: 0, countries: {} });
@@ -33,7 +35,25 @@ function creditPlay(s, delta, now) {
 export class Stats {
   constructor(ctx) { this.ctx = ctx; }
   fetch(request) { return this.ctx.blockConcurrencyWhile(() => this.handle(request)); }
-  async records(prefix) { return [...(await this.ctx.storage.list({ prefix, limit: RECORD_CAP + 1 })).values()]; }
+  async records(prefix, cap = RECORD_CAP) { return [...(await this.ctx.storage.list({ prefix, limit: cap + 1 })).values()]; }
+  async trimChats(added = 0) {
+    const storage = this.ctx.storage;
+    let count = (await storage.get('chat-count') ?? 0) + added;
+    const end = `chat:${String(Date.now() - RETENTION * DAY).padStart(16, '0')}:`;
+    // Timestamp-ordered keys let normal writes prune in small batches without reading every log.
+    for (;;) {
+      const expired = await storage.list({ prefix: 'chat:', end, limit: 128 });
+      if (!expired.size) break;
+      await storage.delete([...expired.keys()]); count -= expired.size;
+    }
+    while (count > CHAT_CAP) {
+      const oldest = await storage.list({ prefix: 'chat:', limit: Math.min(128, count - CHAT_CAP) });
+      if (!oldest.size) { count = 0; break; }
+      await storage.delete([...oldest.keys()]); count -= oldest.size;
+    }
+    if (count > 0) await storage.put('chat-count', count);
+    else await storage.delete('chat-count');
+  }
   async trim(prefix, time, cap = RECORD_CAP) {
     const entries = [...await this.ctx.storage.list({ prefix })].sort((a, b) => time(a[1]) - time(b[1]));
     const expired = entries.filter(([, v], i) => time(v) < Date.now() - RETENTION * DAY || i < entries.length - cap);
@@ -51,12 +71,29 @@ export class Stats {
         rows.push({ day, ...((await storage.get(`day:${day}`)) || empty()) });
         day = new Date(Date.parse(`${day}T12:00:00Z`) - DAY).toISOString().slice(0, 10);
       }
-      return new Response(renderStats(rows, await this.records('session:'), await this.records('game:'), now), { headers: {
+      await this.trimChats();
+      return new Response(renderStats(rows, await this.records('session:'), await this.records('game:'), now, await this.records('chat:', CHAT_CAP)), { headers: {
         'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
         'X-Robots-Tag': 'noindex, nofollow', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
       } });
     }
     const body = await request.json().catch(() => ({}));
+    if (path === '/chat') {
+      if (!Array.isArray(body?.lines) || body.lines.length > 128) return new Response(null, { status: 400 });
+      const records = {};
+      for (const line of body.lines) {
+        const text = chatText(line?.text);
+        if (!text || !Number.isFinite(line.time) || line.time < now - RETENTION * DAY || line.time > now + 60000 ||
+            !str(line.game) || !str(line.session)) continue;
+        records[`chat:${String(Math.floor(line.time)).padStart(16, '0')}:${crypto.randomUUID()}`] = {
+          time: line.time, game: str(line.game), code: str(line.code, 5), host: str(line.host, 128),
+          name: str(line.name, 128), session: str(line.session), text,
+        };
+      }
+      const count = Object.keys(records).length;
+      if (count) { await storage.put(records); await this.trimChats(count); }
+      return new Response(null, { status: 204 });
+    }
     if (path === '/game') {
       // Legacy ID-less reports cannot be reconciled with a game record.
       if (str(body.id)) {
@@ -124,6 +161,7 @@ export class Stats {
   async alarm() {
     await this.trim('session:', s => s.start);
     await this.trim('game:', s => s.start);
+    await this.trimChats();
     const cutoff = date(Date.now() - (RETENTION - 1) * DAY);
     for (const prefix of ['day:', 'visitor:']) {
       for (;;) {
@@ -175,6 +213,7 @@ export async function hit(request, env) {
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const time = ms => ms == null ? '—' : new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ms));
+const chatClock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', dateStyle: 'medium', timeStyle: 'medium' });
 // Legacy records have only a lifetime peak; their start day is the best available date.
 const mpDays = game => game.mpDays ?? (game.maxPlayers >= 2 ? [date(game.start)] : []);
 const duration = ms => `${(Math.max(0, ms || 0) / 60000).toFixed(1)} min`;
@@ -191,12 +230,21 @@ export function peakConcurrent(sessions, from, to) {
   }
   return peak;
 }
-export function renderStats(rows, sessions = [], games = [], now = Date.now()) {
+export function renderStats(rows, sessions = [], games = [], now = Date.now(), chats = []) {
   sessions = [...sessions].sort((a, b) => b.start - a.start);
   games = [...games].sort((a, b) => b.start - a.start);
   const today = date(now), gameDays = new Map(games.map(g => [g, mpDays(g)]));
   const table = (headers, content) => `<div class="scroll"><table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${content || `<tr><td colspan="${headers.length}">No records yet</td></tr>`}</tbody></table></div>`;
   const tr = values => `<tr>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
+  const logs = new Map(), gameStarts = new Map(games.map(g => [g.id, g.start]));
+  for (const line of [...chats].sort((a, b) => a.time - b.time)) {
+    if (!logs.has(line.game)) logs.set(line.game, []);
+    logs.get(line.game).push(line);
+  }
+  const chatHTML = [...logs].sort((a, b) => (gameStarts.get(b[0]) ?? b[1][0].time) - (gameStarts.get(a[0]) ?? a[1][0].time)).map(([id, lines]) => {
+    const first = lines[0];
+    return `<details><summary>${esc(time(gameStarts.get(id) ?? first.time))} · ${esc(first.code)} · Host: ${esc(first.host)} (${lines.length} messages)</summary><p>Game: ${esc(id)}</p>${table(['Time', 'Player', 'Message'], lines.map(line => tr([esc(chatClock.format(line.time)), esc(line.name), esc(line.text)])).join(''))}</details>`;
+  }).join('') || '<p>No chats yet</p>';
   const periods = [[1, 'Today'], [7, '7 days'], [30, '30 days']];
   const cards = periods.map(([days, label]) => {
     const first = rows[Math.min(days - 1, rows.length - 1)]?.day || date(now);
@@ -235,6 +283,7 @@ ${table(['Start', 'End', 'Duration / active', 'Country', 'Player', 'Vehicles', '
 <h2>Multiplayer games</h2>${table(['Start', 'End', 'Game', 'Host nickname', 'Max players', '2+ player days (Pacific)', 'Player nicknames', 'Duration'], games.map(g => tr([
   time(g.start), `${time(g.end ?? g.last)}${g.end == null ? ' <small>(last report)</small>' : ''}`, `${esc(g.code)}<br><small>${esc(g.id)}</small>`, esc(g.host || 'anonymous'), g.maxPlayers, gameDays.get(g).map(esc).join('<br>') || '—', (g.names || []).map(esc).join(', '), duration((g.end ?? g.last) - g.start),
 ])).join(''))}
+<h2>Chats</h2><p>Newest games first. Messages are retained for ${RETENTION} days, up to ${CHAT_CAP.toLocaleString()} messages in total.</p>${chatHTML}
 <h2>Per day</h2><p>Visits are page loads; daily unique totals count visitor-days. MP games are counted when at least two players are in the same game: once per game per Pacific day, derived from the retained game records above. Summary cards count distinct games in each period. Older records use the start day when daily presence was unavailable. Only visit counters survive detail-record caps.</p>
 ${table(['Date (Pacific)', 'Visits', 'Unique visitors', 'MP games', 'Play time'], daily.map(r => tr([r.day, r.visits, r.unique, r.games, duration(r.play)])).join('') + tr(['30-day totals', totals.visits, totals.unique, totals.games, duration(totals.play)]))}
 <h2>Top countries (visits)</h2>${table(['Country', 'Visits'], Object.entries(daily.reduce((a, r) => { for (const [k, v] of Object.entries(r.countries)) a[k] = (a[k] || 0) + v; return a; }, {})).sort((a, b) => b[1] - a[1]).map(([k, v]) => tr([esc(k), v])).join(''))}
