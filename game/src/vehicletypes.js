@@ -15,6 +15,7 @@ import { buildHeliModel } from './models/heli.js';
 import { primeWheelArch } from './wheeltravel.js';
 import { buildHatchModel } from './models/hatch.js';
 import { buildRallyModel } from './models/rally.js';
+import { buildTankModel } from './models/tank.js';
 import { buildSuvModel } from './models/suv.js';
 
 export const VEHICLE_TYPE_KEY = 'yr-vtype-1';
@@ -33,6 +34,13 @@ export const VEHICLE_TYPES = {
       // grass, forest floor, trail, asphalt, gravel, water, concrete, running track: loose grip beats the truck; road grip below sports.
       physics: { mass: 1250, width: .98, length: .84, radius: .36, lean: 1.1, grip: [1.48,1.45,1.5,1.02,1.5,1,1,1], drive: [1.35,1.3,1.4,1,1.4,1,1,1] },
       colors: { body: '#1d4fa8', trim: '#f2c230', wheels: '#d6ad45' } },
+    { id: 'tank', name: 'Tank', description: 'Heavy armour, steady tracks and diesel torque. Slow, planted off-road driving.',
+      cam: { dist: 8.5, high: 3.5 },
+      tuning: { accel: 8, topSpeed: 70, brakeDecel: 18, steerLock: .38, steerRate: 3, turnResponse: 6, cornerGrip: 25,
+        restLength: .65, springK: 240000, damping: 28000, snap: 100, downforce: .004 },
+      physics: { mass: 6000, width: 1.65, length: 1.65, radius: .46, lean: .12,
+        grip: [1.5,1.45,1.5,1,1.5,1,1,1], drive: [1.3,1.25,1.3,1,1.3,1,1,1] },
+      colors: { body: '#5b6540', trim: '#3a3f2c', wheels: '#3a3f2c' } },
     { id: 'suv', name: 'SUV', description: 'Tall, soft suspension and sure footing on dirt and gravel.',
       tuning: { accel: 22, topSpeed: 650, cornerGrip: 27, turnResponse: 13, restLength: .62, springK: 70000, damping: 7500, downforce: .0015 },
       physics: { mass: 1500, width: 1.12, length: 1.05, radius: .46, lean: 2, grip: [1.22,1.2,1.22,.96,1.25,1,1,1] } },
@@ -89,6 +97,7 @@ export function loadVehicleTypes(storage) {
 export function buildVehicleTypeModel(kind, id) {
   const type = typeInfo(kind, id)?.id;
   if (kind === 'car' && type === 'hatch') return buildHatchModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
+  if (kind === 'car' && type === 'tank') return buildTankModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car' && type === 'rally') return buildRallyModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car' && type === 'suv') return buildSuvModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
   if (kind === 'car') return type === 'race' ? buildCarModel() : buildTypeCarModel(type, typeInfo(kind, type).physics, typeInfo(kind, type).tuning);
@@ -115,6 +124,7 @@ export function applyVehicleType(vehicle, id) {
   });
   if (vehicle.kind === 'car') {
     const p = spec.physics;
+    vehicle.cam = spec.cam; // Tank's larger hull needs room; other car types keep the camera defaults.
     vehicle.typeHalf = p ? new THREE.Vector3(.9 * p.width, .38, 2.15 * p.length) : null;
     vehicle.half = p ? { x: 1.15 * p.width, front: 2.4 * p.length, back: -2.4 * p.length } : undefined;
     vehicle.wheels.forEach((w, i) => {

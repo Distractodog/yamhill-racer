@@ -75,11 +75,11 @@ for (const [a, b, metric] of [
 assert(!compareFrames([frame(1, 33.2)], [frame(8, 33.4)], 'impact', limits).pass, 'CPU guardrail unchanged despite cadence jitter');
 
 const focused = dentOptions(['--timing-only', '--speeds', 'full', '--samples', '4'], {});
-assert.deepEqual(dentCasePlan(focused), { types: ['race', 'sports', 'hatch', 'rally', 'suv', 'truck'], speeds: ['full'], matchedPairs: 24,
-  measuredRuns: 48, comparisons: 24, controlledWallApproaches: 204, gpuChecks: 6, gpuHelperCollisions: 12,
-  expectedPNGs: 30, failurePNGAdditional: true, scope: 'timing + GPU; no Garage/paint/static appearance suite' });
+assert.deepEqual(dentCasePlan(focused), { types: ['race', 'sports', 'hatch', 'rally', 'tank', 'suv', 'truck'], speeds: ['full'], matchedPairs: 28,
+  measuredRuns: 56, comparisons: 28, controlledWallApproaches: 238, gpuChecks: 7, gpuHelperCollisions: 14,
+  expectedPNGs: 35, failurePNGAdditional: true, scope: 'timing + GPU; no Garage/paint/static appearance suite' });
 const full = dentCasePlan(dentOptions([], {}));
-assert.equal(full.controlledWallApproaches, 468); assert.equal(full.expectedPNGs, 234); assert.equal(full.measuredRuns, 96);
+assert.equal(full.controlledWallApproaches, 546); assert.equal(full.expectedPNGs, 273); assert.equal(full.measuredRuns, 112);
 const forwarded = dentRunnerArgs(focused, 'http://127.0.0.1:23456/');
 const parsed = dentOptions(forwarded, {}, true);
 assert.equal(parsed.timingOnly, true); assert.deepEqual(parsed.speeds, ['full']); assert.equal(parsed.url, 'http://127.0.0.1:23456/');
@@ -129,7 +129,7 @@ const after = await dentSources(copy); assert.notEqual(before.game.sha256, after
 const helpOut = join(copy, 'help-must-not-write');
 for (const file of ['tools/car_damage_check.mjs', 'tools/car_damage_shots.mjs']) {
   const help = execFileSync(process.execPath, [join(root, file), '--help', '--out', helpOut], { cwd: copy, env: { ...process.env, CHROME_PATH: '/no-chrome', YR_DENT_SAMPLES: 'bad' }, encoding: 'utf8' });
-  assert(help.includes('--timing-only') && help.includes('204 controlled wall approaches'));
+  assert(help.includes('--timing-only') && help.includes('238 controlled wall approaches'));
 }
 await assert.rejects(stat(helpOut));
 
@@ -163,7 +163,7 @@ for (const scenario of ['success', 'failure', 'interrupt', 'bind-failure']) {
   assert.equal(report.author, 'distractodog'); assert(closed && disconnected); assert.equal(spawned, scenario !== 'bind-failure');
   assert.equal(report.status, scenario === 'success' ? 'passed' : scenario === 'interrupt' ? 'interrupted' : 'failed');
   assert.equal(fakeProcess.exitCode, scenario === 'success' ? undefined : scenario === 'interrupt' ? 130 : 1);
-  assert.equal(fakeProcess.listenerCount('SIGINT'), 0); assert.equal(report.plan.measuredRuns, 48);
+  assert.equal(fakeProcess.listenerCount('SIGINT'), 0); assert.equal(report.plan.measuredRuns, 56);
   assert(report.sources.game.sha256 && report.sources.tools.sha256); assert.equal(await readFile(join(out, 'existing.png'), 'utf8'), 'preserve me');
   console.log(`distractodog PASS launcher ${scenario}: focused arguments, metadata, report, cleanup and preserved evidence`);
 }

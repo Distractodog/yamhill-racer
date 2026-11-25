@@ -73,9 +73,9 @@ const table=[];
 for(const [kind,types] of Object.entries(VEHICLE_TYPES).filter(([kind])=>kind!=='jet')) for(const type of types) {
   const v=make(kind,type.id);v.reset(-4900,0,Math.PI/2);
   const straight=simulate(v,180,(t,i)=>{i.throttle=1;});
-  assert(straight.t100!==null,`${type.id} never reached 100`);
+  assert(v.t.topSpeed < 100 || straight.t100!==null,`${type.id} never reached 100`);
   assert(straight.endSpeed>v.t.topSpeed*.9&&straight.endSpeed<v.t.topSpeed*1.08,`${type.id}: unexpected top ${straight.endSpeed}`);
-  console.log(`${type.name}: 0–100 ${straight.t100.toFixed(2)} s, top ${straight.endSpeed.toFixed(0)} km/h`);
+  console.log(`${type.name}: 0–100 ${(straight.t100?.toFixed(2) ?? '—')} s, top ${straight.endSpeed.toFixed(0)} km/h`);
   const dirt=make(kind,type.id,flat(4));dirt.reset(0,0,0);
   const gravelAccel=simulate(dirt,10,(t,i)=>{i.throttle=1;});
   const real=make(kind,type.id,world),asphalt=routeDrive(real,routes[0]),gravel=routeDrive(real,routes[1]);
@@ -83,7 +83,7 @@ for(const [kind,types] of Object.entries(VEHICLE_TYPES).filter(([kind])=>kind!==
     assert(v.mesh.userData.lights.head.every(p=>p.isVector3));assert(v.mesh.userData.lights.tail.every(p=>p.isVector3));
     let paint=0;v.mesh.traverse(o=>{if(o.material?.userData?.cosmeticRole==='body')paint++;});assert(paint>0);
   }
-  table.push({type:type.name,'0–100 s':straight.t100.toFixed(2),'top km/h':straight.endSpeed.toFixed(0),'gravel 0–100 s':gravelAccel.t100?.toFixed(2),
+  table.push({type:type.name,'0–100 s':(straight.t100?.toFixed(2) ?? '—'),'top km/h':straight.endSpeed.toFixed(0),'gravel 0–100 s':gravelAccel.t100?.toFixed(2),
     'campus m / % road':`${asphalt.travelled} / ${asphalt.coverage}`,'gravel m / % road':`${gravel.travelled} / ${gravel.coverage}`,flips:0,NaN:false});
   for(const m of [v,dirt,real])disposeCosmeticPreview(m.mesh);
 }

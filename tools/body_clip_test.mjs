@@ -7,7 +7,7 @@
 // downforce, pitch, roll, launches, landings) is the real physics. Also prints the physics chassis (the car's ground
 // box, the bike's body floor) so physics and drawing can be told apart.
 //   node tools/body_clip_test.mjs            all types, asserts (run through the heavy gate: several minutes)
-//   node tools/body_clip_test.mjs suv flat   only these types / places (race sports hatch rally suv truck dirt sport; flat hwy ramp jitter)
+//   node tools/body_clip_test.mjs suv flat   only these types / places (race sports hatch rally tank suv truck dirt sport; flat hwy ramp jitter)
 //   node tools/body_clip_test.mjs flat jitter --quick   all types, 100/300 km/h + standing start, 60 Hz lift jitter
 //   REPORT=1 ...                             print the table without failing
 import fs from 'fs';

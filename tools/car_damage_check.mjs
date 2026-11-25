@@ -13,12 +13,12 @@ import { createHash } from 'node:crypto';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
-export const DENT_TYPES = ['race', 'sports', 'hatch', 'rally', 'suv', 'truck'];
+export const DENT_TYPES = ['race', 'sports', 'hatch', 'rally', 'tank', 'suv', 'truck'];
 export const ANALYTICS_URLS = ['https://static.cloudflareinsights.com/beacon.min.js', 'https://cloudflareinsights.com/cdn-cgi/rum'];
 export const DENT_HELP = `distractodog car-dent validation (full suite by default)
 node /absolute/worktree/tools/car_damage_check.mjs [options]
   --out DIR             Evidence directory (default /tmp/yr-car-dents-review)
-  --types LIST          Comma-separated race,sports,hatch,rally,suv,truck (default all)
+  --types LIST          Comma-separated race,sports,hatch,rally,tank,suv,truck (default all)
   --speeds LIST         Timed high (45 m/s),full (type top speed); default high,full
   --samples N           Matched baseline/enabled pairs per type/speed, 2..8 (default 4)
   --timing-only         Skip photographic/Garage/settled scenarios; retain all selected
@@ -27,7 +27,7 @@ node /absolute/worktree/tools/car_damage_check.mjs [options]
   --prepare-preview     Copy ignored local Three.js preview fixtures
   --help                Print this help; no file writes, server or browser
 Recommended cost rerun: --timing-only --speeds full --samples 4
-All six types: 48 measured runs, 24 comparisons, 204 controlled wall approaches
+All seven types: 56 measured runs, 28 comparisons, 238 controlled wall approaches
 (including 12 warmups), plus 6 GPU checks with 12 helper collisions, 30 GPU PNGs.
 Small sample p95 is descriptive and insufficient for high-confidence tail estimates.
 YR_DENT_LIMITS JSON configures technical limits; CPU/frame-time budgets are unchanged.

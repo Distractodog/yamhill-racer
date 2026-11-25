@@ -17,7 +17,7 @@ import { GAME_URL, startGame, holdCar, watchErrors } from './lib/startgame.mjs';
 const args = process.argv.slice(2), opt = (k, d) => args.includes(k) ? args[args.indexOf(k) + 1] : d;
 const out = opt('--out', args.find(a => !a.startsWith('--')) || '/tmp/yr-models');
 const only = opt('--only', '') ? opt('--only', '').split(',') : null;
-const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'rally'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport']]
+const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'rally'], ['car', 'tank'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport']]
   .filter(([, type]) => !only || only.includes(type));
 const SPOT = { x: 19451, z: -11032, yaw: -1.573 };          // a straight road (tools/lights_shots.mjs)
 const report = { pageErrors: [], consoleErrors: [], shots: [], visualReview: 'NOT REVIEWED' };
