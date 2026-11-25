@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Tank model review</title>
+<style>body{margin:0;background:#82939a;color:white;font:15px system-ui}.label{position:absolute;padding:10px;background:#18251dbb}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { paintedModel } from '../game/src/cosmetics.js';
+import { ensureGroundInterior } from '../game/src/models/interiors.js';
+const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(innerWidth, innerHeight);
+renderer.setScissorTest(true); document.body.append(renderer.domElement);
+const poses = [[7, 4, 10], [8, 1.2, 0], [-7, 3, -8], null];
+for (let i = 0; i < poses.length; i++) {
+  const w = innerWidth / 2, h = innerHeight / 2, x = i % 2 * w, y = i < 2 ? h : 0;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color('#82939a');
+  const model = paintedModel('car', i === 2 ? { body: '#887559', trim: '#3b3430', wheels: '#49493e' } : {}, 'tank'); scene.add(model);
+  scene.add(new THREE.HemisphereLight('#e3f3ff', '#655a47', 1.4));
+  const sun = new THREE.DirectionalLight('#fff0db', 2.4); sun.position.set(4, 8, 5); scene.add(sun);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#6b7257' }));
+  ground.position.y = -.80; scene.add(ground);
+  const camera = new THREE.PerspectiveCamera(55, w / h, .06, 250);
+  if (poses[i]) { camera.position.set(...poses[i]); camera.lookAt(0, .5, 1); }
+  else {
+    const interior = ensureGroundInterior(model, 'car', 'tank'); interior.setVisible(true);
+    camera.position.copy(interior.eye); camera.lookAt(interior.eye.clone().add(new THREE.Vector3(0, 0, 10)));
+    for (let z = 12; z <= 60; z += 8) {
+      const marker = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 2), new THREE.MeshLambertMaterial({ color: '#a19a7c' }));
+      marker.position.set(z % 16 ? -5 : 5, .7, z); scene.add(marker);
+    }
+  }
+  renderer.setViewport(x, y, w, h); renderer.setScissor(x, y, w, h); renderer.render(scene, camera);
+  const label = document.createElement('div'); label.className = 'label'; label.style.left = `${x}px`; label.style.top = `${innerHeight - y - h}px`;
+  label.textContent = ['Tank · front', 'Tracks · side', 'Garage paint · rear', 'Commander · armoured view slit'][i]; document.body.append(label);
+}
+console.log('Tank review: front, tracks, custom paint, commander view rendered');
+</script></body></html>

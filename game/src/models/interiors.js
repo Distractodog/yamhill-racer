@@ -7,6 +7,7 @@ const SEATS = {
   sports: { eye: [.34, .64, -.38], width: .80, depth: .86, drop: .28, cowl: .34, front: 1.04 },
   hatch:  { eye: [.39, .80, -.25], width: .87, depth: .82, drop: .28, cowl: .43, front: .82 },
   rally:  { eye: [.39, .80, -.25], width: .87, depth: .82, drop: .28, cowl: .43, front: .82 },
+  tank:   { eye: [.46, 1.64, -.67], width: .48, depth: .65, drop: .24, cowl: 1.12, front: 1.15 },
   suv:    { eye: [.48, .94, -.18], width: 1.05, depth: .92, drop: .31, cowl: .50, front: 1.00 },
   truck:  { eye: [.48, 1.48, -.12], width: 1.02, depth: .86, drop: .29, cowl: .82, front: .89 },
 };
@@ -95,7 +96,20 @@ export function ensureGroundInterior(model, kind, type) {
       new THREE.MeshBasicMaterial({ color: '#f1b16c', side: THREE.DoubleSide }), x, y, z - .006);
     needles.push(needle);
   }
-  if (!bike) {
+  if (type === 'tank') {
+    // Commander's periscope: a narrow armoured slit above the turret, with recessed instruments.
+    group.position.copy(eye);
+    for (const side of [-1, 1]) {
+      box(fittings, dark, .13, .55, .75, side * .49, 0, .38);
+      box(fittings, bodyPaint || accent, .07, .025, .75, side * .42, -.18, .38);
+    }
+    box(fittings, dark, 1.10, .26, .18, 0, .23, .65);
+    box(fittings, dark, 1.10, .22, .18, 0, -.22, .65);
+    box(fittings, trim, .86, .025, .20, 0, -.10, .65);
+    dial(fittings, -.13, -.28, .45, .055);
+    dial(fittings, .13, -.28, .45, .055);
+    for (const side of [-1, 1]) box(controls, rubber, .045, .20, .055, side * .27, -.32, .28);
+  } else if (!bike) {
     group.position.copy(eye);
     const { width: w, depth: d, drop } = spec, cx = -eye.x, small = race ? .64 : type === 'rally' ? .84 : 1;
     const chunky = type === 'truck' || type === 'suv';

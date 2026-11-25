@@ -201,14 +201,14 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   let dark = 0;
   const R3 = makeRemotes({ scene: scene3, camera, mp: m3, fx: false, night: () => dark });
   camera.position.set(0, 3, -25); camera.lookAt(0, 0, 0);
-  const people = [['t', 'car', 'truck', 0], ['s', 'bike', 'sport', 6], ['j', 'jetski', undefined, 12], ['o', 'boat', undefined, 20], ['x', 'car', 'bogus', -8], ['r', 'car', 'rally', -14]];
+  const people = [['t', 'car', 'truck', 0], ['s', 'bike', 'sport', 6], ['j', 'jetski', undefined, 12], ['o', 'boat', undefined, 20], ['x', 'car', 'bogus', -8], ['r', 'car', 'rally', -14], ['k', 'car', 'tank', -22]];
   m3.emit('roster', { t: 'roster', players: people.map(([id, vehicle, type]) => ({ id, name: id, skin: { vehicle, type, colors: { body: '#3366cc' } } })) });
   const by = id => R3.list().find(r => r.id === id);
   const st = (id, v, x, extra = {}) => m3.emit('state', { t: 'state', from: id, srvT: m3.now(), p: [x, 0, 0], q: (extra.q || yawQ(0)).toArray(), vel: [0, 0, 8], v, ts: m3.now(), ...extra.a });
   const go = (n, extra = {}) => { for (let i = 0; i < n; i++) { if (i % 4 === 0) for (const [id, v, , x] of people) st(id, v, x, extra[id] || {}); m3.advance(1000 / 60); R3.update(1 / 60); } };
   go(16);
   assert.deepEqual(people.map(([id]) => [by(id).kind, by(id).type, by(id).model]),
-    [['car', 'truck', 'car-truck'], ['bike', 'sport', 'bike-sport'], ['car', 'race', by('j').model], ['car', 'race', by('o').model], ['car', 'race', by('x').model], ['car', 'rally', 'car-rally']],
+    [['car', 'truck', 'car-truck'], ['bike', 'sport', 'bike-sport'], ['car', 'race', by('j').model], ['car', 'race', by('o').model], ['car', 'race', by('x').model], ['car', 'rally', 'car-rally'], ['car', 'tank', 'car-tank']],
     'kind + type → that model (an unknown type falls back to the Race car)');
   assert.notEqual(by('x').model, 'car-truck');
   // Missing / unknown skin kinds are ignored, preserving the current model, type, paint and tuning.
@@ -231,10 +231,11 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   go(8, { j: { a: {} } }); assert.equal(by('j').visible, true);
   // lights: off by day, lenses at night (no light sources), brake lights with the brake, the type's own anchors
   const lightsOf = id => by(id).anim.lights, isLight = root => { let n = 0; root.traverse(o => { if (o.isLight) n++; }); return n; };
-  assert.deepEqual(people.map(([id]) => lightsOf(id).length), [0, 0, 0, 0, 0, 0], 'day: no lenses lit');
+  assert.deepEqual(people.map(([id]) => lightsOf(id).length), people.map(() => 0), 'day: no lenses lit');
   dark = 1; go(8, { t: { a: { grounded: true, br: 1, w: [9, 9, 9, 9] } }, x: { a: { grounded: true, w: [9, 9, 9, 9] } } });
   assert.deepEqual(lightsOf('t').sort(), [...Array(8).fill('head'), 'tail', 'tail'], 'truck: 2 × 3 headlight bars, bumper and roof bars, two tail');
   assert.deepEqual(lightsOf('s').sort(), ['head', 'head', 'tail'], 'sport bike: twin head, one tail');
+  assert.equal(lightsOf('k').filter(l => l === 'head').length, 2, 'Tank headlights');
   assert.deepEqual(lightsOf('r').sort(), [...Array(6).fill('head'), 'tail', 'tail'], 'Rally: road lamps, four-light pod and tail lamps');
   for (const id of ['j', 'o']) assert.ok(['head', 'tail'].every(k => lightsOf(id).includes(k)), `${id}: car head and tail lights`);
   const tailI = id => { let v = 0; R3.model(id).traverse(o => { if (o.name === 'vehicle-light-tail') v = Math.max(v, o.material.emissiveIntensity); }); return v; };
@@ -250,6 +251,10 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   dark = 0; go(4); assert.equal(lightsOf('t').length, 0, 'lights off again by day');
   // Rally uses the real car's steering/wheel animation after batching, with one body draw and four wheels.
   go(16, { r: { a: { st: .6, grounded: true, w: [10, 10, 10, 10], ws: [3, 3, 3, 3] } } });
+  const tank = R3.model('k');
+  assert(tank.userData.turret && tank.userData.barrel && tank.userData.muzzle, 'Tank remote preserves cannon mounts');
+  assert(tank.userData.wheels.every(w => w.holder.rotation.y === 0), 'Tank tracks stay straight remotely');
+  assert(tank.userData.wheels.every(w => w.spin.rotation.x > 0), 'Tank road wheels spin remotely');
   const rally = R3.model('r'), rallyAnim = by('r').anim;
   assert(rallyAnim.frontYaw < -.1, 'Rally front wheels steer');
   assert(rallyAnim.spin.every(s => s > 0), 'Rally wheels spin');

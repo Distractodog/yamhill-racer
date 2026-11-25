@@ -60,7 +60,7 @@ try {
   let s = await state(); console.log('open on car:', JSON.stringify(s));
   assert(s.open && s.visible && s.cur === 'car' && s.sel === 'car' && s.row === 'car', 'opens on the car, car types under it');
   assert.equal(s.empty, 0, 'every picture is drawn');
-  assert.deepEqual(s.chips, ['race*', 'sports', 'hatch', 'rally', 'suv', 'truck']);
+  assert.deepEqual(s.chips, ['race*', 'sports', 'hatch', 'rally', 'tank', 'suv', 'truck']);
   assert(/^Car: Race car\. Key 1\. Top speed \d of 5/.test(s.focus), `focused card has an accessible name (${s.focus})`);
   await page.keyboard.down('KeyW'); await wait(150);
   assert.equal(await page.evaluate(() => !!(game.keys.has('KeyW') || game.input.throttle)), false, 'game keys held off while open');

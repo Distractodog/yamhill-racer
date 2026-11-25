@@ -18,7 +18,7 @@ import { GAME_URL, startGame, holdCar, watchErrors } from './lib/startgame.mjs';
 const { values } = parseArgs({ options: { out: { type: 'string' }, only: { type: 'string' }, 'no-bench': { type: 'boolean' } } });
 const out = values.out || '/tmp/yr-headlights', only = values.only?.split(',');
 const SPOT = { x: 19451, z: -11032, yaw: -1.573 };              // a straight McMinnville road (tools/lights_shots.mjs)
-const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'rally'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport'],
+const TYPES = [['car', 'race'], ['car', 'sports'], ['car', 'hatch'], ['car', 'rally'], ['car', 'tank'], ['car', 'suv'], ['car', 'truck'], ['bike', 'dirt'], ['bike', 'sport'],
   ['jet', 'prop'], ['jet', 'stunt'], ['jet', 'stealth'], ['jet', 'blackbird'], ['jet', 'airliner'], ['jet', 'heli']].filter(([, t]) => !only || only.includes(t));
 const VIEWS = ['behind', 'front', 'side'];
 await mkdir(out, { recursive: true });
