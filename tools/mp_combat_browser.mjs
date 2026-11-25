@@ -4,22 +4,16 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { resolve, extname, sep } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
-import { startGame, watchErrors } from './lib/startgame.mjs';
-import { missilePose, localURL } from './lib/mp-combat-browser.mjs';
+import { startGame, holdCar, watchErrors } from './lib/startgame.mjs';
+import { missilePose, localURL, findCombatLane } from './lib/mp-combat-browser.mjs';
+import { combatGameHandler } from './lib/mp-combat-server.mjs';
 const root = resolve('game'), out = resolve(process.argv[2] || '/tmp/yr-mp-combat');
-const mime = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.jpg':'image/jpeg', '.png':'image/png', '.ogg':'audio/ogg' };
-const server = createServer(async (req, res) => {
-  try {
-    const path = resolve(root, '.' + new URL(req.url, 'http://local').pathname.replace(/\/$/, '/index.html'));
-    if (!path.startsWith(root + sep)) { res.writeHead(403).end(); return; }
-    res.writeHead(200, { 'Content-Type': mime[extname(path)] || 'application/octet-stream', 'Cache-Control': 'no-store' }).end(await readFile(path));
-  } catch { res.writeHead(404).end(); }
-});
+const server = createServer(combatGameHandler(root));
 let browser, relayProcess, relayExit, deadline;
-const errors = [];
+const errors = [], pages = [];
 const delay = ms => new Promise(r => setTimeout(r, ms));
 async function cleanup() {
   await browser?.close();
@@ -46,17 +40,22 @@ async function run() {
   localURL(relay, ['ws:', 'wss:']);
   browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
     args: ['--no-sandbox', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
-  const pages = [];
   for (const name of ['Ace', 'Driver']) {
     const context = await browser.createBrowserContext(), page = await context.newPage(); pages.push(page);
     await page.setViewport({ width: 1280, height: 800 }); watchErrors(page, name, errors);
     await startGame(page, { url, relay, storage: { 'yr-mp-name-1': name }, hold: { x: -542, z: 440 } });
   }
   const [a, b] = pages;
+  const lane = await a.evaluate(findCombatLane);
+  await holdCar(b, { x: lane.x, z: lane.z });
+  await holdCar(a, { x: lane.x, z: lane.z - 120 });
+  // Revalidate on both clients after streaming at the test site, before aiming or firing.
+  for (const page of pages) await page.evaluate(findCombatLane, null, lane);
   const code = await a.evaluate(async () => { const mp = game.multiplayer.mp; await mp.host(); mp.send({t:'join-policy', anyone:true}); return mp.me.code; });
   await a.waitForFunction(() => document.querySelector('#mp-anyone').checked);
   await b.evaluate(code => game.multiplayer.mp.join(code), code);
   await b.evaluate(() => {
+    game.keys.add('Space'); // Park the target on the verified flat ground.
     window.combatEvidence = { min: 100, wreckAt: null, respawnAt: null, feeds: [], frames: [] };
     let previous = performance.now();
     const sample = now => {
@@ -69,11 +68,20 @@ async function run() {
   });
   await b.waitForFunction(() => !game.combat.state.protected, { timeout: 15000 });
   const target = await b.evaluate(() => game.vehicles.current.pos.toArray());
-  await a.evaluate(async pose => {
-    game.vehicles.choose('jet', 'fighter'); const v = game.vehicles.current;
+  await a.evaluate(() => game.vehicles.choose('jet', 'fighter'));
+  await a.waitForFunction(() => !game.respawnHold.blocked);
+  await a.evaluate(pose => {
+    const v = game.vehicles.current;
+    window.lastCombatImpact = null; window.combatPlayerHits = 0;
+    const onHit = game.weapons.core.onHit;
+    game.weapons.core.onHit = (hit, p, kind, n) => {
+      window.lastCombatImpact = hit.type;
+      if (hit.type === 'player') window.combatPlayerHits++;
+      onHit(hit,p,kind,n);
+    };
     v.pos.fromArray(pose.position); v.quat.fromArray(pose.quaternion); v.vel.set(0,0,0); v.mode = 'air'; v.gear = 0;
     v.step = () => {}; v.savePrev(); v.interpolate(0); v.syncMesh(0); v.mesh.updateMatrixWorld(true);
-  }, missilePose(target));
+  }, missilePose(target, [2,-.4,1], 120, lane.sourceGround + 15 - target[1]));
   await a.waitForFunction(() => game.remotes.count === 1 && !game.respawnHold.blocked);
   // Keep both pages visible to Chrome's scheduler and use the actual game's Q key binding.
   async function missile() {
@@ -81,6 +89,7 @@ async function run() {
     await a.evaluate(() => game.keys.add('KeyQ')); await delay(200); await a.evaluate(() => game.keys.delete('KeyQ')); await delay(400);
   }
   for (let i = 0; i < 4 && !await b.evaluate(() => !!window.combatEvidence.wreckAt); i++) await missile();
+  assert.ok(await a.evaluate(() => window.combatPlayerHits > 0), 'missile must reach the remote car');
   await b.waitForFunction(() => !!window.combatEvidence.wreckAt, { timeout: 10000 });
   await a.waitForFunction(() => document.querySelector('#combat-feed').textContent === 'Ace wrecked Driver', { timeout: 3000 });
   await Promise.all([a.screenshot({ path: `${out}/shooter-feed.png` }), b.screenshot({ path: `${out}/target-wreck.png` })]);
@@ -105,4 +114,12 @@ async function run() {
 }
 try {
   await Promise.race([run(), new Promise((_, reject) => { deadline = setTimeout(() => reject(Error('Combat browser deadline (5 minutes)')), 300000); })]);
+} catch (error) {
+  const states = await Promise.all(pages.map(page => page.evaluate(() => ({
+    pos: game.vehicles.current.pos.toArray(), health: game.combat.state.health,
+    active: game.weapons.core.pool.filter(p => p.active && !p.remote).length,
+    lastImpact: window.lastCombatImpact ?? null,
+  })).catch(() => null)));
+  console.error('COMBAT FAILURE ' + JSON.stringify({ shooter: states[0], target: states[1], error: error.message }));
+  throw error;
 } finally { clearTimeout(deadline); await cleanup(); }

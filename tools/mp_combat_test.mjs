@@ -50,7 +50,7 @@ assert.equal(contacts[0].id, id); assert.equal(contacts[0].n, 42); assert.ok(Mat
 const count = sweeps; core.spawn('missile', { x:0,y:0,z:0 }, { x:0,y:0,z:1000 }, true); core.step(.01);
 core.aimShell({x:0,y:0,z:0}, {x:0,y:0,z:450}, {}); assert.equal(sweeps, count); assert.equal(breaks, 0);
 const wall = createWeaponsCore({ world: { heightAt: () => -100, terrainAt: () => -100,
-  buildingsNear: () => [{ pts: [[-2,2],[2,2],[2,3],[-2,3]], top: 10 }] } });
+  buildingsNear: () => [{ pts: [[-2,3.3],[2,3.3],[2,3.5],[-2,3.5]], top: 10 }] } });
 wall.sweepPlayers = core.sweepPlayers; wall.onHit = target => contacts.push({ ...target });
 wall.spawn('cannon', {x:0,y:0,z:0}, {x:0,y:0,z:1000}); wall.step(.01);
 assert.equal(contacts.at(-1).type, 'building', 'walls block remote hits and are never damaged');
@@ -138,3 +138,56 @@ now += 100; remote.receive({...packet,srvT:now,cw:0,cp:1}); remote.update(.15); 
 now += 5000; remote.update(.1); targetCount = 0; remote.forEachCombat(() => targetCount++); assert.equal(targetCount,0,'stale remotes are not targets');
 remote.receive({t:'left',id:from}); remote.dispose();
 console.log('PASS real remote puppets: tank bounds source, wreck blackening, protection blink, stale/leave cleanup');
+// Roof muzzle clearance is measured in metres, including within one high-speed step.
+for (const kind of ['cannon','missile','rocket','shell']) for (const remote of [false,true]) {
+  let collision;
+  const lip = {pts:[[-2,-1],[2,-1],[2,2],[-2,2]],top:10};
+  const obstacle = {pts:[[-2,4],[2,4],[2,4.1],[-2,4.1]],top:10};
+  const w = createWeaponsCore({world:{heightAt:()=>-100,terrainAt:()=>-100,buildingsNear:()=>[lip,obstacle]},onImpact:(p,h)=>collision={type:h.type,z:p.p.z}});
+  w.spawn(kind,{x:0,y:0,z:0},{x:0,y:0,z:1000},remote); w.step(.01);
+  assert.equal(collision.type,'building'); assert.ok(Math.abs(collision.z-4)<.001, 'roof lip skipped but next building stays solid');
+}
+{
+  let contact;
+  const w = createWeaponsCore({world:{heightAt:()=>-100,terrainAt:()=>-100,buildingsNear:()=>[{pts:[[-2,-1],[2,-1],[2,20],[-2,20]],top:10}]},onImpact:p=>contact=p.p.z});
+  w.spawn('missile',{x:0,y:0,z:0},{x:0,y:0,z:280}); w.step(.02);
+  assert.ok(Math.abs(contact-3)<1e-9,'building still containing the projectile hits at exactly 3 m');
+}
+const { combatGameHandler } = await import('./lib/mp-combat-server.mjs');
+for (const missing of [false,true]) {
+  const response = {heads:[],headersSent:false,writableEnded:false,writeHead(code){assert.equal(this.headersSent,false);this.headersSent=true;this.heads.push(code);return this;},end(body){this.writableEnded=true;this.body=body;return this;}};
+  await combatGameHandler('/game',async()=>{if(missing)throw Error('ENOENT');return 'page';})({url:'/index.html'},response);
+  assert.deepEqual(response.heads,[missing?404:200]); assert.equal(response.writableEnded,true);
+}
+const { findCombatLane } = await import('./lib/mp-combat-browser.mjs');
+const clearWorld = {loadedAt:()=>true,heightAt:()=>10,waterLevelAt:()=>-100,buildingsNear:()=>[{pts:[[100,100],[110,100],[110,110]]}],treesNear(){}};
+assert.equal(findCombatLane(clearWorld,{x:0,z:0}).ground,10,'tile-wide distant buildings do not block lane');
+assert.throws(()=>findCombatLane({...clearWorld,buildingsNear:()=>[{pts:[[-1,-60],[1,-60],[1,-59]]}]},{x:0,z:0}));
+assert.throws(()=>findCombatLane({...clearWorld,treesNear:(x,z,r,cb)=>cb(x,z,1,20,true)},{x:0,z:0}));
+assert.throws(()=>findCombatLane({...clearWorld,heightAt:(x,z)=>z},{x:0,z:0}));
+console.log('PASS follow-up: roof launch clearance, static server success/404, flat clear lane selection');
+if (process.argv.includes('--real')) {
+  const fs = await import('node:fs/promises');
+  const { makeWorld, makeTileData } = await import('../game/src/data.js');
+  const { readTileData } = await import('../game/src/tilepack.js');
+  const manifest = JSON.parse(await fs.readFile('game/assets/world.json','utf8')), world = makeWorld(manifest);
+  for (const [tx,tz] of [[0,0],[-1,0]]) {
+    const read = async name => { const b = await fs.readFile(`game/assets/tiles/${tx}_${tz}/${name}`); return b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength); };
+    world.add(makeTileData(manifest,tx,tz,await readTileData(read,manifest.packed)));
+  }
+  const lane = findCombatLane(world), target = {x:lane.x,y:lane.ground+.75,z:lane.z};
+  const pose = missilePose([target.x,target.y,target.z],[2,-.4,1],120,lane.sourceGround+15-target.y);
+  const q = new THREE.Quaternion().fromArray(pose.quaternion);
+  const origin = new THREE.Vector3(2,-.4,1).applyQuaternion(q).add(new THREE.Vector3().fromArray(pose.position));
+  const velocity = new THREE.Vector3(0,0,280).applyQuaternion(q);
+  let impact;
+  const w = createWeaponsCore({world,onImpact:(p,h)=>impact=h.type});
+  w.sweepPlayers = (x,y,z,dx,dy,dz,best,hit) => {
+    const t = sphereEntry(x,y,z,dx,dy,dz,target,2.6);
+    if (t < best) { hit.type='player'; hit.id=id; return t; } return best;
+  };
+  w.spawn('missile',origin,velocity);
+  for (let i=0;i<20 && !impact;i++) w.step(.1);
+  assert.equal(impact,'player','real-tile missile reaches the parked car');
+  console.log('PASS real clear firing lane and missile contact: '+JSON.stringify(lane));
+}

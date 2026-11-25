@@ -2,14 +2,15 @@ import { isTank } from './tankgun.js';
 // Fixed storage and swept world queries. Local contacts pass through onHit; remote replays never cause damage.
 export const ROUND_CAP = 200, MISSILE_CAP = 24, CANNON_INTERVAL = 1 / 12, MISSILE_COOLDOWN = 1.5;
 export const SHELL_SPEED = 450, SHELL_GRAVITY = 9.8, SHELL_RELOAD = 2.5;
+export const MUZZLE_CLEARANCE = 3;
 export const armed = v => isTank(v) || v?.kind === 'jet' && (v.type === 'fighter' || v.type === 'stealth' || v.type === 'heli');
 const noop = () => {};
 const point = () => ({ x: 0, y: 0, z: 0 });
 export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTrail = noop, roofAt = null }) {
-  const pool = Array.from({ length: ROUND_CAP + MISSILE_CAP }, () => ({ active: false, p: point(), v: point(), life: 0, trail: 0, kind: '', remote: false, from: '', n: 0 }));
+  const pool = Array.from({ length: ROUND_CAP + MISSILE_CAP }, () => ({ active: false, p: point(), v: point(), life: 0, trail: 0, travel: 0, kind: '', remote: false, from: '', n: 0 }));
   const hit = { type: '', id: null }, contact = point(), impact = { dx: 0, dz: 0 };
   let cannon = 0, cooldown = 0, shellCooldown = 0, lastSecondary = false, serial = 0, roundCursor = 0, missileCursor = 0;
-  let ax, ay, az, dx, dy, dz, best;
+  let ax, ay, az, dx, dy, dz, best, buildingMin;
   const bounds = new WeakMap();
   function tree(tx, tz, radius, height, broad, id) {
     const base = (world.terrainAt || world.heightAt)(tx, tz), r = Math.max(radius, height * (broad ? .22 : .16));
@@ -31,7 +32,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
     return yes;
   }
   function buildingAt(b, t, floor, top) {
-    if (t < 0 || t >= best) return;
+    if (t < buildingMin || t >= best) return;
     const x = ax + dx * t, y = ay + dy * t, z = az + dz * t;
     if (y >= floor && y <= (roofAt ? roofAt(b, x, z, world) : top)) { best = t; hit.type = 'building'; hit.id = b; }
   }
@@ -39,7 +40,9 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
     ax = p.p.x; ay = p.p.y; az = p.p.z; dx = p.v.x * dt; dy = p.v.y * dt; dz = p.v.z * dt; best = 1.000001; hit.type = ''; hit.id = null;
     const length = Math.hypot(dx, dy, dz);
     world.treesNear?.(ax + dx / 2, az + dz / 2, Math.hypot(dx, dz) / 2 + 18, tree);
-    const buildings = world.buildingsNear?.(ax + dx / 2, az + dz / 2, length / 2 + 20);
+    // Clip only the building sweep to the first 3 m; terrain, trees and other players remain solid.
+    buildingMin = length > 0 ? Math.max(0, (MUZZLE_CLEARANCE - p.travel) / length) : 0;
+    const buildings = buildingMin > 1 ? null : world.buildingsNear?.(ax + dx / 2, az + dz / 2, length / 2 + 20);
     if (buildings) for (let k = 0; k < buildings.length; k++) {
       const b = buildings[k], pts = b.pts;
       if (!pts?.length) continue;
@@ -47,7 +50,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
       if (!bb) { bb = [Infinity, Infinity, -Infinity, -Infinity]; for (const p of pts) { bb[0] = Math.min(bb[0], p[0]); bb[1] = Math.min(bb[1], p[1]); bb[2] = Math.max(bb[2], p[0]); bb[3] = Math.max(bb[3], p[1]); } bounds.set(b, bb); }
       if (Math.max(ax, ax + dx) < bb[0] || Math.min(ax, ax + dx) > bb[2] || Math.max(az, az + dz) < bb[1] || Math.min(az, az + dz) > bb[3]) continue;
       const floor = (world.terrainAt || world.heightAt)(pts[0][0], pts[0][1]), top = b.top ?? floor + (b.h || 6);
-      if (inside(pts, ax, az)) buildingAt(b, 0, floor, top);
+      if (inside(pts, ax + dx * buildingMin, az + dz * buildingMin)) buildingAt(b, buildingMin, floor, top);
       // Exact wall crossing; a thin wall must not fall between terrain samples.
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
         const a = pts[j], ex = pts[i][0] - a[0], ez = pts[i][1] - a[1], det = dx * ez - dz * ex;
@@ -73,9 +76,10 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
     }
     if (!p.remote && p !== prediction && api.sweepPlayers) best = api.sweepPlayers(ax, ay, az, dx, dy, dz, best, hit);
     const t = Math.min(1, best); p.p.x = ax + dx * t; p.p.y = ay + dy * t; p.p.z = az + dz * t;
+    p.travel += length * t;
     return !!hit.type;
   }
-  const prediction = { p: point(), v: point() };
+  const prediction = { p: point(), v: point(), travel: 0 };
   function shellSweep(p, dt) {
     p.v.y -= SHELL_GRAVITY * dt / 2;
     const collision = sweep(p, dt);
@@ -91,7 +95,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
     pool, sweepPlayers: null,
     get shellCooldown() { return shellCooldown; },
     aimShell(origin, velocity, out) {
-      Object.assign(prediction.p, origin); Object.assign(prediction.v, velocity);
+      prediction.travel = 0; Object.assign(prediction.p, origin); Object.assign(prediction.v, velocity);
       let remaining = 400 / SHELL_SPEED;
       while (remaining > 1e-9) {
         const dt = Math.min(1 / 30, remaining); remaining -= dt;
@@ -110,7 +114,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
       const index = kind === 'cannon' ? roundCursor++ % ROUND_CAP : ROUND_CAP + missileCursor++ % MISSILE_CAP;
       const p = pool[index]; p.active = true; p.kind = kind; p.remote = remote; p.from = from; p.n = n;
       p.p.x = origin.x; p.p.y = origin.y; p.p.z = origin.z; p.v.x = velocity.x; p.v.y = velocity.y; p.v.z = velocity.z;
-      p.life = kind === 'cannon' ? 1.2 : 6; p.trail = 0; onFire(p); return p;
+      p.travel = 0; p.life = kind === 'cannon' ? 1.2 : 6; p.trail = 0; onFire(p); return p;
     },
     clear() { for (const p of pool) p.active = false; cannon = 0; },
     control(dt, vehicle, primary, secondary, blocked, fire) {
