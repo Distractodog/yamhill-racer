@@ -1,6 +1,6 @@
 // Director: every car and bike type model in the real game. Run through the heavy gate with the no-cache server on
 // 127.0.0.1:8173 (Chrome with a GPU, like tools/lights_shots.mjs):
-//   /Users/ethanbristol/argus-runs/.heavy/heavy node tools/model_shots.mjs --out /tmp/yr-models [--only sports,truck]
+//   ~/argus-runs/.heavy/heavy node tools/model_shots.mjs --out /tmp/yr-models [--only sports,truck]
 // For each car type (race, sports, hatch, rally, suv, truck) and bike type (dirt, sport) it writes, as <type>-<shot>.png:
 //   garage (the Garage preview, as opened), front34, rear34, side, top (parked at midday), drive150 (chase camera at
 //   ~150 km/h), night-front34 / night-rear34 (lights on); and per CAR type wheelclip-side / wheelclip-front34, the car
