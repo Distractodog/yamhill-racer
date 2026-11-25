@@ -1,3 +1,4 @@
+import { groundWreckLook, disposeCombatLook } from '../combatlook.js';
 // Other players in a multiplayer game: their vehicle in their own skin, their glider, a name tag, and a named dot on
 // the corner and full maps. Drawing and collision prediction; physics responses live in collide.js.
 // Everything comes through `mp` (net.js): roster / joined / left keep the list, 'state' (~15 Hz) moves them, 'skin'
@@ -55,7 +56,7 @@ const ANIM_NUM = Object.keys(ANIM_RANGE);
 const surfOf = x => Number.isInteger(x) && x >= 0 && x < 8 ? x : 0;
 export function parseAnim(msg) {
   if (!Array.isArray(msg?.w) || !msg.w.length) return null;
-  const a = { ab: msg.ab === 1, hb: !!msg.hb, dr: !!msg.dr, ow: !!msg.ow, wl: !!msg.wl, sf: surfOf(msg.sf),
+  const a = { cp: msg.cp === 1, cw: msg.cw === 1, ab: msg.ab === 1, hb: !!msg.hb, dr: !!msg.dr, ow: !!msg.ow, wl: !!msg.wl, sf: surfOf(msg.sf),
     md: ['g', 'a', 'c'].includes(msg.md) ? msg.md : 'g', jc: [0, 0, 0] };
   for (const k of ANIM_NUM) a[k] = fin(msg[k]) ? clamp(msg[k], ...ANIM_RANGE[k]) : 0;
   a.w = msg.w.slice(0, 4).map(x => fin(x) && x >= 0 ? Math.min(x, 100) : -1);
@@ -135,7 +136,7 @@ export function animAt(buf, t, out = { w: [], ws: [], jc: [0, 0, 0] }) {
   for (const k of ANIM_NUM) out[k] = a[k] + (b[k] - a[k]) * u;
   out.ty = a.ty + Math.atan2(Math.sin(b.ty - a.ty), Math.cos(b.ty - a.ty)) * u;
   // Impact/landing strengths are event peaks: interpolation can hide their onset at high frame rates.
-  for (const k of ['ab', 'hb', 'dr', 'ow', 'wl', 'sf', 'md', 'hi', 'ld']) out[k] = near[k];
+  for (const k of ['cp', 'cw', 'ab', 'hb', 'dr', 'ow', 'wl', 'sf', 'md', 'hi', 'ld']) out[k] = near[k];
   out.w.length = out.ws.length = near.w.length;
   for (let i = 0; i < near.w.length; i++) {
     const x = a.w[i] ?? -1, y = b.w[i] ?? -1;
@@ -351,7 +352,7 @@ function buildBody(kind, colors, tune, type = null) {
   const lenses = createVehicleLightLenses(model, kind);                        // after the merge: lenses stay their own
   return { kind, type, model, pz, lenses, anim: { w: [], ws: [], jc: [0, 0, 0] }, wreck: false, gp: null };
 }
-function disposeBody(b) { b.lenses.dispose(); disposeTree(b.model); }
+function disposeBody(b) { disposeCombatLook(b.model); b.lenses.dispose(); disposeTree(b.model); }
 
 function buildGlider(kind, palette) {
   const model = buildGliderModel(kind === 'bike' ? BIKE_GLIDER.model : undefined);
@@ -440,6 +441,7 @@ function predictFrom(r, atMs, nowMs) {
 // night: () => 0..1, how dark it is here (atmosphere.night): other players' lights glow when it's above 0
 export function makeRemotes({ scene, camera, minimap, mp = null, world = null, audio = null, fx: fxOpt, night = () => 0 } = {}) {
   const group = new THREE.Group(); group.name = 'mp-remotes'; scene?.add(group);
+  const combatTargets = [];
   const players = new Map();             // id → remote
   const now = () => (mp?.now ? mp.now() : performance.now());
   const myId = () => mp?.me?.id;
@@ -472,7 +474,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     if (kind && sig !== r.skinSig[kind]) {
       r.skinSig[kind] = sig; r.colors[kind] = skin.colors || null; r.glider[kind] = gliderPalette(skin.glider, kind); r.type[kind] = type;
       if (r.bodies[kind]) { disposeBody(r.bodies[kind]); r.bodies[kind] = null; }
-      if (kind === r.kind) r.standMat.color.set(bodyColor(r, kind));
+      if (kind === r.kind) { r.standMat.color.set(bodyColor(r, kind)); r.standWreck = false; }
       r.tagSig = '';
     }
   }
@@ -489,7 +491,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
         kind: null, bodies: Object.fromEntries(KINDS.map(k => [k, null])), colors: {}, glider: {}, skinSig: {}, tune: {}, type: {},
         far: false, heading: null, yawRate: 0, vf: 0, dist: Infinity, shown: false, x: 0, z: 0,
         fxState: { e: Effects.vehicleState(), d: DrivingFX.vehicleState() } };
-      players.set(id, r);
+      players.set(id, r); combatTargets.push(r);
     }
     if (typeof info.name === 'string' && info.name) r.name = info.name.slice(0, 24);
     if ('host' in info) r.host = !!info.host;
@@ -502,7 +504,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     r.standMat.dispose(); r.tag.material.map?.dispose(); r.tag.material.dispose();
     r.root.removeFromParent(); r.tag.removeFromParent();
     for (const s of slots) if (s.owner === r) s.owner = null;
-    players.delete(id);
+    players.delete(id); combatTargets.splice(combatTargets.indexOf(r), 1);
   }
   const clear = () => { for (const id of [...players.keys()]) remove(id); };
   function roster(list) {
@@ -566,6 +568,7 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
       const wreck = pz.mode === 'crashed';
       if (wreck !== b.wreck) { b.wreck = wreck; wreckLook(pz.mesh, wreck); }
     } else {
+      pz.combatWreck = !!s.a?.cw; groundWreckLook(pz.mesh, pz.combatWreck);
       pz.glide.active = s.glide;
       if (s.glide || b.gp) { const gp = ensureGlider(r, b); gp.active = s.glide; Glider.prototype.update.call(gp, dt, false); }
     }
@@ -661,11 +664,14 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
       const body = r.far ? r.bodies[kind] : ensureBody(r, kind);
       if (body) body.model.visible = !r.far;
       r.stand.visible = r.far;
+      const standWreck = kind !== 'jet' && !!s.a?.cw;
+      if (standWreck !== r.standWreck) { r.standWreck = standWreck; r.standMat.color.set(standWreck ? 0x24211f : bodyColor(r, kind)); }
       if (!r.far) {
         nearN++;
         if (animateBody(r, body, s, mode, dt)) { fxN++; fxIdle = 0; }
         heard.push({ id: r.id, dist });
       }
+      if (s.a?.cp && Math.floor(clock * 8) % 2) { if (body) body.model.visible = false; r.stand.visible = false; }
       // name tag: same size on screen, a little smaller further off, fades out from TAG_FADE to TAG_HIDE m
       const tag = r.tag;
       if (dist < TAG_HIDE) {
@@ -745,7 +751,14 @@ export function makeRemotes({ scene, camera, minimap, mp = null, world = null, a
     model: r.kind && !r.far ? r.bodies[r.kind]?.model.name || null : null, visible: r.shown,
     far: r.far, glide: !!r.track.latest?.glide, x: r.root.position.x, y: r.root.position.y, z: r.root.position.z, dist: r.dist,
     tag: r.tag.visible, body: r.kind ? bodyColor(r, r.kind) : null, anim: animOf(r) }));
-  const api = { group, update, receive, drawMarkers, dispose, list, stats, predictedState: predicted,
+  function forEachCombat(fn) {
+    const time = now();
+    for (let i = 0; i < combatTargets.length; i++) {
+      const r = combatTargets[i];
+      if (r.shown && r.kind && !r.track.stale(time)) fn(r.id, r.root.position, r.kind, r.type[r.kind]);
+    }
+  }
+  const api = { forEachCombat, group, update, receive, drawMarkers, dispose, list, stats, predictedState: predicted,
     get count() { return players.size; }, get fx() { return fx; }, model: id => { const r = players.get(id); return r?.kind ? r.bodies[r.kind]?.model || null : null; } };
   live = api;
   return api;

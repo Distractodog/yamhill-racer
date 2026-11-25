@@ -1,4 +1,4 @@
-import { validShot } from '../game/src/weaponswire.js';
+import { validShot, validHit } from '../game/src/weaponswire.js';
 import { LobbyState } from './lobby.mjs';
 import { validChunk, acceptChunk } from '../game/src/builder/wire.js';
 // Transport-independent protocol. Clients provide send(JSON text) and close(code, reason).
@@ -61,7 +61,7 @@ export class Room {
       if (session.player && client !== except && (!hostOnly || session.player.host)) this.send(client, msg);
     }
   }
-  roster() { this.broadcast({ t: 'roster', players: this.players }); }
+  roster() { this.broadcast({ t: 'roster', players: this.players, weapons: this.host?.weapons !== false }); }
   receive(client, text) {
     this.expire(); // A late heartbeat cannot revive an expired host.
     const session = this.clients.get(client);
@@ -87,7 +87,7 @@ export class Room {
         if (reason) return this.removeRejected(client, reason);
       }
       session.pending = { name: msg.name, skin: msg.skin };
-      if (msg.host) { session.created = this.now(); session.heartbeat = session.created; session.anyone = false; this.admit(client, true); }
+      if (msg.host) { session.created = this.now(); session.heartbeat = session.created; session.anyone = false; session.weapons = true; this.admit(client, true); }
       else if (this.host.anyone) this.admit(client);
       else {
         session.expires = this.now() + 30000;
@@ -105,6 +105,9 @@ export class Room {
     } else if (msg.t === 'join-policy' && session.player.host && typeof msg.anyone === 'boolean') {
       session.anyone = msg.anyone;
       this.send(client, { t: 'join-policy', anyone: session.anyone });
+    } else if (msg.t === 'weapons-policy' && session.player.host && typeof msg.enabled === 'boolean') {
+      session.weapons = msg.enabled;
+      this.broadcast({ t: 'weapons-policy', enabled: session.weapons });
     } else if (msg.t === 'heartbeat' && session.player.host) {
       session.heartbeat = srvT;
     } else if (msg.t === 'ping') {
@@ -132,13 +135,27 @@ export class Room {
       this.leave(target[0]);
       this.close(target[0], 'kicked');
     } else if (msg.t === 'shot') {
-      if (!validShot(msg)) return;
+      if (this.host?.weapons === false || !validShot(msg)) return;
       // Token bucket survives Durable Object hibernation in the session attachment.
       const tokens = Math.min(24, (session.shotTokens ?? 24) + Math.max(0, srvT - (session.shotTime ?? srvT)) * .018);
       session.shotTime = srvT;
       if (tokens < 1) { session.shotTokens = tokens; return; }
       session.shotTokens = tokens - 1;
       this.broadcast({ t: 'shot', k: msg.k, n: msg.n, p: msg.p, v: msg.v, from: session.id, srvT }, client);
+    } else if (msg.t === 'hit') {
+      if (this.host?.weapons === false || !validHit(msg) || msg.to === session.id) return;
+      const target = [...this.clients].find(([, s]) => s.id === msg.to && s.player);
+      if (!target) return;
+      const tokens = Math.min(64, (session.hitTokens ?? 64) + Math.max(0, srvT - (session.hitTime ?? srvT)) * .048);
+      session.hitTime = srvT;
+      if (tokens < 1) { session.hitTokens = tokens; return; }
+      session.hitTokens = tokens - 1;
+      this.send(target[0], { t: 'hit', to: msg.to, k: msg.k, n: msg.n, d: msg.d, p: msg.p, from: session.id, srvT });
+    } else if (msg.t === 'wrecked') {
+      if (this.host?.weapons === false || !this.players.some(p => p.id === msg.by) || msg.by === session.id) return;
+      if (srvT - (session.lastWreck ?? -Infinity) < 3000) return;
+      session.lastWreck = srvT;
+      this.broadcast({ t: 'wrecked', from: session.id, by: msg.by, srvT }, client);
     } else if (msg.t === 'tree-break') {
       if (typeof msg.id !== 'string' || !/^-?\d{1,3}_-?\d{1,3}:\d{1,6}$/.test(msg.id)) return;
       this.broadcast({ t: 'tree-break', id: msg.id, from: session.id, srvT });

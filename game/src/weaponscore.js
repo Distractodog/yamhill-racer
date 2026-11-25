@@ -1,5 +1,5 @@
 import { isTank } from './tankgun.js';
-// Fixed storage and swept world queries. No player damage: all local contacts pass through onHit.
+// Fixed storage and swept world queries. Local contacts pass through onHit; remote replays never cause damage.
 export const ROUND_CAP = 200, MISSILE_CAP = 24, CANNON_INTERVAL = 1 / 12, MISSILE_COOLDOWN = 1.5;
 export const SHELL_SPEED = 450, SHELL_GRAVITY = 9.8, SHELL_RELOAD = 2.5;
 export const armed = v => isTank(v) || v?.kind === 'jet' && (v.type === 'fighter' || v.type === 'stealth' || v.type === 'heli');
@@ -71,6 +71,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
         best = hi; hit.type = 'terrain'; hit.id = null; break;
       }
     }
+    if (!p.remote && p !== prediction && api.sweepPlayers) best = api.sweepPlayers(ax, ay, az, dx, dy, dz, best, hit);
     const t = Math.min(1, best); p.p.x = ax + dx * t; p.p.y = ay + dy * t; p.p.z = az + dz * t;
     return !!hit.type;
   }
@@ -87,7 +88,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
     if ((x - blastPoint.x) ** 2 + (z - blastPoint.z) ** 2 + dy * dy <= 144) world.breakTree?.(id, impact);
   }
   const api = {
-    pool,
+    pool, sweepPlayers: null,
     get shellCooldown() { return shellCooldown; },
     aimShell(origin, velocity, out) {
       Object.assign(prediction.p, origin); Object.assign(prediction.v, velocity);
@@ -137,7 +138,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
             if (!collision && p.kind === 'cannon') continue;
             if (!collision) { hit.type = 'air'; hit.id = null; }
             contact.x = p.p.x; contact.y = p.p.y; contact.z = p.p.z; impact.dx = p.v.x; impact.dz = p.v.z;
-            if (!p.remote) api.onHit(hit, contact, p.kind);
+            if (!p.remote) api.onHit(hit, contact, p.kind, p.n);
             onImpact(p, hit);
           } else if (p.kind !== 'cannon' && p.kind !== 'shell') { p.trail -= step; if (p.trail <= 0) { onTrail(p); p.trail += .05; } }
         }

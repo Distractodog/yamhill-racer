@@ -10,3 +10,12 @@ export function validShot(m) {
 export function encodeShot(kind, n, point, velocity) {
   return { t: 'shot', k: kind, n, p: [point.x, point.y, point.z], v: [velocity.x, velocity.y, velocity.z] };
 }
+
+export const DAMAGE = Object.freeze({ cannon: 6, missile: 70, rocket: 55, shell: 80 });
+export function validHit(m) {
+  return !!m && m.t === 'hit' && Object.hasOwn(DAMAGE, m.k) &&
+    typeof m.to === 'string' && /^[A-Za-z0-9_-]{12}$/.test(m.to) &&
+    Number.isInteger(m.n) && m.n >= 0 && m.n <= 65535 &&
+    Number.isFinite(m.d) && m.d > 0 && m.d <= DAMAGE[m.k] &&
+    Array.isArray(m.p) && m.p.length === 3 && m.p.every(v => Number.isFinite(v) && Math.abs(v) <= 100000);
+}
