@@ -1,3 +1,4 @@
+import { WeaponAudio } from './audio/weapons.js';
 // Vehicle sounds. Engines: audio/engines.js (a voice per vehicle type: loops pitch-shifted by rpm through each type's
 // gears, jet turbines, propellers, the helicopter's rotor), through the Engines volume. Tyre squeal, gravel, grass, rain,
 // splash, wind and impacts: audio/effects.js, through the Effects volume. Volumes: audio/mixer.js (Settings → Sound).
@@ -41,10 +42,17 @@ export class CarAudio {
     this.effects = new EffectsAudio(ctx, master, { remote: this.opts.remote, volume: this.opts.effectsVolume ?? 1 });
   }
 
+  weapon(kind, level) {
+    if (!this.ctx) return;
+    this.weapons ||= new WeaponAudio(this.ctx, this.master);
+    this.weapons.shot(kind, level);
+  }
+
   // silence for good (another player's engine that is no longer needed); start() builds it again
   stop() {
     if (!this.ctx) return;
     for (const s of this.sources) try { s.stop(); } catch {}
+    this.weapons?.stop(); this.weapons = null;
     this.engine?.stop(); this.engine = null;
     this.effects?.stop(); this.effects = null;
     this.master.disconnect(); this.engineOut.disconnect(); this.sources = []; this.ctx = null;
