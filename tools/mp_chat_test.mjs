@@ -43,7 +43,7 @@ key('Enter'); assert.equal(chat.open, false, 'single player has no chat');
 mp.inGame = true; handlers.get('connected')();
 blocked = true; key('Enter'); assert.equal(chat.open, false, 'welcome and panels retain Enter'); blocked = false;
 key('Enter'); assert.equal(chat.open, true); assert.equal(keys.size, 0); assert.equal(editingInput(doc.activeElement), true);
-assert.equal(chat.input.maxLength, 200); assert.match(chat.input.placeholder, /messages are saved by the game owner/);
+assert.equal(chat.input.maxLength, 200); assert.equal(chat.input.placeholder, 'Chat');
 for (const code of ['KeyW', 'KeyQ', 'Space', 'KeyV', 'KeyJ', 'KeyM', 'KeyT']) assert.equal(key(code).gameUI, true);
 assert.equal(shortcuts, 0);
 chat.input.value = '  Hi\u0000 <script>  '; key('Enter', { isComposing: true }); assert.equal(sent.length, 0);

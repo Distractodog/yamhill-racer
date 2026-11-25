@@ -9,7 +9,7 @@ export function createChat({ mp, clearKeys, canOpen = () => true, doc = document
   const root = doc.createElement('section'); root.id = 'mp-chat'; root.hidden = true;
   const list = doc.createElement('div'); list.id = 'mp-chat-lines'; list.setAttribute('role', 'log');
   const input = doc.createElement('input'); input.id = 'mp-chat-input'; input.maxLength = 200;
-  input.placeholder = 'Chat (messages are saved by the game owner)';
+  input.placeholder = 'Chat';
   input.setAttribute('aria-label', input.placeholder); input.autocomplete = 'off'; input.hidden = true;
   const status = doc.createElement('div'); status.setAttribute('role', 'status');
   root.append(list, input, status); doc.body.append(root);
