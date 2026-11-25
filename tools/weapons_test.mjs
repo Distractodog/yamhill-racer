@@ -99,4 +99,23 @@ for (const fps of [30, 60, 120]) {
   for (let i = 0; i < 100; i++) audio.shot('cannon', 1);
   assert.equal(sources.length, 24); audio.stop(); assert.equal(audio.voices.size, 0);
 }
+// Off-axis chase/cockpit views must project the gun direction, including a tilted helicopter.
+{
+  const THREE = await import('three');
+  const { projectWeaponAim } = await import('../game/src/weapons.js');
+  const mesh = new THREE.Object3D(), out = new THREE.Vector3();
+  mesh.userData.guns = [new THREE.Vector3(0, -.55, 2.65)];
+  mesh.position.set(10, 30, 20); mesh.rotation.set(-.2, .1, .3); mesh.updateMatrixWorld();
+  const camera = new THREE.PerspectiveCamera(65, 1.6, .1, 2000);
+  const expected = mesh.userData.guns[0].clone().applyMatrix4(mesh.matrixWorld)
+    .addScaledVector(new THREE.Vector3(0, 0, 1).transformDirection(mesh.matrixWorld), 600);
+  for (const eye of [[15, 38, -15], [10, 31, 22]]) {
+    camera.position.fromArray(eye); camera.lookAt(10, 30, 200); camera.updateMatrixWorld();
+    assert(projectWeaponAim(mesh, camera, out));
+    assert(out.distanceTo(expected.clone().project(camera)) < 1e-9);
+    assert(Math.abs(out.y) > .1, 'tilted nose does not aim at screen centre');
+  }
+  camera.lookAt(10, 30, -200); camera.updateMatrixWorld();
+  assert.equal(projectWeaponAim(mesh, camera, out), false, 'hide a target behind the camera');
+}
 console.log('PASS weapons: firing, lockouts, sweeps, blasts, remote isolation, pools, wire');
