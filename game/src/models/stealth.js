@@ -123,7 +123,7 @@ export function buildStealthModel() {
   const setSpeedBrake = speedBrakePanels(root, trim, [-1, 1].map(s => ({
     x: s * .72, y: .61, z: -1.9, w: .69, d: 1.5, axis: 'z', side: -s, angle: -s * 1.15,
   })));
-  root.userData = { setSpeedBrake, wheels, noseWheel: wheels[0].holder, setGear, flame, elevator, rudder, aileronL, aileronR,
+  root.userData = { guns: [new THREE.Vector3(.5, -.1, 6.4)], missiles: [new THREE.Vector3(1.8, -.4, .5)], setSpeedBrake, wheels, noseWheel: wheels[0].holder, setGear, flame, elevator, rudder, aileronL, aileronR,
     canopy, wreck, wreckMats, wreckColor, blob: [9.8,13],
     decalPanels: [[.9,.65,2.4,.065,-.9,-Math.PI/2],[.9,.65,-2.4,.065,-.9,-Math.PI/2]],
     lights: { head: [], tail: [], nav: {

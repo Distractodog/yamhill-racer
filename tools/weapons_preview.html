@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Aircraft weapons review</title>
+<style>body{margin:0;background:#7294ab;color:white;font:14px system-ui}header{position:absolute;top:12px;left:16px;z-index:5;text-shadow:0 1px 4px black}canvas{display:block}button{margin:4px}</style>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+<header>Aircraft weapons — E/LMB cannon, Q/RMB missile; LB/RB on gamepad<br><button id="view">Chase / cockpit</button><button id="lock">Toggle race lockout</button><span id="stats"></span></header>
+<script type="module">
+import * as THREE from 'three';
+import { createWeapons } from '../game/src/weapons.js';
+import { Effects } from '../game/src/effects.js';
+import { CarAudio } from '../game/src/audio.js';
+import { buildVehicleTypeModel } from '../game/src/vehicletypes.js';
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x7294ab); scene.fog = new THREE.Fog(0x7294ab, 250, 1300);
+scene.add(new THREE.HemisphereLight(0xe1f0ff, 0x586b36, 2.5)); const sun = new THREE.DirectionalLight(0xffffff, 3); sun.position.set(40, 70, -20); scene.add(sun);
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, .1, 1800);
+const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(innerWidth, innerHeight); document.body.append(renderer.domElement);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000).rotateX(-Math.PI/2), new THREE.MeshStandardMaterial({ color: 0x536b38, roughness: 1 })); scene.add(ground);
+const vehicle = { kind: 'jet', type: new URLSearchParams(location.search).get('type') || 'fighter', vel: new THREE.Vector3(), mode: 'air' };
+vehicle.mesh = buildVehicleTypeModel('jet', vehicle.type); vehicle.mesh.position.set(0, 14, 0); scene.add(vehicle.mesh); vehicle.mesh.updateMatrixWorld(true);
+const trees = [];
+for (let i = 0; i < 50; i++) { const x = i % 5 === 0 ? 0 : ((i % 5) - 2) * 15, z = 55 + Math.floor(i / 5) * 22, height = 22;
+ const tree = new THREE.Group(); const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.4, .6, height, 5), new THREE.MeshStandardMaterial({ color: 0x705231 })); trunk.position.y = height / 2; tree.add(trunk);
+ const crown = new THREE.Mesh(new THREE.ConeGeometry(4, 16, 6), new THREE.MeshStandardMaterial({ color: 0x234a29 })); crown.position.y = 15; tree.add(crown); tree.position.set(x, 0, z); scene.add(tree); trees.push({ x, z, height, tree, broken: false }); }
+let broken = 0, locked = false, cockpit = new URLSearchParams(location.search).has('cockpit');
+vehicle.mesh.visible = !cockpit;
+const world = { heightAt: () => 0, terrainAt: () => 0, buildingsNear: () => [], treesNear(x, z, r, cb) { trees.forEach((t, i) => { if (!t.broken && Math.hypot(t.x-x,t.z-z) <= r + 4) cb(t.x,t.z,.5,t.height,0,i); }); }, breakTree(id) { const t = trees[id]; if (t.broken) return false; t.broken = true; t.tree.visible = false; broken++; return true; } };
+const effects = new Effects(scene), audio = new CarAudio(), sent = [];
+const weapons = createWeapons({ scene, world, effects, audio, camera, canvas: renderer.domElement, vehicle: () => vehicle, blocked: () => locked, mp: { send: m => sent.push(m), on: () => () => {}, me: { id: 'preview' } } });
+const keys = new Set(); addEventListener('keydown', e => { keys.add(e.code); audio.start(); }); addEventListener('keyup', e => keys.delete(e.code)); addEventListener('pointerdown', () => audio.start());
+document.querySelector('#view').onclick = () => { cockpit = !cockpit; vehicle.mesh.visible = !cockpit; };
+document.querySelector('#lock').onclick = () => { locked = !locked; };
+let last = performance.now(), elapsed = 0, maxMs = 0, frames = 0, totalMs = 0;
+function frame(now) { const dt = Math.min(.05, (now-last)/1000); last = now; elapsed += dt;
+ if (elapsed < 2) keys.add('KeyE'); else keys.delete('KeyE'); if (elapsed > .4 && elapsed < .5) keys.add('KeyQ'); else keys.delete('KeyQ');
+ camera.position.set(cockpit ? 0 : 5, cockpit ? 15 : 20, cockpit ? 3 : -24); camera.lookAt(0, 14, 180);
+ const start = performance.now(); weapons.update(dt, keys, null); const ms = performance.now()-start; maxMs = Math.max(maxMs, ms); totalMs += ms; frames++;
+ effects.advance(dt); weapons.shakeCamera(dt); renderer.render(scene, camera);
+ document.querySelector('#stats').textContent = `Trees hit ${broken} · weapon update mean ${(totalMs/frames).toFixed(2)} ms · max ${maxMs.toFixed(2)} ms`;
+ window.review = { broken, sent: sent.length, meanMs: totalMs/frames, maxMs, calls: renderer.info.render.calls };
+ requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
+</script></html>

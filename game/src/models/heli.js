@@ -141,7 +141,7 @@ export function buildHeliModel() {
     ud.head.rotation.x += (-(J.pitch || 0) * .14 - ud.head.rotation.x) * Math.min(1, dt * 8);
     ud.head.rotation.z += ((J.roll || 0) * .1 - ud.head.rotation.z) * Math.min(1, dt * 8);
   }
-  root.userData = { wheels, mainRotor, head, tailRotor, disc, tailDisc, blades, spin: 0, syncMesh, wreck, setGear() {}, canopy,
+  root.userData = { guns: [new THREE.Vector3(0, -.55, 2.65)], missiles: [new THREE.Vector3(1.3, -.4, 1.2)], wheels, mainRotor, head, tailRotor, disc, tailDisc, blades, spin: 0, syncMesh, wreck, setGear() {}, canopy,
     wreckMats: mats, wreckColor: WRECK, blob: [3.2, 8.5],
     // livery number boards and scuffs on the cabin sides (cosmetics.js)
     decalSpots: [[.62, .52, 1.0, -.45, -.25, 0, Math.PI / 2], [.62, .52, -1.0, -.45, -.25, 0, -Math.PI / 2]],
