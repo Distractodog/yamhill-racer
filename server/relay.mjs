@@ -1,3 +1,4 @@
+import { validShot } from '../game/src/weaponswire.js';
 import { LobbyState } from './lobby.mjs';
 import { validChunk, acceptChunk } from '../game/src/builder/wire.js';
 // Transport-independent protocol. Clients provide send(JSON text) and close(code, reason).
@@ -130,6 +131,14 @@ export class Room {
       this.send(target[0], { t: 'kicked' });
       this.leave(target[0]);
       this.close(target[0], 'kicked');
+    } else if (msg.t === 'shot') {
+      if (!validShot(msg)) return;
+      // Token bucket survives Durable Object hibernation in the session attachment.
+      const tokens = Math.min(24, (session.shotTokens ?? 24) + Math.max(0, srvT - (session.shotTime ?? srvT)) * .018);
+      session.shotTime = srvT;
+      if (tokens < 1) { session.shotTokens = tokens; return; }
+      session.shotTokens = tokens - 1;
+      this.broadcast({ t: 'shot', k: msg.k, n: msg.n, p: msg.p, v: msg.v, from: session.id, srvT }, client);
     } else if (msg.t === 'tree-break') {
       if (typeof msg.id !== 'string' || !/^-?\d{1,3}_-?\d{1,3}:\d{1,6}$/.test(msg.id)) return;
       this.broadcast({ t: 'tree-break', id: msg.id, from: session.id, srvT });

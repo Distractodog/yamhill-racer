@@ -15,8 +15,8 @@ async function check(name, fn) {
   try { const note = await fn(); console.log(`ok   ${name}${note ? ` — ${note}` : ''}`); }
   catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }
 }
-const GROUND = ['race', 'sports', 'hatch', 'rally', 'suv', 'truck', 'dirt', 'sport'];
-const TYPES = { car: ['race', 'sports', 'hatch', 'rally', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'airliner', 'prop', 'stunt', 'heli'] };
+const GROUND = ['race', 'sports', 'hatch', 'rally', 'tank', 'suv', 'truck', 'dirt', 'sport'];
+const TYPES = { car: ['race', 'sports', 'hatch', 'rally', 'tank', 'suv', 'truck'], bike: ['dirt', 'sport'], jet: ['fighter', 'stealth', 'blackbird', 'airliner', 'prop', 'stunt', 'heli'] };
 
 // ---------------------------------------------------------------- fake Web Audio
 function fakeAudio() {
@@ -76,7 +76,9 @@ function run(p, { from = 0, to, accel, throttle = 1, seconds, topKmh, dt = 1 / 6
 for (const key of GROUND) {
   await check(`${key}: full throttle shifts up through every gear near the redline, revs stay in range`, () => {
     const p = ENGINES[key], tops = gearTops(p, p.gearTop), top = tops.at(-1);
-    const { log } = run(p, { accel: 6, to: top, seconds: top / 3.6 / 6 + 2, topKmh: p.gearTop });
+    // Slow types need proportionate ramps so the test does not skip whole gears.
+    const accel = 6 * (top < 100 ? top / 170 : 1);
+    const { log } = run(p, { accel, to: top, seconds: top / 3.6 / accel + 2, topKmh: p.gearTop });
     const ups = log.filter(l => l.ev === 'up'), downs = log.filter(l => l.ev === 'down');
     assert.equal(ups.length, p.gears - 1, `${ups.length} up-shifts for ${p.gears} gears`);
     assert.equal(downs.length, 0, 'no down-shift while accelerating');
@@ -104,7 +106,7 @@ for (const key of GROUND) {
     const s = newEngineState(), log = [];
     s.gear = p.gears - 1; s.rpm = p.redline;
     for (let kmh = top; kmh > 0;) {
-      kmh = Math.max(0, kmh - 8 * 3.6 / 60);
+      kmh = Math.max(0, kmh - 8 * (top < 100 ? top / 170 : 1) * 3.6 / 60);
       const ev = stepEngine(s, p, { kmh, throttle: 0, grounded: true, slip: 0, topKmh: p.gearTop }, 1 / 60);
       log.push({ ev, gear: s.gear, rpm: s.rpm });
     }
@@ -125,8 +127,9 @@ await check('revs: on the spot, in the air, wheelspin, past the top gear', () =>
     assert(Math.abs(idle - p.idle) < 1, `${key} idle ${idle}`);
     const inAir = run(p, { from: 60, seconds: 1, throttle: 1, grounded: false, topKmh: p.gearTop }).st.rpm;
     assert(inAir > 0.98 * p.redline, `${key} free revs in the air ${inAir.toFixed(0)}`);
-    const spin = run(p, { from: 20, seconds: 1, throttle: 1, slip: 0.8, topKmh: p.gearTop }).st.rpm;
-    const grip = run(p, { from: 20, seconds: 1, throttle: 1, topKmh: p.gearTop }).st.rpm;
+    const testKmh = p.gearTop < 100 ? p.gearTop * .10 : 20;
+    const spin = run(p, { from: testKmh, seconds: 1, throttle: 1, slip: 0.8, topKmh: p.gearTop }).st.rpm;
+    const grip = run(p, { from: testKmh, seconds: 1, throttle: 1, topKmh: p.gearTop }).st.rpm;
     assert(spin > grip * 1.2, `${key} wheelspin ${spin.toFixed(0)} > ${grip.toFixed(0)}`);
     // arcade top speeds: past the top gear's redline the revs keep climbing a little (no limiter), up to +10 %
     const vmax = 1000, over = run(p, { from: vmax, seconds: 3, throttle: 1, topKmh: vmax });

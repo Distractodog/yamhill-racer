@@ -1,3 +1,4 @@
+import { createWeapons } from './weapons.js';
 import { createCockpitView } from './models/cockpit.js';
 import { ensureGroundInterior } from './models/interiors.js';
 import { createWind } from './wind.js';
@@ -210,7 +211,8 @@ const keys = new Set();                 // physical keys held (e.code)
 // The letter each held key prints on this keyboard layout, so the key *labelled* W is throttle on AZERTY / Dvorak too
 // (there it sends code KeyZ / Comma). Physical WASD keeps working as well.
 const letters = new Map();              // e.code → 'KeyW' etc. from e.key
-const clearKeys = () => { keys.clear(); letters.clear(); };
+let weapons;
+const clearKeys = () => { keys.clear(); letters.clear(); weapons?.clearInput(); };
 const builder = createBuilder({ scene, camera, renderer, world, vehicle: car, mp, clearKeys,
   canOpen: () => !sessionSpawn.blocked && !respawnHold.blocked && challenges.state === 'idle' && !settings.open,
   beforeOpen: () => { settings.closeWelcome(); settings.close(); garage.close(); vehicles.close(); challenges.closeMenu(); minimap.toggle(false); },
@@ -262,6 +264,7 @@ function activePad() {
   }
   return null;
 }
+let weaponPad = null;
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
   const k = c => !builder.open && !settings.open && !garage.open && !vehicles.open && held(c);
@@ -276,7 +279,7 @@ function readInput() {
   J.pitch = (k('ArrowDown') ? 1 : 0) - (k('ArrowUp') ? 1 : 0);
   J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
   J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
-  const gp = activePad();
+  const gp = activePad(); weaponPad = gp;
   if (gp && !builder.open && !settings.open && !garage.open && !vehicles.open) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
@@ -289,6 +292,12 @@ function readInput() {
     if (Math.abs(ax) > 0.12) J.yaw = ax;
   }
 }
+
+weapons = createWeapons({ scene, world, effects, audio, mp, camera, canvas: renderer.domElement,
+  vehicle: () => vehicles.current,
+  blocked: () => challenges.state !== 'idle' || sessionSpawn.blocked || respawnHold.blocked || challenges.blocked ||
+    settings.open || garage.open || vehicles.open || challenges.menuOpen || builder.open || minimap.open || document.hidden,
+});
 
 // ---------------------------------------------------------------- camera
 // Chase cam that follows the car's heading with a little lag, so drifts show the car sideways.
@@ -518,6 +527,7 @@ function frame(now) {
   vehicleLights.update(dt, vehicles.current, atmosphere.night, input);
   glider.update(dt, vehicles.current === vehicles.car); bikeGlider.update(dt, vehicles.current === vehicles.bike);
   car.mesh.updateMatrixWorld(true);
+  weapons.update(dt, keys, weaponPad);
   effects.update(frozen || sessionSpawn.blocked ? 0 : dt, car);
   drivingFX.update(frozen || sessionSpawn.blocked ? 0 : dt, car);
   cosmetics.setWetness(atmosphere.wetness);
@@ -533,6 +543,7 @@ function frame(now) {
   if (camMode === 2 && !builder.open) ensureGroundInterior(vehicles.current.mesh, vehicles.current.kind, vehicles.current.type);
   cockpitView(vehicles.current.mesh, camMode === 2 && !builder.open, vehicles.current);
   if (builder.open) builder.update(dt); else updateCamera(dt);
+  weapons.shakeCamera(dt);
   world.tick?.(now / 1000);
   // the full map being zoomed / dragged (and 300 ms after: minimap.busy) gets the main thread: no world building then.
   // Race loading always builds/renders, even if a map gesture was left active behind its overlay.
@@ -594,6 +605,6 @@ window.game.audio = audio;              // tools/sound_check.mjs
 sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim, vehicles });
 window.game.sessionSpawn = sessionSpawn;
 
-Object.assign(window.game, { graphics, builder, wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
+Object.assign(window.game, { weapons, graphics, builder, wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
 Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

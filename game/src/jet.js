@@ -617,7 +617,7 @@ export function buildJetModel() {
     aileronR.rotation.z = on ? -0.7 : 0;
   };
   // wreckMats / wreckColor / canopy: what wreck() changes, for copies with merged paint (mp/remotes.js)
-  root.userData = { wheels, setGear, setSpeedBrake, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, canopy, wreckMats: mats, wreckColor: WRECK, blob: [9.8, 13], lights: { head: [], tail: [], nav: {
+  root.userData = { guns: [new THREE.Vector3(0, -.15, 7.8)], missiles: [new THREE.Vector3(2, -.4, 1)], wheels, setGear, setSpeedBrake, flame, noseWheel, elevator, rudder, aileronL, aileronR, wreck, canopy, wreckMats: mats, wreckColor: WRECK, blob: [9.8, 13], lights: { head: [], tail: [], nav: {
     left: new THREE.Vector3(5.02, 0, -1.6), right: new THREE.Vector3(-5.02, 0, -1.6),     // on the tip caps' ends
     tail: new THREE.Vector3(0, .58, -5.82), strobe: new THREE.Vector3(0, .82, -.6),
   } } };

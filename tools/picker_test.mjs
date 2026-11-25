@@ -26,6 +26,7 @@ const st = (kind, id) => typeStats(kind, id);
 assert(st('car', 'sports').top >= st('car', 'race').top && st('car', 'race').top > st('car', 'truck').top, 'car top speeds');
 assert(st('car', 'truck').offroad === 5 && st('car', 'sports').offroad === 1, 'truck best off-road, sports car worst');
 assert(st('car', 'rally').offroad >= st('car', 'truck').offroad, 'Rally leads loose-surface grip and drive');
+assert(st('car', 'tank').top === 1 && st('car', 'tank').offroad === 5, 'Tank is slow with strong off-road traction');
 assert(st('car', 'suv').offroad > st('car', 'hatch').offroad, 'SUV beats the hatchback off-road');
 assert(st('bike', 'sport').top > st('bike', 'dirt').top && st('bike', 'dirt').offroad > st('bike', 'sport').offroad, 'bikes');
 assert(st('jet', 'blackbird').top === 5 && st('jet', 'stealth').top < st('jet', 'blackbird').top && st('jet', 'heli').offroad === 5 && st('jet', 'prop').offroad > st('jet', 'fighter').offroad, 'aircraft');

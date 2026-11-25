@@ -331,3 +331,20 @@ test('builder layout chunks survive relay hibernation, including an incomplete t
   assert.equal(adapter.room.layout.length,3);assert.equal(adapter.room.layout.map(c=>c.data).join(''),'x'.repeat(14000));
   await adapter.webSocketClose(host);assert.equal(data.has('layout'),false);
 });
+
+
+test('shot validation, identity, rate limiting and persisted bucket', () => {
+  const { host, join, send, tick, room } = fixture(), guest = join(2);
+  const shot = { t: 'shot', k: 'cannon', n: 1, p: [0, 20, 0], v: [0, 0, 1000], from: 'forged', extra: true };
+  send(host, shot);
+  assert.deepEqual(ofType(guest, 'shot')[0], { t: 'shot', k: 'cannon', n: 1, p: shot.p, v: shot.v, from: id(1), srvT: 1000 });
+  assert.equal(ofType(host, 'shot').length, 0);
+  for (const patch of [{ k: 'damage' }, { p: [0, 0] }, { v: [0, 0, 99999] }, { n: -1 }, { k: 'blast', v: [0, 0, 1] }]) send(host, { ...shot, ...patch });
+  assert.equal(ofType(guest, 'shot').length, 1);
+  for (let i = 0; i < 40; i++) send(host, shot);
+  assert.equal(ofType(guest, 'shot').length, 24);
+  room.restore(host, room.session(host)); send(host, shot);
+  assert.equal(ofType(guest, 'shot').length, 24);
+  tick(1000); send(host, { ...shot, k: 'blast', v: [0, 0, 0] });
+  assert.equal(ofType(guest, 'shot').length, 25);
+});
