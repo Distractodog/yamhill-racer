@@ -65,8 +65,24 @@ async function review() {
     check(v.mesh.userData.wheels.every(w => w.holder.rotation.y === 0), 'tracks remain straight');
     check([...v.pos, ...v.vel, ...v.quat].every(Number.isFinite), 'finite physics');
     const { turret, barrel, muzzle } = v.mesh.userData;
-    check(turret && barrel.parent === turret && muzzle.parent === barrel, 'future cannon hooks');
+    check(turret && barrel.parent === turret && muzzle.parent === barrel, 'cannon mounts');
     v.vel.set(0, 0, 0);
+    const yaw = turret.rotation.y;
+    g.keys.add('ArrowLeft'); g.keys.add('ArrowUp');
+    await sleep(600); g.keys.clear();
+    check(turret.rotation.y > yaw + .2, 'arrows traverse turret');
+    check(barrel.rotation.x < -.1, 'arrows elevate barrel');
+    check(v.input.throttle === 0 && v.input.brake === 0 && v.input.steer === 0, 'arrows do not drive');
+    g.keys.add('KeyQ'); await sleep(100); g.keys.clear();
+    check(g.weapons.core.pool.every(p => !p.active), 'tank secondary disabled');
+    // Lower the barrel for a visible ground impact in the chase screenshot.
+    barrel.rotation.x = .10;
+    g.keys.add('KeyE'); await sleep(100); g.keys.clear();
+    check(g.weapons.core.shellCooldown > 2, 'cannon fired with 2.5s reload');
+    check(g.weapons.core.pool.some(p => p.kind === 'shell'), 'shell uses weapons pool');
+    check(document.querySelector('.weapons-ready').textContent.startsWith('Cannon'), 'cannon HUD');
+    report.turretYaw = turret.rotation.y; report.barrelPitch = -barrel.rotation.x;
+    report.shellReload = g.weapons.core.shellCooldown;
     if (report.view === 'interior') g.setCam(2);
     else if (report.view === 'picker') {
       dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV', key: 'v', bubbles: true }));
@@ -82,7 +98,10 @@ async function review() {
       };
     }
     await sleep(400);
-    if (report.view === 'interior') check(v.mesh.userData.interior?.group.visible, 'commander view active');
+    if (report.view === 'interior') {
+      const direction = v.vel.clone().set(0, 0, 1).transformDirection(muzzle.matrixWorld);
+      check(g.camera.getWorldDirection(v.vel.clone()).dot(direction) > .999, 'gunner view follows barrel');
+    }
     if (report.view === 'picker') {
       const chip = document.querySelector('#veh-menu:not([hidden]) [data-kind="car"][data-type="tank"]');
       check(chip?.classList.contains('cur'), 'Tank picker entry selected');

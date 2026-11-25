@@ -26,6 +26,7 @@ export function defaultRelay(win = globalThis.window) {
 //   st steer · th throttle (the jet: its lever) · br brake · hb handbrake · dr drifting · sl slip · la / lo sideways /
 //   forward acceleration (body roll / pitch) · sf surface · w per-wheel spring compression in cm (-1 = in the air) ·
 //   hi impact speed / ld landing strength (sound effects) · ws per-wheel surface (only when one differs from sf) · ow skimming water · wd water depth ·
+//   tank: ty turret yaw · tp barrel elevation (optional radians)
 //   bike: ln lean · pr pitch rate · wl wheelie · jet: md mode g|a|c · gr gear out 0..1 · ab air-brake flag · jc [pitch, roll, yaw] stick
 const r1 = x => Math.round(x * 10) / 10, r2 = x => Math.round(x * 100) / 100;
 export function animState(v) {
@@ -45,6 +46,10 @@ export function animState(v) {
   }
   if (v.onWater) a.ow = 1;
   put('wd', v.waterDepth);
+  if (kind === 'car' && v.type === 'tank') {
+    put('ty', v.mesh?.userData.turret?.rotation.y);
+    put('tp', -(v.mesh?.userData.barrel?.rotation.x || 0));
+  }
   if (kind === 'bike') { put('ln', v.lean); put('pr', v.pitchRate, r1); if (v.wheelie) a.wl = 1; }
   if (kind === 'jet') {
     a.md = v.mode === 'air' ? 'a' : v.mode === 'crashed' ? 'c' : 'g';

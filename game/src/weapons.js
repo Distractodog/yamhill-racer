@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { createWeaponsCore, armed, ROUND_CAP, MISSILE_CAP } from './weaponscore.js';
+import { createWeaponsCore, armed, ROUND_CAP, MISSILE_CAP, SHELL_SPEED } from './weaponscore.js';
 import { encodeShot, validShot } from './weaponswire.js';
+import { isTank, updateTankGun, tankGunRay } from './tankgun.js';
 import { buildingRoofAt } from './roofs.js';
 
 // Caller updates the camera matrices after its chase/cockpit pose; out is reused every frame.
@@ -16,6 +17,8 @@ export function projectWeaponAim(mesh, camera, out) {
 
 export function createWeapons({ scene, world, effects, audio, mp, camera, canvas, vehicle, blocked }) {
   const origin = new THREE.Vector3(), velocity = new THREE.Vector3(), direction = new THREE.Vector3(), axis = new THREE.Vector3(0, 0, 1);
+  const shellAim = new THREE.Vector3();
+  let aimTimer = 0;
   const aim = new THREE.Vector3(), hot = new THREE.Color(0xfff4cf), flame = new THREE.Color(0xffa52d);
   const pose = new THREE.Object3D(), zero = { x: 0, y: 0, z: 0 };
   const puff = { x: 0, y: 0, z: 0, vx: 0, vy: 1, vz: 0, life: 1.4, size: .4, grow: 2, rot: 0, spin: .2, r: .2, g: .2, b: .2, alpha: .6, ground: -100000, drag: 1, lift: 1, kind: 0 };
@@ -81,7 +84,11 @@ export function createWeapons({ scene, world, effects, audio, mp, camera, canvas
     for (let i = 0; i < 12; i++) { const a = i * 2.39996; chip.vx = Math.sin(a) * 14; chip.vz = Math.cos(a) * 14; chip.vy = 5 + (i % 4) * 3; effects.chips.spawn(chip, effects.time); }
   }
   const core = createWeaponsCore({ world, roofAt: buildingRoofAt,
-    onFire(p) { flash(p.p, p.kind === 'cannon' ? .45 : .8, .07); sound(p.kind, p.p); if (!p.remote) mp?.send(encodeShot(p.kind, p.n, p.p, p.v)); },
+    onFire(p) {
+      flash(p.p, p.kind === 'shell' ? 2 : p.kind === 'cannon' ? .45 : .8, p.kind === 'shell' ? .12 : .07);
+      if (p.kind === 'shell') { smoke(p.p, 2); if (!p.remote) { vehicle().mesh.userData.gunRecoil = .22; shake = Math.max(shake, .12); } }
+      sound(p.kind, p.p); if (!p.remote) mp?.send(encodeShot(p.kind, p.n, p.p, p.v));
+    },
     onTrail(p) { smoke(p.p); },
     onImpact(p, hit) {
       // Authoritative blast packets avoid a remotely broken tree making a replay overshoot its impact.
@@ -97,7 +104,13 @@ export function createWeapons({ scene, world, effects, audio, mp, camera, canvas
     else core.spawn(m.k, origin, velocity, true, m.from, m.n);
   });
   function fire(kind) {
-    const v = vehicle(), anchors = v.mesh.userData[kind === 'cannon' ? 'guns' : 'missiles'];
+    const v = vehicle();
+    if (kind === 'shell') {
+      if (!tankGunRay(v.mesh, origin, direction)) return;
+      velocity.copy(direction).multiplyScalar(SHELL_SPEED).add(v.vel);
+      core.spawn(kind, origin, velocity); return;
+    }
+    const anchors = v.mesh.userData[kind === 'cannon' ? 'guns' : 'missiles'];
     if (!anchors?.length) return;
     origin.copy(anchors[0]).applyMatrix4(v.mesh.matrixWorld);
     direction.set(0, 0, 1).transformDirection(v.mesh.matrixWorld);
@@ -113,6 +126,13 @@ export function createWeapons({ scene, world, effects, audio, mp, camera, canvas
       const v = vehicle(), locked = blocked(), visible = !locked && armed(v) && v.mode !== 'crashed';
       if (locked) { clearInput(); if (!wasBlocked) core.clear(); }
       wasBlocked = locked;
+      updateTankGun(v, dt, keys, pad, locked);
+      aimTimer -= dt;
+      if (visible && isTank(v) && (aimTimer <= 0 || hintVehicle !== v || hintType !== v.type)) {
+        tankGunRay(v.mesh, origin, direction);
+        velocity.copy(direction).multiplyScalar(SHELL_SPEED).add(v.vel);
+        core.aimShell(origin, velocity, shellAim); aimTimer = .05;
+      }
       core.control(dt, v, keys.has('KeyE') || mousePrimary || !!pad?.buttons[4]?.pressed,
         keys.has('KeyQ') || mouseSecondary || !!pad?.buttons[5]?.pressed, locked, fire);
       core.step(dt); clock += dt;
@@ -139,16 +159,20 @@ export function createWeapons({ scene, world, effects, audio, mp, camera, canvas
       help.hidden = !visible || hintTime <= 0;
       if (visible) hintTime = Math.max(0, hintTime - dt);
       if (visible) {
-        const label = v.type === 'heli' ? 'Rocket' : 'Missile', tick = Math.ceil(core.cooldown * 10);
+        const tank = isTank(v), label = tank ? 'Cannon' : v.type === 'heli' ? 'Rocket' : 'Missile', tick = Math.ceil((tank ? core.shellCooldown : core.cooldown) * 10);
         if (tick !== hudTick || label !== hudType) { hudTick = tick; ready.textContent = tick ? `${label} · ${(tick / 10).toFixed(1)} s` : `${label} READY`; }
-        if (label !== hudType) { hudType = label; help.textContent = `Hold E / LMB / LB · Cannon    Press Q / RMB / RB · ${label}`; }
+        if (label !== hudType) { hudType = label; help.textContent = tank ? 'Arrows / Right stick · Aim    E / LMB / LB · Cannon    WASD / Left stick + triggers · Drive' : `Hold E / LMB / LB · Cannon    Press Q / RMB / RB · ${label}`; }
       }
     },
     shakeCamera(dt) {
       if (shake > 0) { camera.position.x += Math.sin(clock * 127) * shake; camera.position.y += Math.cos(clock * 103) * shake; shake = Math.max(0, shake - dt); }
       // main.js calls this after updating either camera, so projection uses this frame's actual view.
       camera.updateMatrixWorld();
-      hud.hidden = !hudVisible || !projectWeaponAim(vehicle().mesh, camera, aim);
+      if (hudVisible && isTank(vehicle())) {
+        aim.copy(shellAim).applyMatrix4(camera.matrixWorldInverse);
+        const front = aim.z < 0; aim.applyMatrix4(camera.projectionMatrix);
+        hud.hidden = !front || Math.abs(aim.x) > 1 || Math.abs(aim.y) > 1;
+      } else hud.hidden = !hudVisible || !projectWeaponAim(vehicle().mesh, camera, aim);
       if (!hud.hidden) {
         const x = Math.round((aim.x + 1) * 5000) / 100, y = Math.round((1 - aim.y) * 5000) / 100;
         if (x !== aimX) { aimX = x; hud.style.left = x + '%'; }

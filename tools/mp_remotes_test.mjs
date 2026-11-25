@@ -3,13 +3,27 @@
 // name tags, map dots, and the per-frame cost of 16 remotes.   node tools/mp_remotes_test.mjs
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { DELAY, MAX_EXTRAP, SNAP, STALE, TAG_HIDE, parseState, pushState, poseAt, Track, bake, createRemotes, makeRemotes } from '../game/src/mp/remotes.js';
+import { DELAY, MAX_EXTRAP, SNAP, STALE, TAG_HIDE, parseState, parseAnim, animAt, pushState, poseAt, Track, bake, createRemotes, makeRemotes } from '../game/src/mp/remotes.js';
+import { animState } from '../game/src/mp/net.js';
 import { buildCarModel } from '../game/src/carmodel.js';
 
 const near = (a, b, eps = 1e-6, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg || ''} ${a} vs ${b}`);
 const yawQ = yaw => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
 const st = (t, x, z, vx = 0, vz = 0, extra = {}) => parseState({ p: [x, 0, z], q: yawQ(extra.yaw || 0).toArray(), vel: [vx, 0, vz], v: extra.v || 'car', glide: extra.glide }, t);
 const P = new THREE.Vector3(), Q = new THREE.Quaternion(), V = new THREE.Vector3();
+
+// Tank turret fields are optional and interpolate across the ±pi seam on the short arc.
+{
+  const vehicle = { kind: 'car', type: 'tank', wheels: [{ contact: true, comp: .1 }],
+    mesh: { userData: { turret: { rotation: { y: 1.23 } }, barrel: { rotation: { x: -.2 } } } } };
+  const wire = JSON.parse(JSON.stringify(animState(vehicle))), a = parseAnim(wire);
+  near(a.ty, 1.23); near(a.tp, .2);
+  const old = parseAnim({ w: [10] }); near(old.ty, 0); near(old.tp, 0);
+  assert.equal(parseAnim({}), null);
+  const out = animAt([{ t: 0, a: { ...a, ty: 3.13 } }, { t: 100, a: { ...a, ty: -3.13 } }], 50);
+  near(out.ty, Math.PI); near(out.tp, .2);
+  const bad = parseAnim({ w: [10], ty: Infinity, tp: 999 }); near(bad.ty, 0); assert(bad.tp < .35);
+}
 
 // ---------------------------------------------------------------- parsing + buffer
 assert.equal(parseState({ p: [0, 0, NaN], q: [0, 0, 0, 1] }, 0), null, 'NaN position rejected');
@@ -251,7 +265,11 @@ const solo = makeRemotes({ scene, camera, minimap: null, mp: null }); solo.updat
   dark = 0; go(4); assert.equal(lightsOf('t').length, 0, 'lights off again by day');
   // Rally uses the real car's steering/wheel animation after batching, with one body draw and four wheels.
   go(16, { r: { a: { st: .6, grounded: true, w: [10, 10, 10, 10], ws: [3, 3, 3, 3] } } });
+  go(16, { r: { a: { st: .6, w: [10, 10, 10, 10] } }, k: { a: { w: [10, 10, 10, 10], ty: 1.2, tp: .2 } } });
   const tank = R3.model('k');
+  near(tank.userData.turret.rotation.y, 1.2); near(tank.userData.barrel.rotation.x, -.2);
+  go(16, { r: { a: { st: .6, w: [10, 10, 10, 10] } }, k: { a: { w: [10, 10, 10, 10] } } });
+  near(tank.userData.turret.rotation.y, 0); near(tank.userData.barrel.rotation.x, 0);
   assert(tank.userData.turret && tank.userData.barrel && tank.userData.muzzle, 'Tank remote preserves cannon mounts');
   assert(tank.userData.wheels.every(w => w.holder.rotation.y === 0), 'Tank tracks stay straight remotely');
   assert(tank.userData.wheels.every(w => w.spin.rotation.x > 0), 'Tank road wheels spin remotely');

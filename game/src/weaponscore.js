@@ -1,12 +1,14 @@
+import { isTank } from './tankgun.js';
 // Fixed storage and swept world queries. No player damage: all local contacts pass through onHit.
 export const ROUND_CAP = 200, MISSILE_CAP = 24, CANNON_INTERVAL = 1 / 12, MISSILE_COOLDOWN = 1.5;
-export const armed = v => v?.kind === 'jet' && (v.type === 'fighter' || v.type === 'stealth' || v.type === 'heli');
+export const SHELL_SPEED = 450, SHELL_GRAVITY = 9.8, SHELL_RELOAD = 2.5;
+export const armed = v => isTank(v) || v?.kind === 'jet' && (v.type === 'fighter' || v.type === 'stealth' || v.type === 'heli');
 const noop = () => {};
 const point = () => ({ x: 0, y: 0, z: 0 });
 export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTrail = noop, roofAt = null }) {
   const pool = Array.from({ length: ROUND_CAP + MISSILE_CAP }, () => ({ active: false, p: point(), v: point(), life: 0, trail: 0, kind: '', remote: false, from: '', n: 0 }));
   const hit = { type: '', id: null }, contact = point(), impact = { dx: 0, dz: 0 };
-  let cannon = 0, cooldown = 0, lastSecondary = false, serial = 0, roundCursor = 0, missileCursor = 0;
+  let cannon = 0, cooldown = 0, shellCooldown = 0, lastSecondary = false, serial = 0, roundCursor = 0, missileCursor = 0;
   let ax, ay, az, dx, dy, dz, best;
   const bounds = new WeakMap();
   function tree(tx, tz, radius, height, broad, id) {
@@ -72,6 +74,13 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
     const t = Math.min(1, best); p.p.x = ax + dx * t; p.p.y = ay + dy * t; p.p.z = az + dz * t;
     return !!hit.type;
   }
+  const prediction = { p: point(), v: point() };
+  function shellSweep(p, dt) {
+    p.v.y -= SHELL_GRAVITY * dt / 2;
+    const collision = sweep(p, dt);
+    p.v.y -= SHELL_GRAVITY * dt / 2;
+    return collision;
+  }
   let blastPoint;
   function blastTree(x, z, r, h, broad, id) {
     const y = (world.terrainAt || world.heightAt)(x, z), dy = Math.max(y - blastPoint.y, 0, blastPoint.y - y - h);
@@ -79,6 +88,17 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
   }
   const api = {
     pool,
+    get shellCooldown() { return shellCooldown; },
+    aimShell(origin, velocity, out) {
+      Object.assign(prediction.p, origin); Object.assign(prediction.v, velocity);
+      let remaining = 400 / SHELL_SPEED;
+      while (remaining > 1e-9) {
+        const dt = Math.min(1 / 30, remaining); remaining -= dt;
+        if (shellSweep(prediction, dt)) break;
+      }
+      out.x = prediction.p.x; out.y = prediction.p.y; out.z = prediction.p.z;
+      return out;
+    },
     get cooldown() { return cooldown; },
     // Phase 2 entry point: target is {type,id}; point is borrowed until the next step.
     onHit(target, p, kind) {
@@ -93,9 +113,14 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
     },
     clear() { for (const p of pool) p.active = false; cannon = 0; },
     control(dt, vehicle, primary, secondary, blocked, fire) {
-      cooldown = Math.max(0, cooldown - dt); cannon -= dt;
+      cooldown = Math.max(0, cooldown - dt); shellCooldown = Math.max(0, shellCooldown - dt); cannon -= dt;
       const press = secondary && !lastSecondary; lastSecondary = secondary;
       if (blocked || !armed(vehicle) || vehicle.mode === 'crashed') { cannon = Math.max(0, cannon); return; }
+      if (isTank(vehicle)) {
+        cannon = Math.max(0, cannon);
+        if (primary && shellCooldown <= 1e-9) { fire('shell'); shellCooldown = SHELL_RELOAD; }
+        return;
+      }
       if (primary) { while (cannon < -1e-9) { fire('cannon'); cannon += CANNON_INTERVAL; } }
       else cannon = Math.max(0, cannon);
       if (press && cooldown <= 1e-9) { fire(vehicle.type === 'heli' ? 'rocket' : 'missile'); cooldown = MISSILE_COOLDOWN; }
@@ -106,7 +131,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
       while (remaining > 1e-9) {
         const step = Math.min(1 / 120, remaining); remaining -= step;
         for (const p of pool) if (p.active) {
-          const collision = sweep(p, step); p.life -= step;
+          const collision = p.kind === 'shell' ? shellSweep(p, step) : sweep(p, step); p.life -= step;
           if (collision || p.life <= 0) {
             p.active = false;
             if (!collision && p.kind === 'cannon') continue;
@@ -114,7 +139,7 @@ export function createWeaponsCore({ world, onFire = noop, onImpact = noop, onTra
             contact.x = p.p.x; contact.y = p.p.y; contact.z = p.p.z; impact.dx = p.v.x; impact.dz = p.v.z;
             if (!p.remote) api.onHit(hit, contact, p.kind);
             onImpact(p, hit);
-          } else if (p.kind !== 'cannon') { p.trail -= step; if (p.trail <= 0) { onTrail(p); p.trail += .05; } }
+          } else if (p.kind !== 'cannon' && p.kind !== 'shell') { p.trail -= step; if (p.trail <= 0) { onTrail(p); p.trail += .05; } }
         }
       }
     },

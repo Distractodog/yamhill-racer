@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createWeaponsCore, ROUND_CAP, MISSILE_CAP, armed } from '../game/src/weaponscore.js';
+import { createWeaponsCore, ROUND_CAP, MISSILE_CAP, armed, SHELL_SPEED, SHELL_RELOAD, SHELL_GRAVITY } from '../game/src/weaponscore.js';
 import { createTreeBreaks, treeId } from '../game/src/treebreak.js';
 import { validShot, encodeShot } from '../game/src/weaponswire.js';
 const v = { kind: 'jet', type: 'fighter' }, p = (x = 0, y = 10, z = 0) => ({ x, y, z });
@@ -91,7 +91,7 @@ for (const fps of [30, 60, 120]) {
     createBuffer(c, size) { const data = new Float32Array(size); return { getChannelData: () => data }; },
     createBufferSource() { const s = { connect(n) { return n; }, start() {}, stop() { this.onended?.(); }, disconnect() {} }; sources.push(s); return s; },
     createGain() { return { gain: { value: 0 }, connect(n) { return n; }, disconnect() {} }; } };
-  for (const kind of ['cannon', 'missile', 'rocket', 'explosion']) {
+  for (const kind of ['cannon', 'missile', 'rocket', 'shell', 'explosion']) {
     const b = weaponBuffer(ctx, kind); assert.equal(b, weaponBuffer(ctx, kind));
     assert(b.getChannelData(0).every(Number.isFinite)); assert(b.getChannelData(0).some(x => x !== 0));
   }
@@ -117,5 +117,87 @@ for (const fps of [30, 60, 120]) {
   }
   camera.lookAt(10, 30, -200); camera.updateMatrixWorld();
   assert.equal(projectWeaponAim(mesh, camera, out), false, 'hide a target behind the camera');
+}
+// Tank controls use the production readInput function, including the original non-tank mapping.
+{
+  const { readFileSync } = await import('node:fs');
+  const { runInNewContext } = await import('node:vm');
+  const { isTank, tankDriveKey, updateTankGun, tankGunRay, TURRET_RATE, PITCH_MIN, PITCH_MAX } = await import('../game/src/tankgun.js');
+  const { buildVehicleTypeModel } = await import('../game/src/vehicletypes.js');
+  const THREE = await import('three');
+  const keys = new Set(), tank = { kind: 'car', type: 'tank', mesh: buildVehicleTypeModel('car', 'tank') };
+  const input = { jet: {} }, context = { input, isTank, tankDriveKey, vehicles: { current: tank },
+    builder: {}, settings: {}, garage: {}, held: c => keys.has(c), activePad: () => null };
+  const source = readFileSync(new URL('../game/src/main.js', import.meta.url), 'utf8');
+  runInNewContext(source.slice(source.indexOf('function readInput()'), source.indexOf('\nweapons = createWeapons')), context);
+  for (const type of ['tank', 'sports', 'race', 'suv']) {
+    tank.type = type;
+    for (const [key, field, expected] of [['ArrowUp', 'throttle', 1], ['ArrowDown', 'brake', 1], ['ArrowLeft', 'steer', -1], ['ArrowRight', 'steer', 1]]) {
+      keys.clear(); keys.add(key); context.readInput();
+      assert.equal(input[field], type === 'tank' ? 0 : expected, `${type} ${key}`);
+    }
+  }
+  tank.type = 'tank';
+  keys.clear(); keys.add('KeyW'); keys.add('KeyD'); context.readInput();
+  assert.equal(input.throttle, 1); assert.equal(input.steer, 1);
+  keys.clear(); context.activePad = () => ({ axes: [.6, 0, -.8, -.4], buttons: Array.from({ length: 8 }, (_, i) => ({ value: i === 7 ? .8 : i === 6 ? .3 : 0 })) });
+  context.readInput(); assert.equal(input.steer, .6); assert.equal(input.throttle, .8); assert.equal(input.brake, .3);
+  tank.mesh.updateMatrixWorld(true);
+  keys.add('ArrowLeft'); keys.add('ArrowUp'); updateTankGun(tank, 1, keys, null, false);
+  assert(Math.abs(tank.mesh.userData.turret.rotation.y - TURRET_RATE) < 1e-9);
+  assert.equal(-tank.mesh.userData.barrel.rotation.x, PITCH_MAX);
+  const yaw = tank.mesh.userData.turret.rotation.y;
+  updateTankGun(tank, 1, keys, null, true); assert.equal(tank.mesh.userData.turret.rotation.y, yaw, 'menu/race locks aiming');
+  keys.clear(); keys.add('ArrowDown'); updateTankGun(tank, 1, keys, null, false);
+  assert.equal(-tank.mesh.userData.barrel.rotation.x, PITCH_MIN);
+  keys.clear(); updateTankGun(tank, .1, keys, { axes: [0, 0, 1, -1] }, false);
+  assert(tank.mesh.userData.turret.rotation.y < yaw); assert(-tank.mesh.userData.barrel.rotation.x > PITCH_MIN);
+  for (let i = 0; i < 1000; i++) updateTankGun(tank, .1, new Set(['ArrowLeft']), null, false);
+  assert(Math.abs(tank.mesh.userData.turret.rotation.y) <= Math.PI, 'unlimited traversal wraps for wire precision');
+  const origin = new THREE.Vector3(), direction = new THREE.Vector3();
+  assert(tankGunRay(tank.mesh, origin, direction));
+  assert(origin.distanceTo(tank.mesh.userData.muzzle.getWorldPosition(new THREE.Vector3())) < 1e-9);
+  assert(Math.abs(direction.length() - 1) < 1e-9);
+  const rest = tank.mesh.userData.barrel.position.z; tank.mesh.userData.gunRecoil = .22;
+  updateTankGun(tank, .02, keys, null, false); assert(tank.mesh.userData.barrel.position.z < rest);
+  updateTankGun(tank, .3, keys, null, false); assert.equal(tank.mesh.userData.barrel.position.z, rest);
+}
+for (const fps of [30, 60, 120]) {
+  const { w } = fixture(), tank = { kind: 'car', type: 'tank' }; let shots = 0;
+  assert(armed(tank));
+  const fire = kind => { assert.equal(kind, 'shell'); shots++; };
+  w.control(1 / fps, tank, false, true, false, () => assert.fail('tank secondary disabled'));
+  w.control(1 / fps, tank, true, false, false, fire); assert.equal(w.shellCooldown, SHELL_RELOAD);
+  for (let i = 0; i < fps * 2.5 - 1; i++) w.control(1 / fps, tank, true, false, false, fire);
+  assert.equal(shots, 1, 'reload rejects sustained or repeated fire');
+  w.control(1 / fps, tank, true, false, false, fire); assert.equal(shots, 2);
+  for (const state of ['countdown', 'running', 'finished', 'loading', 'menu']) {
+    w.control(3, tank, true, true, true, () => assert.fail(state));
+  }
+  w.control(.01, { ...tank, mode: 'crashed' }, true, true, false, () => assert.fail('crashed'));
+}
+{
+  const { w, hits } = fixture(), origin = p(0, 3), velocity = p(0, 0, SHELL_SPEED), predicted = p();
+  w.aimShell(origin, velocity, predicted);
+  assert(Math.abs(predicted.y) < .02); assert(predicted.z > 340 && predicted.z < 360, 'ballistic aim reaches the ground');
+  const shell = w.spawn('shell', origin, velocity);
+  for (let i = 0; i < 10; i++) w.step(.01);
+  assert(Math.abs(shell.p.y - (3 - SHELL_GRAVITY * .1 ** 2 / 2)) < 1e-9, 'gravity arc');
+  for (let i = 0; i < 100 && shell.active; i++) w.step(.01);
+  assert.equal(hits.length, 1); assert.equal(hits[0].type, 'terrain');
+  assert(Math.abs(shell.p.z - predicted.z) < .2, 'reticle and flight agree');
+  assert(validShot(encodeShot('shell', 1, origin, velocity)));
+}
+for (const remote of [false, true]) {
+  const { w, hits, breaks } = fixture([[0, 5, 20], [10, 5, 20], [20, 5, 20]]);
+  w.spawn('shell', p(), p(0, 0, SHELL_SPEED), remote); w.step(.05);
+  assert.equal(hits[0].type, 'tree'); assert.equal(breaks.broken.size, remote ? 0 : 2, '12m shell blast, local authority only');
+}
+{
+  const { w, hits } = fixture([], [{ pts: [[-2, 1], [2, 1], [2, 1.1], [-2, 1.1]], top: 15 }]);
+  w.spawn('shell', p(), p(0, 0, SHELL_SPEED)); w.step(.01); assert.equal(hits[0].type, 'building');
+  w.spawn('shell', p(0, 1000), p(0, 0, SHELL_SPEED));
+  for (let i = 0; i < 61; i++) w.step(.1);
+  assert.equal(hits[1].type, 'air', 'shell six second fuse');
 }
 console.log('PASS weapons: firing, lockouts, sweeps, blasts, remote isolation, pools, wire');
