@@ -371,3 +371,21 @@ test('combat hits reach only an admitted target, validate damage and rate limit 
   assert.equal(ofType(guest, 'wrecked').length, 0);
   send(guest, { t: 'wrecked', by: id(99) }); send(guest, { t: 'wrecked', by: id(1) }); assert.equal(ofType(host, 'wrecked').length, 1);
 });
+
+test('chat validates, strips controls, echoes authoritative identity, limits per session and survives hibernation', () => {
+  const { room, host, join, send, tick } = fixture(), guest = join(2), logs = [];
+  room.onChat = line => logs.push(line);
+  for (const text of [null, 4, {}, '', ' \t\r\n ', 'a'.repeat(201)]) send(guest, { t: 'chat', text });
+  assert.equal(ofType(host, 'chat').length, 0);
+  send(guest, { t: 'chat', text: '  hi\u0000\n\u0085<script>  ', name: 'forged', from: id(8), srvT: -1 });
+  const expected = { t: 'chat', from: id(2), name: '<Racer>', text: 'hi<script>', srvT: 1000 };
+  assert.deepEqual(ofType(host, 'chat'), [expected]); assert.deepEqual(ofType(guest, 'chat'), [expected]); assert.deepEqual(logs, [expected]);
+  for (let i = 0; i < 4; i++) send(guest, { t: 'chat', text: 'burst' });
+  assert.equal(logs.length, 3);
+  room.restore(guest, room.session(guest)); send(guest, { t: 'chat', text: 'wake' }); assert.equal(logs.length, 3);
+  tick(999); send(guest, { t: 'chat', text: 'early' }); assert.equal(logs.length, 3);
+  tick(1); send(guest, { t: 'chat', text: 'ready' }); assert.equal(logs.length, 4);
+  send(host, { t: 'chat', text: 'a'.repeat(200) }); assert.equal(logs.length, 5, 'host has a separate bucket');
+  const pending = socket(); room.connect(id(3), pending); send(pending, hello()); send(pending, { t: 'chat', text: 'not admitted' });
+  assert.equal(logs.length, 5); assert.equal(ofType(pending, 'chat').length, 0);
+});

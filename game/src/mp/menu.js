@@ -93,7 +93,7 @@ export function createMPMenu({ mp, settings, tuning, atmosphere, wind, gui, befo
       <button id="mp-cancel" class="menu-button" hidden>Cancel request</button></div>
     <div id="mp-game" hidden><label id="mp-policy"><input id="mp-anyone" type="checkbox"> Let anyone join without asking</label><label id="mp-weapons-policy"><input id="mp-weapons" type="checkbox" checked> Weapons</label><h3>Players</h3><ul id="mp-players"></ul>
       <fieldset id="mp-world"><legend>World settings</legend><label><input type="radio" name="mp-mode" value="host">Everyone uses the host's settings</label><label><input type="radio" name="mp-mode" value="own">Everyone uses their own settings</label><label>Bumping: <select id="mp-bump"><option value="on">on</option><option value="off">off</option></select></label></fieldset>
-      <p id="mp-host-note">Only the host can change world settings.</p><button id="mp-leave" class="menu-button">Leave game</button></div><p id="mp-status" role="status"></p>`;
+      <p id="mp-host-note">Only the host can change world settings.</p><p>Press Enter while playing to chat.</p><button id="mp-leave" class="menu-button">Leave game</button></div><p id="mp-status" role="status"></p>`;
   document.body.append(panel);
   const $ = id => panel.querySelector('#mp-' + id);
   const toast = document.createElement('div'); toast.id = 'mp-toasts'; toast.setAttribute('role', 'status'); toast.setAttribute('aria-live', 'polite'); document.body.append(toast);

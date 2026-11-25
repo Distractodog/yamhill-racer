@@ -37,12 +37,15 @@ import { createWarmup } from './warmup.js';
 import { createSettings } from './settings.js';
 import { createBuilder } from './builder/builder.js';
 import { createMPMenu } from './mp/menu.js';
+import { createChat, editingInput, protectChatKeys } from './mp/chat.js';
 import { makeRim } from './rim.js';
 import { createCollisions } from './mp/collide.js';
 import { createRemotes } from './mp/remotes.js';
 import { toggleUnits, onUnits, speedUnit, speedValue, aircraftSpeed, fmtKmh } from './units.js';
 import { createGraphics } from './graphicsapply.js';
 import { bindGraphicsSettings } from './graphicsui.js';
+
+addEventListener('keydown', protectChatKeys, true);
 
 const sessionSpawn = createSpawn();
 const settings = createSettings();
@@ -229,11 +232,13 @@ settings.ready(clearKeys, () => {
   garage.close(); vehicles.close(); challenges.closeMenu(); if (minimap.open) minimap.toggle(false);
 });
 const mpMenu = createMPMenu({ mp, settings, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning }, atmosphere, wind, gui, beforeOpen: () => garage.close() });
+const chat = createChat({ mp, clearKeys, canOpen: () => !settings.open && !garage.open && !vehicles.open &&
+  !challenges.menuOpen && challenges.state !== 'finished' && !builder.open && !minimap.open && !sessionSpawn.blocked });
 const mpCollisions = createCollisions({ mp, player: () => vehicles.current, vehicles: [vehicles.car, vehicles.bike, ...vehicles.aircraft],
   predictedState: remotes.predictedState, enabled: () => mpMenu.world.bump });
 combat = createCombat({ mp, vehicles, remotes, racing: () => challenges.state !== 'idle' });
 addEventListener('keydown', e => {
-  if (e.gameUI || builder.open) return;
+  if (e.gameUI || builder.open || editingInput(e.target) || editingInput(document.activeElement)) return;
   // Repeat continues an owned press; it must not resurrect one after key-up or focus/UI clearing.
   if (e.repeat && !keys.has(e.code)) return;
   keys.add(e.code);
@@ -273,7 +278,8 @@ let weaponPad = null;
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, lean: false, jet: { thr: 0, pitch: 0, roll: 0, yaw: 0 } };
 function readInput() {
   const tank = isTank(vehicles.current);
-  const k = c => !builder.open && !settings.open && !garage.open && !vehicles.open && tankDriveKey(tank, c) && held(c);
+  const typing = editingInput(document.activeElement);
+  const k = c => !typing && !builder.open && !settings.open && !garage.open && !vehicles.open && tankDriveKey(tank, c) && held(c);
   input.throttle = (k('KeyW') || k('ArrowUp')) ? 1 : 0;
   input.brake = (k('KeyS') || k('ArrowDown')) ? 1 : 0;
   input.steer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
@@ -286,7 +292,7 @@ function readInput() {
   J.roll = (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0);
   J.yaw = (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0);
   const gp = activePad(); weaponPad = gp;
-  if (gp && !builder.open && !settings.open && !garage.open && !vehicles.open) {
+  if (gp && !typing && !builder.open && !settings.open && !garage.open && !vehicles.open) {
     const ax = gp.axes[0]; if (Math.abs(ax) > 0.12) input.steer = ax;
     if (gp.buttons[7]?.value > 0.05) input.throttle = gp.buttons[7].value;
     if (gp.buttons[6]?.value > 0.05) input.brake = gp.buttons[6].value;
@@ -302,7 +308,7 @@ function readInput() {
 weapons = createWeapons({ combat, scene, world, effects, audio, mp, camera, canvas: renderer.domElement,
   vehicle: () => vehicles.current,
   blocked: () => combat.blocked || challenges.state !== 'idle' || sessionSpawn.blocked || respawnHold.blocked || challenges.blocked ||
-    settings.open || garage.open || vehicles.open || challenges.menuOpen || builder.open || minimap.open || document.hidden,
+    settings.open || garage.open || vehicles.open || challenges.menuOpen || builder.open || minimap.open || document.hidden || editingInput(document.activeElement),
 });
 
 // ---------------------------------------------------------------- camera
@@ -626,5 +632,5 @@ sessionSpawn.start({ world, car, minimap, challenges, settings, clearKeys, rim, 
 window.game.sessionSpawn = sessionSpawn;
 
 Object.assign(window.game, { weapons, combat, graphics, builder, wind, windView, garage, cosmetics, atmosphere, drivingFX, vehicleLights, respawnHold, warmup, vehicleThumbs });
-Object.assign(window.game, { multiplayer: { mp, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
+Object.assign(window.game, { multiplayer: { mp, chat, menu: mpMenu, collisions: mpCollisions, tuning: { car: tuning, bike: bikeTuning, jet: jetTuning } } });
 window.game.remotes = remotes;

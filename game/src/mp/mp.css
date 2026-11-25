@@ -26,3 +26,12 @@
 #mp-requests > div + div { border-top: 1px solid #ffffff30; margin-top: 12px; padding-top: 12px; }
 #mp-requests button { margin-right: 8px; }
 @media(max-width: 600px) { #mp-requests { top: 170px; } }
+
+#mp-chat { position: fixed; z-index: 20; left: 16px; bottom: var(--chat-bottom, 190px); width: min(440px, calc(100vw - 32px)); color: #fff; font: 14px/1.4 system-ui, sans-serif; pointer-events: none; text-shadow: 0 1px 3px #000; }
+#mp-chat[hidden], #mp-chat [hidden] { display: none; }
+#mp-chat-lines { max-height: min(40dvh, 300px); overflow: auto; }
+#mp-chat-lines > div { padding: 3px 7px; background: #14241acc; overflow-wrap: anywhere; transition: opacity .6s; }
+.mp-chat-name { color: #ffd76a; font-weight: 600; }
+#mp-chat-input { box-sizing: border-box; width: 100%; margin-top: 6px; padding: 9px; border: 1px solid #ffffff80; border-radius: 6px; background: #14241af5; color: white; font: 13px system-ui, sans-serif; pointer-events: auto; }
+#mp-chat-input::placeholder { color: #d1d8d2; }
+#mp-chat [role=status] { color: #ffd76a; }

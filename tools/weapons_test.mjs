@@ -122,11 +122,12 @@ for (const fps of [30, 60, 120]) {
 {
   const { readFileSync } = await import('node:fs');
   const { runInNewContext } = await import('node:vm');
+  const { editingInput } = await import('../game/src/mp/chat.js');
   const { isTank, tankDriveKey, updateTankGun, tankGunRay, TURRET_RATE, PITCH_MIN, PITCH_MAX } = await import('../game/src/tankgun.js');
   const { buildVehicleTypeModel } = await import('../game/src/vehicletypes.js');
   const THREE = await import('three');
   const keys = new Set(), tank = { kind: 'car', type: 'tank', mesh: buildVehicleTypeModel('car', 'tank') };
-  const input = { jet: {} }, context = { input, isTank, tankDriveKey, vehicles: { current: tank },
+  const input = { jet: {} }, context = { input, isTank, tankDriveKey, editingInput, document: { activeElement: null }, vehicles: { current: tank },
     builder: {}, settings: {}, garage: {}, held: c => keys.has(c), activePad: () => null };
   const source = readFileSync(new URL('../game/src/main.js', import.meta.url), 'utf8');
   runInNewContext(source.slice(source.indexOf('function readInput()'), source.indexOf('\nweapons = createWeapons')), context);
@@ -142,6 +143,10 @@ for (const fps of [30, 60, 120]) {
   assert.equal(input.throttle, 1); assert.equal(input.steer, 1);
   keys.clear(); context.activePad = () => ({ axes: [.6, 0, -.8, -.4], buttons: Array.from({ length: 8 }, (_, i) => ({ value: i === 7 ? .8 : i === 6 ? .3 : 0 })) });
   context.readInput(); assert.equal(input.steer, .6); assert.equal(input.throttle, .8); assert.equal(input.brake, .3);
+  context.document.activeElement = { matches: () => true };
+  context.readInput(); assert.equal(input.throttle, 0); assert.equal(input.brake, 0); assert.equal(input.steer, 0);
+  assert.ok(Object.values(input.jet).every(v => v === 0), 'typing blocks keyboard and pad flight controls');
+  context.document.activeElement = null;
   tank.mesh.updateMatrixWorld(true);
   keys.add('ArrowLeft'); keys.add('ArrowUp'); updateTankGun(tank, 1, keys, null, false);
   assert(Math.abs(tank.mesh.userData.turret.rotation.y - TURRET_RATE) < 1e-9);

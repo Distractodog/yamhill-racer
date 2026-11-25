@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Multiplayer chat preview</title>
+<link rel="stylesheet" href="../game/src/mp/mp.css">
+<style>
+body{margin:0;background:#526f55;color:#fff;font:14px system-ui}main{padding:24px}#hud{position:fixed;left:16px;bottom:14px;color:white;text-shadow:0 1px 3px #000a}#speed{font-size:46px;font-weight:800;line-height:1}#info{font-size:13px;margin-top:4px}#speed-unit{font-size:16px}
+</style>
+<main>Chat preview · Enter sends · Escape cancels</main>
+<div id="hud"><div id="speed">120 <span id="speed-unit">km/h</span></div><div id="info">Race car · asphalt</div></div>
+<script type="module">
+import { createChat, protectChatKeys } from '../game/src/mp/chat.js';
+import { createCombatUI } from '../game/src/combatui.js';
+addEventListener('keydown', protectChatKeys, true);
+const handlers = new Map();
+const mp = { inGame: true, on: (type, fn) => handlers.set(type, fn), send: msg => handlers.get('chat')({ ...msg, name: 'You' }) };
+const chat = createChat({ mp, clearKeys() {} });
+const combat = createCombatUI(); combat.update(0, true, { health: 100, protected: false, wrecked: false });
+handlers.get('connected')();
+handlers.get('chat')({ name: 'Host', text: 'Meet at the campus gate?' });
+handlers.get('chat')({ name: 'Guest', text: 'On my way! <script> is shown as text.' });
+dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', key: 'Enter' }));
+</script></html>
